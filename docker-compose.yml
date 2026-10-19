@@ -1,0 +1,44 @@
+# Starts MySQL (with the schema, home-page views and sample data from database/) and the CRM API.
+#   docker compose up --build
+#   API docs:  http://localhost:8001/docs
+#   MySQL:     localhost:3307  (user crm_user / crm_pass, database crm_db)
+# Start fresh (reload the SQL files):  docker compose down -v && docker compose up --build
+name: crm-app
+
+services:
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: crm_db
+      MYSQL_USER: crm_user
+      MYSQL_PASSWORD: crm_pass
+      TZ: America/New_York   # same clock for MySQL and the API, so "today" matches
+    ports:
+      - "3307:3306"
+    volumes:
+      - crm_mysql_data:/var/lib/mysql
+      # run in this order on the first start only
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./database/home-page-views.sql:/docker-entrypoint-initdb.d/02-home-page-views.sql:ro
+      - ./database/seed-data.sql:/docker-entrypoint-initdb.d/03-seed-data.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  api:
+    build: ./backend
+    environment:
+      DATABASE_URL: mysql+pymysql://crm_user:crm_pass@db:3306/crm_db
+      FRONTEND_URL: http://localhost:5173
+      TZ: America/New_York   # same clock for MySQL and the API, so "today" matches
+    ports:
+      - "8001:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  crm_mysql_data:

@@ -1,2 +1,3 @@
-# Local SQLite test database
-crm.db
+# Local SQLite fallback database and secrets
+*.db
+.env

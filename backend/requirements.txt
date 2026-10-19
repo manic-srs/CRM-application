@@ -1,8 +1,10 @@
-fastapi>=0.110
-uvicorn[standard]>=0.29
+fastapi
+uvicorn[standard]
 sqlalchemy>=2.0
-pymysql>=1.1
-cryptography>=42  # needed by pymysql for MySQL 8 logins
-python-dotenv>=1.0
-pytest>=8.0
-httpx>=0.27
+pymysql
+cryptography
+python-dotenv
+bcrypt
+# tests
+pytest
+httpx
