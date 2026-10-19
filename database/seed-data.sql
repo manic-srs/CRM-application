@@ -19,31 +19,31 @@ INSERT INTO accounts (id, name, industry, phone, website, owner_id) VALUES
 (4, 'Nova Textiles',     'Manufacturing', '+91 80 4000 4000', 'novatextiles.in',     3);
 
 -- ---------- CONTACTS ----------
-INSERT INTO contacts (id, full_name, job_title, email, account_id, owner_id) VALUES
-(1, 'Dr. Meera Iyer', 'Director of Operations', 'meera@sunrisehospitals.in', 1, 2),
-(2, 'Rahul Nair',     'IT Manager',             'rahul@sunrisehospitals.in', 1, 2),
-(3, 'Arjun Mehta',    'Head of Sales',          'arjun@greenleaffoods.in',   2, 3),
-(4, 'Kavya Reddy',    'COO',                    'kavya@apexlogistics.in',    3, 2),
-(5, 'Sanjay Patel',   'Purchase Manager',       'sanjay@novatextiles.in',    4, 3);
+INSERT INTO contacts (id, salutation, first_name, last_name, job_title, email, account_id, owner_id) VALUES
+(1, 'Dr.', 'Meera',  'Iyer',  'Director of Operations', 'meera@sunrisehospitals.in', 1, 2),
+(2, 'Mr.', 'Rahul',  'Nair',  'IT Manager',             'rahul@sunrisehospitals.in', 1, 2),
+(3, 'Mr.', 'Arjun',  'Mehta', 'Head of Sales',          'arjun@greenleaffoods.in',   2, 3),
+(4, 'Ms.', 'Kavya',  'Reddy', 'COO',                    'kavya@apexlogistics.in',    3, 2),
+(5, 'Mr.', 'Sanjay', 'Patel', 'Purchase Manager',       'sanjay@novatextiles.in',    4, 3);
 
 -- ---------- LEADS (one in every stage) ----------
-INSERT INTO leads (id, name, company, email, phone, source, stage, demo_date, lost_reason, lost_notes, converted_at, closed_at, owner_id) VALUES
-(1, 'Vikram Singh',   'BrightPath Schools', 'vikram@brightpath.in',      '+91 98450 11111', 'Website',  'New',       NULL, NULL, NULL, NULL, NULL, 2),
-(2, 'Neha Gupta',     'UrbanNest Realty',   'neha@urbannest.in',         '+91 98450 22222', 'Referral', 'Nurturing', NULL, NULL, NULL, NULL, NULL, 3),
-(3, 'Rohit Verma',    'CloudKart',          'rohit@cloudkart.in',        '+91 98450 33333', 'Event',    'Demo', NOW() + INTERVAL 3 DAY, NULL, NULL, NULL, NULL, 2),
-(4, 'Pooja Joshi',    'FreshMart',          'pooja@freshmart.in',        '+91 98450 44444', 'Phone',    'Lost', NULL, 'No response', 'No reply after 3 calls and 2 emails', NULL, NOW() - INTERVAL 5 DAY, 3),
+INSERT INTO leads (id, salutation, first_name, last_name, company, title, industry, email, phone, source, stage, demo_date, lost_reason, lost_notes, converted_at, closed_at, owner_id) VALUES
+(1, 'Mr.', 'Vikram', 'Singh', 'BrightPath Schools', 'Principal',              'Education',     'vikram@brightpath.in',      '+91 98450 11111', 'Website',  'New',       NULL, NULL, NULL, NULL, NULL, 2),
+(2, 'Ms.', 'Neha',   'Gupta', 'UrbanNest Realty',   'Sales Director',         'Real Estate',   'neha@urbannest.in',         '+91 98450 22222', 'Referral', 'Nurturing', NULL, NULL, NULL, NULL, NULL, 3),
+(3, 'Mr.', 'Rohit',  'Verma', 'CloudKart',          'CTO',                    'E-commerce',    'rohit@cloudkart.in',        '+91 98450 33333', 'Event',    'Demo', NOW() + INTERVAL 3 DAY, NULL, NULL, NULL, NULL, 2),
+(4, 'Ms.', 'Pooja',  'Joshi', 'FreshMart',          'Store Manager',          'Retail',        'pooja@freshmart.in',        '+91 98450 44444', 'Phone',    'Lost', NULL, 'No response', 'No reply after 3 calls and 2 emails', NULL, NOW() - INTERVAL 5 DAY, 3),
 -- converted leads (each became an opportunity)
-(5, 'Dr. Meera Iyer', 'Sunrise Hospitals',  'meera@sunrisehospitals.in', NULL, 'Referral', 'Converted', NULL, NULL, NULL, NOW() - INTERVAL 4 DAY,  NULL, 2),
-(6, 'Arjun Mehta',    'GreenLeaf Foods',    'arjun@greenleaffoods.in',   NULL, 'Website',  'Converted', NULL, NULL, NULL, NOW() - INTERVAL 12 DAY, NULL, 3),
-(7, 'Kavya Reddy',    'Apex Logistics',     'kavya@apexlogistics.in',    NULL, 'Event',    'Converted', NULL, NULL, NULL, NOW() - INTERVAL 30 DAY, NULL, 2),
-(8, 'Sanjay Patel',   'Nova Textiles',      'sanjay@novatextiles.in',    NULL, 'Email',    'Converted', NULL, NULL, NULL, NOW() - INTERVAL 25 DAY, NULL, 3);
+(5, 'Dr.', 'Meera',  'Iyer',  'Sunrise Hospitals',  'Director of Operations', 'Healthcare',    'meera@sunrisehospitals.in', NULL, 'Referral', 'Converted', NULL, NULL, NULL, NOW() - INTERVAL 4 DAY,  NULL, 2),
+(6, 'Mr.', 'Arjun',  'Mehta', 'GreenLeaf Foods',    'Head of Sales',          'FMCG',          'arjun@greenleaffoods.in',   NULL, 'Website',  'Converted', NULL, NULL, NULL, NOW() - INTERVAL 12 DAY, NULL, 3),
+(7, 'Ms.', 'Kavya',  'Reddy', 'Apex Logistics',     'COO',                    'Logistics',     'kavya@apexlogistics.in',    NULL, 'Event',    'Converted', NULL, NULL, NULL, NOW() - INTERVAL 30 DAY, NULL, 2),
+(8, 'Mr.', 'Sanjay', 'Patel', 'Nova Textiles',      'Purchase Manager',       'Manufacturing', 'sanjay@novatextiles.in',    NULL, 'Email',    'Converted', NULL, NULL, NULL, NOW() - INTERVAL 25 DAY, NULL, 3);
 
 -- ---------- OPPORTUNITIES (one in every stage) ----------
-INSERT INTO opportunities (id, name, stage, expected_value, final_value, expected_close_date, lost_reason, lost_notes, closed_at, account_id, primary_contact_id, lead_id, owner_id) VALUES
-(1, 'Sunrise Hospitals - CRM rollout',    'Opportunity',  850000.00, NULL,      CURDATE() + INTERVAL 40 DAY, NULL, NULL, NULL, 1, 1, 5, 2),
-(2, 'GreenLeaf Foods - Sales automation', 'Proposal',    1200000.00, NULL,      CURDATE() + INTERVAL 20 DAY, NULL, NULL, NULL, 2, 3, 6, 3),
-(3, 'Apex Logistics - Fleet CRM',         'Won',          700000.00, 640000.00, CURDATE() - INTERVAL 3 DAY,  NULL, NULL, NOW() - INTERVAL 3 DAY, 3, 4, 7, 2),
-(4, 'Nova Textiles - Dealer portal',      'Lost',         500000.00, NULL,      NULL, 'Competitor', 'Chose a cheaper local vendor', NOW() - INTERVAL 7 DAY, 4, 5, 8, 3);
+INSERT INTO opportunities (id, name, stage, probability, expected_value, final_value, expected_close_date, lost_reason, lost_notes, closed_at, account_id, primary_contact_id, lead_id, owner_id) VALUES
+(1, 'Sunrise Hospitals - CRM rollout',    'Opportunity',  20,  850000.00, NULL,      CURDATE() + INTERVAL 40 DAY, NULL, NULL, NULL, 1, 1, 5, 2),
+(2, 'GreenLeaf Foods - Sales automation', 'Proposal',     75, 1200000.00, NULL,      CURDATE() + INTERVAL 20 DAY, NULL, NULL, NULL, 2, 3, 6, 3),
+(3, 'Apex Logistics - Fleet CRM',         'Won',         100,  700000.00, 640000.00, CURDATE() - INTERVAL 3 DAY,  NULL, NULL, NOW() - INTERVAL 3 DAY, 3, 4, 7, 2),
+(4, 'Nova Textiles - Dealer portal',      'Lost',          0,  500000.00, NULL,      NULL, 'Competitor', 'Chose a cheaper local vendor', NOW() - INTERVAL 7 DAY, 4, 5, 8, 3);
 
 -- ---------- TASKS (on leads and on opportunities) ----------
 INSERT INTO tasks (title, due_date, reminder_at, status, priority, is_auto, completed_at, owner_id, lead_id, opportunity_id) VALUES

@@ -48,7 +48,11 @@ CREATE TABLE accounts (
 -- 3. CONTACTS: people at an account (contact belongs to an account)
 CREATE TABLE contacts (
   id         INT AUTO_INCREMENT PRIMARY KEY,
-  full_name  VARCHAR(100) NOT NULL,
+  salutation ENUM('Mr.','Ms.','Mrs.','Dr.','Prof.'),
+  first_name VARCHAR(50),
+  last_name  VARCHAR(50) NOT NULL,
+  -- full_name is filled automatically from first + last name (like Salesforce)
+  full_name  VARCHAR(101) GENERATED ALWAYS AS (TRIM(CONCAT_WS(' ', first_name, last_name))) STORED,
   job_title  VARCHAR(100),
   email      VARCHAR(255),
   phone      VARCHAR(30),
@@ -61,10 +65,17 @@ CREATE TABLE contacts (
 );
 
 -- 4. LEADS: enquiries. New -> Nurturing -> Demo -> Converted (to Opportunity) or Lost
+--    Fields follow the Salesforce lead form: Salutation, First Name, Last Name (required), Company, Title, Industry
 CREATE TABLE leads (
   id           INT AUTO_INCREMENT PRIMARY KEY,
-  name         VARCHAR(100) NOT NULL,
+  salutation   ENUM('Mr.','Ms.','Mrs.','Dr.','Prof.'),
+  first_name   VARCHAR(50),
+  last_name    VARCHAR(50) NOT NULL,
+  -- name is filled automatically from first + last name, so views and lists keep using "name"
+  name         VARCHAR(101) GENERATED ALWAYS AS (TRIM(CONCAT_WS(' ', first_name, last_name))) STORED,
   company      VARCHAR(200),
+  title        VARCHAR(100),
+  industry     VARCHAR(100),
   email        VARCHAR(255),
   phone        VARCHAR(30),
   source       ENUM('Website','Referral','Phone','Email','Event','Social Media','Other') NOT NULL DEFAULT 'Other',
@@ -95,6 +106,7 @@ CREATE TABLE opportunities (
   expected_value      DECIMAL(14,2),
   final_value         DECIMAL(14,2),
   expected_close_date DATE,
+  probability         TINYINT UNSIGNED NOT NULL DEFAULT 20,  -- % chance to win: Opportunity 20, Proposal 75, Won 100, Lost 0
   lost_reason         ENUM('Price','Competitor','No response','No budget','Not interested','Other'),
   lost_notes          TEXT,
   closed_at           DATETIME,
