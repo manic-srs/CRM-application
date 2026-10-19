@@ -1,118 +1,128 @@
-# CRM API (Python FastAPI + MySQL)
+# CRM Backend
 
-Back end for the CRM POC. Built on the MySQL schema in `database/` (tables, home-page views, sample data).
-The flow follows Salesforce: **Lead → Nurturing → Demo → Convert → Opportunity → Proposal → Won / Lost**.
+Backend for our CRM POC. It is written in Python (FastAPI) and uses the MySQL database from the `database` folder.
 
-## Run with Docker (recommended)
+The flow is the same as Salesforce:
 
-From the **repo root** (Docker Desktop must be running):
+Lead -> Nurturing -> Demo -> Convert -> Opportunity -> Proposal -> Won / Lost
 
-```bash
+A lead or opportunity can be marked Lost at any open stage.
+
+## How to run
+
+You need Docker Desktop running. From the main project folder (not inside backend):
+
+```
 docker compose up --build
 ```
 
-- API docs (try every API in the browser): **http://localhost:8001/docs**
-- MySQL: `localhost:3307`, user `crm_user` / `crm_pass`, database `crm_db`
-- On the first start MySQL loads `schema.sql`, `home-page-views.sql` and `seed-data.sql`.
-- Reset to the sample data: `docker compose down -v && docker compose up --build`
+Then open http://localhost:8001/docs. All the APIs are listed there and you can try them from the browser.
 
-Sample logins (from `seed-data.sql`), password **Password@123**:
-`priya@crm.test` (Manager), `ravi@crm.test`, `anita@crm.test` (Salesperson)
+- The first time, MySQL loads `schema.sql`, `home-page-views.sql` and `seed-data.sql` automatically.
+- To start again with fresh sample data: `docker compose down -v` and then `docker compose up --build`
+- MySQL is on port 3307 (user `crm_user`, password `crm_pass`, database `crm_db`) if you want to check the tables.
+- The API is on port 8001 because 8000 was already used on my laptop.
 
-## Run without Docker
+Sample users (password for all is `Password@123`):
 
-Needs your own MySQL with the `database/` scripts loaded (`schema.sql`, then `home-page-views.sql`, then `seed-data.sql`).
+- priya@crm.test (Manager)
+- ravi@crm.test (Salesperson)
+- anita@crm.test (Salesperson)
 
-```bash
+## Running the tests
+
+```
 cd backend
-python3 -m venv venv && source venv/bin/activate
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
-cp example.env .env          # set DATABASE_URL if needed
-uvicorn app.main:app --reload
+pytest -v
 ```
 
-Docs: http://localhost:8000/docs
+The tests use a temporary database, so they don't touch the MySQL data. Right now all 18 pass.
 
-## Tests
+## Fields
 
-```bash
-cd backend && pytest -v
+We kept the fields close to the Salesforce forms.
+
+Lead: salutation, first name, last name, company, title, industry, email, phone, lead source.
+Last name and company are required. The full name (`name`) is filled automatically from first + last name.
+
+Contact: salutation, first name, last name, job title, email, phone, account. Last name and account are required.
+
+Opportunity: name, stage, probability, expected value, final value, expected close date, account, primary contact.
+
+Probability changes with the stage: Opportunity 20%, Proposal 75%, Won 100%, Lost 0%. It can also be edited.
+
+## What happens at each step
+
+- New lead: stage is New and a "Make first contact" task is created for the owner (due next day).
+- Moving the stage: the old open tasks are closed automatically ("Auto-closed") and a new follow-up task is added:
+  - Nurturing: Follow-up call
+  - Demo: Conduct demo (due on the demo date)
+  - Opportunity: Send proposal
+  - Proposal: Follow up on proposal
+- Every automatic task also shows up as a notification (bell icon) for the owner.
+- Lost: needs a reason (Price, Competitor, No response, No budget, Not interested, Other).
+- Convert: creates the Account (from company and industry, or you can pick an existing account), the Contact and the Opportunity at 20%. The lead becomes Converted.
+- Won: final value is optional. If it's empty, the expected value is used.
+- Once a lead is Converted/Lost or an opportunity is Won/Lost, the stage can't be changed again.
+- Every stage change is saved in stage history (who changed it, when, and a note).
+- Tasks can belong to a lead, an opportunity, or nothing (general task). Status is Open, Done or Auto-closed.
+
+## APIs for each screen
+
+All APIs start with `/api`.
+
+| Screen | API |
+| --- | --- |
+| Login | POST /auth/login |
+| Users (owner dropdown) | GET /users |
+| Home | GET /home |
+| Leads list | GET /leads (filters: stage, source, owner_id, search) |
+| New lead | POST /leads |
+| Lead page | GET /leads/{id} (details, tasks, notes and history together) |
+| Edit lead | PUT /leads/{id} |
+| Lead path bar | PUT /leads/{id}/stage |
+| Mark lead lost | POST /leads/{id}/lost |
+| Convert lead | POST /leads/{id}/convert |
+| Opportunities list | GET /opportunities |
+| Opportunity page | GET /opportunities/{id} |
+| Edit opportunity | PUT /opportunities/{id} |
+| Opportunity path bar | PUT /opportunities/{id}/stage |
+| Won / Lost | POST /opportunities/{id}/won, POST /opportunities/{id}/lost |
+| Tasks list | GET /tasks (filters: status, due=overdue/today/upcoming, owner_id) |
+| Add / edit / complete task | POST /tasks, PUT /tasks/{id}, PUT /tasks/{id}/complete |
+| Accounts | GET /accounts, POST /accounts, GET /accounts/{id} |
+| Contacts | GET /contacts, POST /contacts, GET /contacts/{id} |
+| Notes | GET /notes, POST /notes |
+| Notifications (bell) | GET /notifications?user_id=, PUT /notifications/{id}/read |
+| Search box | GET /search?q= |
+| DB check | GET /health/db |
+
+The responses already include names next to the ids (owner_name, account_name, primary_contact_name and so on), so the screens don't need extra calls just to show a name.
+
+The Home API also returns the Seller Home sections like Salesforce: close deals, accounts, contacts, build pipeline and recent records.
+
+## Folder structure
+
+```
+backend/
+  app/
+    main.py          starts the app
+    database.py      MySQL connection
+    models.py        tables (same as database/schema.sql)
+    constants.py     dropdown values and the auto tasks for each stage
+    services.py      common logic (stage history, auto-close and auto-create tasks)
+    schemas.py       request and response formats
+    serializers.py   adds names to the responses
+    routers/         the APIs (auth, home, leads, opportunities, tasks, accounts, activity)
+  tests/             tests
+  Dockerfile
+  requirements.txt
 ```
 
-The tests use a temporary in-memory database, so your MySQL data is never touched.
+## Not done yet
 
-## Fields (like the Salesforce forms)
-
-| Record | Fields |
-| --- | --- |
-| Lead | `salutation` (Mr., Ms., Mrs., Dr., Prof.), `first_name`, **`last_name`**, **`company`**, `title`, `industry`, `email`, `phone`, `source`; `name` = first + last name (automatic) |
-| Contact | `salutation`, `first_name`, **`last_name`**, `job_title`, `email`, `phone`, **`account_id`**; `full_name` = automatic |
-| Opportunity | `name`, `stage`, `probability` (%), `expected_value`, `final_value`, `expected_close_date`, account, primary contact |
-
-**Bold** = required. Win probability is set by stage: Opportunity 20, Proposal 75, Won 100, Lost 0 (can be adjusted).
-
-## How it behaves (business rules)
-
-| Rule | What the API does |
-| --- | --- |
-| New lead | Starts at **New**; system task "Make first contact" (due in 1 day) |
-| Stage change | Old open tasks become **Auto-closed**; the next system task is created (Nurturing: "Follow-up call", Demo: "Conduct demo" on the demo date, Opportunity: "Send proposal", Proposal: "Follow up on proposal") |
-| Notification | Every system task adds a notification to the owner's bell |
-| Lost | Allowed from any open stage; `lost_reason` required (Price, Competitor, No response, No budget, Not interested, Other) |
-| Convert | Creates the **Account** (company + industry, or uses an existing one), the **Contact** (salutation, first/last name, title) and the **Opportunity** (20%); lead becomes Converted |
-| Won | Allowed from any open stage; `final_value` defaults to `expected_value` |
-| Closed records | Converted / Lost leads and Won / Lost opportunities can't change stage |
-| History | Every stage change is saved in `stage_history` with who, when and an optional note |
-| Tasks | Belong to a lead **or** an opportunity, or neither (general task); status Open / Done / Auto-closed |
-
-## APIs
-
-All paths start with `/api`.
-
-| Screen | API | Purpose |
-| --- | --- | --- |
-| Login | `POST /auth/login` | Check email + password (placeholder, no tokens yet) |
-| Dropdowns | `GET /users` | Owners / assignees |
-| Home | `GET /home?owner_id=` | Summary cards, pipeline, today's tasks, won vs lost, and **seller_home** (Salesforce Seller Home cards: Close Deals, Accounts, Contacts, Build Pipeline, Recent Records) |
-| Leads list | `GET /leads?stage=&source=&owner_id=&search=` | List leads |
-| New lead | `POST /leads` | Create |
-| Lead page | `GET /leads/{id}` | Details + tasks + notes + stage history |
-| Edit lead | `PUT /leads/{id}` | Edit fields |
-| Path bar | `PUT /leads/{id}/stage` | New / Nurturing / Demo (`demo_date`, `note` optional) |
-| Lost button | `POST /leads/{id}/lost` | `lost_reason`, `lost_notes` |
-| Convert button | `POST /leads/{id}/convert` | `opportunity_name`, `expected_value`, `expected_close_date`, `account_id` (all optional) |
-| History | `GET /leads/{id}/history` | Stage changes |
-| Opportunities list | `GET /opportunities?stage=&owner_id=&account_id=&search=` | List |
-| Opportunity page | `GET /opportunities/{id}` | Details + tasks + notes + history |
-| Edit opportunity | `PUT /opportunities/{id}` | Name, value, close date, contact, owner |
-| Path bar | `PUT /opportunities/{id}/stage` | Opportunity / Proposal |
-| Won / Lost | `POST /opportunities/{id}/won`, `POST /opportunities/{id}/lost` | Close the deal |
-| Tasks | `GET /tasks?status=&due=overdue\|today\|upcoming&owner_id=&lead_id=&opportunity_id=` | To-do list |
-| Tasks | `POST /tasks`, `PUT /tasks/{id}`, `PUT /tasks/{id}/complete` | Add, edit, mark done |
-| Accounts | `GET/POST /accounts`, `GET /accounts/{id}` | Account page shows contacts + opportunities |
-| Contacts | `GET/POST /contacts`, `GET /contacts/{id}` | People at accounts |
-| Notes | `GET /notes`, `POST /notes` | Call / demo notes on a lead or opportunity |
-| Bell | `GET /notifications?user_id=`, `PUT /notifications/{id}/read` | Notifications |
-| Search box | `GET /search?q=` | Leads, opportunities, accounts, contacts, tasks |
-| Health | `GET /health/db` | Database connection check |
-
-Responses include readable names next to ids (`owner_name`, `account_name`, `primary_contact_name`,
-`related_to`, `changed_by_name`) so screens don't need extra calls.
-
-## Files
-
-| Path | Purpose |
-| --- | --- |
-| `app/main.py` | Starts the API, CORS for the React app |
-| `app/database.py` | MySQL connection (`DATABASE_URL`) |
-| `app/models.py` | Tables (match `database/schema.sql`) |
-| `app/constants.py` | Allowed values and the automatic follow-up tasks per stage |
-| `app/services.py` | Shared rules: stage history, auto-close tasks, auto-create tasks + notifications |
-| `app/schemas.py` | What each API accepts and returns |
-| `app/serializers.py` | Adds readable names to responses |
-| `app/routers/` | APIs: `auth`, `home`, `leads`, `opportunities`, `tasks`, `accounts`, `activity` (notes, bell, search) |
-| `tests/` | Automatic tests |
-
-## Not in this POC
-
-Apollo.io import, bulk upload, email / SMS sending and real authentication (tokens) come later.
+- Login only checks the email and password. There is no token yet.
+- Phase 2 items are pending: Apollo.io import, bulk upload, email/SMS notifications and email templates.
