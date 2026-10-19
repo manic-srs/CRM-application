@@ -1,17 +1,16 @@
 -- =====================================================
 -- CRM Application - Views for the Home page (SalesTrack "Sales Overview")
--- One view per section of the page. Run AFTER schema.sql.
+-- One view per section of the page. Run AFTER schema.sql, connected to crm_db.
 -- =====================================================
-USE crm_db;
 
 -- 1. The 4 cards: Total leads | Open opportunities | Won deals | Tasks due today
 CREATE OR REPLACE VIEW v_home_summary AS
 SELECT
-  (SELECT COUNT(*) FROM leads)                                              AS total_leads,
+  (SELECT COUNT(*) FROM leads)                                                   AS total_leads,
   (SELECT COUNT(*) FROM opportunities WHERE stage IN ('Opportunity','Proposal')) AS open_opportunities,
-  (SELECT COUNT(*) FROM opportunities WHERE stage = 'Won')                  AS won_deals,
+  (SELECT COUNT(*) FROM opportunities WHERE stage = 'Won')                       AS won_deals,
   (SELECT COUNT(*) FROM tasks
-     WHERE status = 'Open' AND DATE(due_date) = CURDATE())                  AS tasks_due_today;
+     WHERE status = 'Open' AND due_date::date = CURRENT_DATE)                    AS tasks_due_today;
 
 -- 2. Sales pipeline: New | Nurturing | Demo | Opportunity | Proposal | Won | Lost
 CREATE OR REPLACE VIEW v_sales_pipeline AS
@@ -24,15 +23,15 @@ SELECT s.sort_order, s.stage, s.unit,
               + (SELECT COUNT(*) FROM opportunities o WHERE o.stage = 'Lost')
          ELSE (SELECT COUNT(*) FROM opportunities o WHERE o.stage = s.stage)
        END AS total
-FROM (
-  SELECT 1 AS sort_order, 'New' AS stage, 'leads' AS unit
-  UNION ALL SELECT 2, 'Nurturing',   'leads'
-  UNION ALL SELECT 3, 'Demo',        'leads'
-  UNION ALL SELECT 4, 'Opportunity', 'opportunities'
-  UNION ALL SELECT 5, 'Proposal',    'opportunities'
-  UNION ALL SELECT 6, 'Won',         'closed deals'
-  UNION ALL SELECT 7, 'Lost',        'closed deals'
-) s;
+FROM (VALUES
+  (1, 'New',         'leads'),
+  (2, 'Nurturing',   'leads'),
+  (3, 'Demo',        'leads'),
+  (4, 'Opportunity', 'opportunities'),
+  (5, 'Proposal',    'opportunities'),
+  (6, 'Won',         'closed deals'),
+  (7, 'Lost',        'closed deals')
+) AS s(sort_order, stage, unit);
 
 -- 3. Today's tasks: open tasks due today, plus overdue ones (flagged)
 CREATE OR REPLACE VIEW v_todays_tasks AS
@@ -42,13 +41,13 @@ SELECT t.id, t.title, t.due_date, t.priority, t.owner_id,
             WHEN t.opportunity_id IS NOT NULL THEN 'Opportunity'
             ELSE 'General' END                     AS related_type,
        COALESCE(l.name, o.name)                    AS related_to,
-       (t.due_date < CURDATE())                    AS is_overdue
+       (t.due_date < CURRENT_DATE)                 AS is_overdue
 FROM tasks t
 JOIN users u              ON u.id = t.owner_id
 LEFT JOIN leads l         ON l.id = t.lead_id
 LEFT JOIN opportunities o ON o.id = t.opportunity_id
 WHERE t.status = 'Open'
-  AND t.due_date < CURDATE() + INTERVAL 1 DAY;
+  AND t.due_date < CURRENT_DATE + 1;
 
 -- 4. Won vs Lost: number of closed deals and their value
 CREATE OR REPLACE VIEW v_won_vs_lost AS
@@ -68,13 +67,13 @@ FROM opportunities WHERE stage = 'Lost';
 -- SELECT * FROM v_todays_tasks ORDER BY is_overdue DESC, due_date;
 -- SELECT * FROM v_won_vs_lost;
 
--- ---------- "Search anything..." box (backend runs this with the typed text) ----------
+-- ---------- "Search anything..." box (ILIKE = case-insensitive) ----------
 -- SELECT 'Lead' AS type, id, name, company AS detail FROM leads
---   WHERE name LIKE CONCAT('%', 'sun', '%') OR company LIKE CONCAT('%', 'sun', '%') OR email LIKE CONCAT('%', 'sun', '%')
+--   WHERE name ILIKE '%sun%' OR company ILIKE '%sun%' OR email ILIKE '%sun%'
 -- UNION ALL
--- SELECT 'Opportunity', id, name, stage FROM opportunities WHERE name LIKE CONCAT('%', 'sun', '%')
+-- SELECT 'Opportunity', id, name, stage FROM opportunities WHERE name ILIKE '%sun%'
 -- UNION ALL
--- SELECT 'Task', id, title, status FROM tasks WHERE title LIKE CONCAT('%', 'sun', '%');
+-- SELECT 'Task', id, title, status FROM tasks WHERE title ILIKE '%sun%';
 
 -- ---------- Bell icon ----------
 -- SELECT * FROM notifications WHERE user_id = 2 AND is_read = FALSE ORDER BY created_at DESC;

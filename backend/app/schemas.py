@@ -1,6 +1,6 @@
 """What each API accepts (request body) and returns (response).
 
-Field names match the MySQL tables in database/schema.sql.
+Field names match the PostgreSQL tables in database/schema.sql.
 """
 from datetime import date, datetime
 from decimal import Decimal

@@ -48,7 +48,7 @@ def list_opportunities(
     if account_id is not None:
         query = query.where(Opportunity.account_id == account_id)
     if search:
-        query = query.where(Opportunity.name.like(f"%{search.strip()}%"))
+        query = query.where(Opportunity.name.ilike(f"%{search.strip()}%"))
     return [opportunity_out(o) for o in db.scalars(query.order_by(Opportunity.id.desc())).all()]
 
 

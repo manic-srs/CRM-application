@@ -20,7 +20,7 @@ def list_accounts(
     if owner_id is not None:
         query = query.where(Account.owner_id == owner_id)
     if search:
-        query = query.where(Account.name.like(f"%{search.strip()}%"))
+        query = query.where(Account.name.ilike(f"%{search.strip()}%"))
     return [account_out(a) for a in db.scalars(query.order_by(Account.name)).all()]
 
 
@@ -48,7 +48,7 @@ def list_contacts(
         query = query.where(Contact.account_id == account_id)
     if search:
         like = f"%{search.strip()}%"
-        query = query.where(or_(Contact.full_name.like(like), Contact.email.like(like)))
+        query = query.where(or_(Contact.full_name.ilike(like), Contact.email.ilike(like)))
     return [contact_out(c) for c in db.scalars(query.order_by(Contact.last_name, Contact.first_name)).all()]
 
 

@@ -75,14 +75,14 @@ def search(q: str = Query(..., min_length=1), db: Session = Depends(get_db)):
     """The 'Search...' box: leads, opportunities, accounts, contacts and tasks (up to 20 results)."""
     like = f"%{q.strip()}%"
     results = []
-    for lead in db.scalars(select(Lead).where(or_(Lead.name.like(like), Lead.company.like(like), Lead.email.like(like))).limit(20)):
+    for lead in db.scalars(select(Lead).where(or_(Lead.name.ilike(like), Lead.company.ilike(like), Lead.email.ilike(like))).limit(20)):
         results.append({"type": "Lead", "id": lead.id, "name": lead.name, "detail": lead.company})
-    for opp in db.scalars(select(Opportunity).where(Opportunity.name.like(like)).limit(20)):
+    for opp in db.scalars(select(Opportunity).where(Opportunity.name.ilike(like)).limit(20)):
         results.append({"type": "Opportunity", "id": opp.id, "name": opp.name, "detail": opp.stage})
-    for acc in db.scalars(select(Account).where(Account.name.like(like)).limit(20)):
+    for acc in db.scalars(select(Account).where(Account.name.ilike(like)).limit(20)):
         results.append({"type": "Account", "id": acc.id, "name": acc.name, "detail": acc.industry})
-    for con in db.scalars(select(Contact).where(or_(Contact.full_name.like(like), Contact.email.like(like))).limit(20)):
+    for con in db.scalars(select(Contact).where(or_(Contact.full_name.ilike(like), Contact.email.ilike(like))).limit(20)):
         results.append({"type": "Contact", "id": con.id, "name": con.full_name, "detail": con.job_title})
-    for task in db.scalars(select(Task).where(Task.title.like(like)).limit(20)):
+    for task in db.scalars(select(Task).where(Task.title.ilike(like)).limit(20)):
         results.append({"type": "Task", "id": task.id, "name": task.title, "detail": task.status})
     return results[:20]

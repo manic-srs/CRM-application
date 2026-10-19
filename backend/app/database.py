@@ -6,7 +6,7 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 load_dotenv()
 
-# MySQL:  DATABASE_URL=mysql+pymysql://crm_user:crm_pass@localhost:3306/crm_db   (see example.env)
+# PostgreSQL:  DATABASE_URL=postgresql+psycopg://crm_user:crm_pass@localhost:5432/crm_db   (see example.env)
 # If not set, a local SQLite file is used so the API can still start for a quick look.
 DATABASE_URL = os.getenv("DATABASE_URL") or "sqlite:///./crm_local.db"
 

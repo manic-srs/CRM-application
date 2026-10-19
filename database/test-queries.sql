@@ -1,7 +1,7 @@
 -- =====================================================
 -- CRM Application - Queries to test the data
+-- Run connected to crm_db
 -- =====================================================
-USE crm_db;
 
 -- 1. Row count per table
 SELECT 'users' AS tbl, COUNT(*) AS total FROM users
@@ -69,7 +69,7 @@ SELECT lost_reason, COUNT(*) AS total FROM (
   SELECT lost_reason FROM opportunities WHERE stage = 'Lost'
 ) x GROUP BY lost_reason;
 
--- 9. Rule checks: each of these should FAIL with "Check constraint ... is violated"
--- INSERT INTO leads (name, stage, owner_id) VALUES ('Test', 'Lost', 1);
+-- 9. Rule checks: each of these should FAIL with "violates check constraint"
+-- INSERT INTO leads (last_name, stage, owner_id) VALUES ('Test', 'Lost', 1);
 -- INSERT INTO opportunities (name, stage, account_id, owner_id) VALUES ('Test', 'Won', 1, 1);
 -- INSERT INTO tasks (title, due_date, owner_id, lead_id, opportunity_id) VALUES ('Test', NOW(), 1, 1, 1);

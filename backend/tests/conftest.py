@@ -1,5 +1,5 @@
 """Every test gets a fresh in-memory database with 2 users, so real data is never touched.
-(Full MySQL behaviour is checked by running the API against database/schema.sql + seed-data.sql.)"""
+(Full PostgreSQL behaviour is checked by running the API against database/schema.sql + seed-data.sql.)"""
 import os
 import sys
 

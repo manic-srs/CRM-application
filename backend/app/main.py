@@ -1,7 +1,7 @@
 """CRM API - starts the server.
 
 Run:   uvicorn app.main:app --reload          (from the backend folder)
-       or: docker compose up --build          (MySQL + API, data loaded from database/*.sql)
+       or: docker compose up --build          (PostgreSQL + API, data loaded from database/*.sql)
 Docs:  http://localhost:8000/docs   (Docker: http://localhost:8001/docs)
 """
 import os
@@ -19,7 +19,7 @@ from app.routers import accounts, activity, auth, home, leads, opportunities, ta
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # With MySQL the tables come from database/schema.sql. Only the local SQLite fallback creates them here.
+    # With PostgreSQL the tables come from database/schema.sql. Only the local SQLite fallback creates them here.
     if engine.url.get_backend_name() == "sqlite":
         Base.metadata.create_all(bind=engine)
         with SessionLocal() as db:

@@ -1,6 +1,6 @@
 # CRM Backend
 
-Backend for our CRM POC. It is written in Python (FastAPI) and uses the MySQL database from the `database` folder.
+Backend for our CRM POC. It is written in Python (FastAPI) and uses the PostgreSQL database from the `database` folder.
 
 The flow is the same as Salesforce:
 
@@ -18,9 +18,9 @@ docker compose up --build
 
 Then open http://localhost:8001/docs. All the APIs are listed there and you can try them from the browser.
 
-- The first time, MySQL loads `schema.sql`, `home-page-views.sql` and `seed-data.sql` automatically.
+- The first time, PostgreSQL loads `schema.sql`, `home-page-views.sql` and `seed-data.sql` automatically.
 - To start again with fresh sample data: `docker compose down -v` and then `docker compose up --build`
-- MySQL is on port 3307 (user `crm_user`, password `crm_pass`, database `crm_db`) if you want to check the tables.
+- PostgreSQL is on port 5433 (user `crm_user`, password `crm_pass`, database `crm_db`) if you want to check the tables, e.g. in pgAdmin.
 - The API is on port 8001 because 8000 was already used on my laptop.
 
 Sample users (password for all is `Password@123`):
@@ -39,7 +39,7 @@ pip install -r requirements.txt
 pytest -v
 ```
 
-The tests use a temporary database, so they don't touch the MySQL data. Right now all 18 pass.
+The tests use a temporary database, so they don't touch the PostgreSQL data. Right now all 18 pass.
 
 ## Fields
 
@@ -110,7 +110,7 @@ The Home API also returns the Seller Home sections like Salesforce: close deals,
 backend/
   app/
     main.py          starts the app
-    database.py      MySQL connection
+    database.py      PostgreSQL connection
     models.py        tables (same as database/schema.sql)
     constants.py     dropdown values and the auto tasks for each stage
     services.py      common logic (stage history, auto-close and auto-create tasks)

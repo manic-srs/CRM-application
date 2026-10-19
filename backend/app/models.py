@@ -1,4 +1,4 @@
-"""Python classes that map to the MySQL tables in database/schema.sql.
+"""Python classes that map to the PostgreSQL tables in database/schema.sql.
 The tables are created by the SQL script; these classes only read/write them.
 (server_default=func.now() mirrors DEFAULT CURRENT_TIMESTAMP in the SQL, so tests on SQLite behave the same.)"""
 from datetime import date, datetime
@@ -49,7 +49,7 @@ class Contact(Base):
     first_name: Mapped[str | None] = mapped_column(String(50))
     last_name: Mapped[str] = mapped_column(String(50))
     # filled automatically by the database from first + last name
-    full_name: Mapped[str] = mapped_column(String(101), Computed("TRIM(CONCAT_WS(' ', first_name, last_name))", persisted=True))
+    full_name: Mapped[str] = mapped_column(String(101), Computed("TRIM(COALESCE(first_name || ' ', '') || last_name)", persisted=True))
     job_title: Mapped[str | None] = mapped_column(String(100))
     email: Mapped[str | None] = mapped_column(String(255))
     phone: Mapped[str | None] = mapped_column(String(30))
@@ -70,7 +70,7 @@ class Lead(Base):
     first_name: Mapped[str | None] = mapped_column(String(50))
     last_name: Mapped[str] = mapped_column(String(50))
     # filled automatically by the database from first + last name
-    name: Mapped[str] = mapped_column(String(101), Computed("TRIM(CONCAT_WS(' ', first_name, last_name))", persisted=True))
+    name: Mapped[str] = mapped_column(String(101), Computed("TRIM(COALESCE(first_name || ' ', '') || last_name)", persisted=True))
     company: Mapped[str | None] = mapped_column(String(200))
     title: Mapped[str | None] = mapped_column(String(100))
     industry: Mapped[str | None] = mapped_column(String(100))

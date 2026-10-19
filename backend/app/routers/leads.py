@@ -54,7 +54,7 @@ def list_leads(
         query = query.where(Lead.owner_id == owner_id)
     if search:
         like = f"%{search.strip()}%"
-        query = query.where(or_(Lead.name.like(like), Lead.company.like(like), Lead.email.like(like)))
+        query = query.where(or_(Lead.name.ilike(like), Lead.company.ilike(like), Lead.email.ilike(like)))
     return [lead_out(lead) for lead in db.scalars(query.order_by(Lead.id.desc())).all()]
 
 
