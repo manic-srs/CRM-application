@@ -1,0 +1,20 @@
+{
+  "name": "crm-application",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "node --test src/domain.test.js",
+    "test:integration": "node --test tests/integration.test.js"
+  },
+  "dependencies": {
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "devDependencies": {
+    "vite": "6.4.3"
+  }
+}
