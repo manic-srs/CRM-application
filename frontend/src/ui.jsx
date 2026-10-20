@@ -1,0 +1,238 @@
+// Small building blocks used by every screen: icons, object icons, ring charts, path bar, empty states.
+import React from "react";
+
+const paths = {
+  search: "m21 21-4.4-4.4M19 10.5a8.5 8.5 0 1 1-17 0 8.5 8.5 0 0 1 17 0",
+  plus: "M12 5v14M5 12h14",
+  close: "m6 6 12 12M6 18 18 6",
+  check: "m5 12 4 4L19 6",
+  down: "m6 9 6 6 6-6",
+  right: "m9 6 6 6-6 6",
+  left: "m15 6-6 6 6 6",
+  bell: "M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4",
+  help: "M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2-3 4m0 3h.01M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0",
+  edit: "m15 5 4 4M4 20l4-1L21 6l-4-4L4 15Z",
+  logout: "M9 3H3v18h6m5-14 5 5-5 5m-7-5h14",
+  list: "M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01",
+  kanban: "M3 3h5v18H3ZM10 3h5v12h-5ZM17 3h4v8h-4Z",
+  refresh: "M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7",
+  calendar: "M8 2v4m8-4v4M3 10h18M3 5h18v17H3Z",
+  clock: "M12 8v4l3 2M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0",
+  warn: "M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z",
+  star: "m12 3 2.8 5.7 6.2.9-4.5 4.4 1 6.2L12 17.3l-5.5 2.9 1-6.2L3 9.6l6.2-.9Z",
+  user: "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8",
+  filter: "M3 5h18l-7 8v6l-4 2v-8Z",
+};
+
+export function Icon({ name, size = 16, className = "", ...props }) {
+  if (name === "apps")
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" className={className} {...props}>
+        {[4, 12, 20].flatMap((x) =>
+          [4, 12, 20].map((y) => <circle key={`${x}${y}`} cx={x} cy={y} r="2.2" fill="currentColor" />),
+        )}
+      </svg>
+    );
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+      {...props}
+    >
+      <path d={paths[name] || paths.star} />
+    </svg>
+  );
+}
+
+// Colored square icons per record type (white glyph on a colored tile)
+const glyphs = {
+  lead: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 8c0-3.3 3.1-5.5 7-5.5s7 2.2 7 5.5Zm12.5-11 1.5 1.5 3-3",
+  opportunity: "M12 3 4 7v2h16V7Zm-6 8v6m4-6v6m4-6v6m4-6v6M4 20h16",
+  account: "M5 21V5h9v16m0-10h5v10M8 8h3m-3 4h3m-3 4h3",
+  contact: "M4 5h16v14H4Zm5 4a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm-3 7c.5-1.5 1.6-2 3-2s2.5.5 3 2m3-6h3m-3 3h3",
+  task: "m4 7 2 2 3-3m3 1h8M4 15l2 2 3-3m3 1h8",
+  event: "M5 5h14v15H5Zm3-3v4m8-4v4M5 10h14",
+  note: "M6 3h9l4 4v14H6Zm3 7h7m-7 4h7",
+  home: "M4 11 12 4l8 7v9h-5v-6H9v6H4Z",
+  user: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 8c0-3.3 3.1-5.5 7-5.5s7 2.2 7 5.5Z",
+};
+const tileColor = {
+  lead: "#f88962",
+  opportunity: "#ff5d2d",
+  account: "#5867e8",
+  contact: "#a094ed",
+  task: "#3ba755",
+  event: "#cb65ff",
+  note: "#e6d478",
+  home: "#ef7ead",
+  user: "#1b96ff",
+};
+const typeKey = {
+  Lead: "lead",
+  leads: "lead",
+  Opportunity: "opportunity",
+  opportunities: "opportunity",
+  Account: "account",
+  accounts: "account",
+  Contact: "contact",
+  contacts: "contact",
+  Task: "task",
+  tasks: "task",
+};
+
+export function ObjectIcon({ type, size = 32 }) {
+  const key = typeKey[type] || type;
+  return (
+    <span
+      className="object-icon"
+      style={{ background: tileColor[key], width: size, height: size }}
+      aria-hidden="true"
+    >
+      <svg
+        width={size * 0.62}
+        height={size * 0.62}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="#fff"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d={glyphs[key] || glyphs.note} />
+      </svg>
+    </span>
+  );
+}
+
+// Donut chart. segments: [{ value, color }]. Empty rings are drawn grey.
+export function Ring({ segments, size = 150, stroke = 9, children, label }) {
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const total = segments.reduce((sum, s) => sum + (s.value || 0), 0);
+  let offset = 0;
+  const gap = total && segments.filter((s) => s.value > 0).length > 1 ? 3 : 0;
+  return (
+    <div className="ring" style={{ width: size, height: size }} role="img" aria-label={label}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#e5e5e5" strokeWidth={stroke} />
+        {total > 0 &&
+          segments.map((s, i) => {
+            if (!s.value) return null;
+            const len = (s.value / total) * c;
+            const el = (
+              <circle
+                key={i}
+                cx={size / 2}
+                cy={size / 2}
+                r={r}
+                fill="none"
+                stroke={s.color}
+                strokeWidth={stroke}
+                strokeDasharray={`${Math.max(len - gap, 0.1)} ${c}`}
+                strokeDashoffset={-offset}
+                transform={`rotate(-90 ${size / 2} ${size / 2})`}
+              />
+            );
+            offset += len;
+            return el;
+          })}
+      </svg>
+      <div className="ring-center">{children}</div>
+    </div>
+  );
+}
+
+// Salesforce-style path: chevrons, completed steps get a check
+export function PathBar({ stages, current, closed, onSelect, lostLabel }) {
+  const index = stages.indexOf(current);
+  return (
+    <ol className="path">
+      {stages.map((stage, i) => {
+        const state =
+          lostLabel && i === stages.length - 1
+            ? "lost"
+            : i < index || (closed && i <= index)
+              ? "complete"
+              : i === index
+                ? "current"
+                : "incomplete";
+        return (
+          <li key={stage} className={`path-step ${state}`}>
+            <button
+              type="button"
+              disabled={closed || !onSelect}
+              onClick={() => onSelect?.(stage)}
+              title={stage}
+            >
+              {state === "complete" && <Icon name="check" size={14} className="path-check" />}
+              <span className="path-label">{lostLabel && i === stages.length - 1 ? lostLabel : stage}</span>
+            </button>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+export function StageBadge({ stage }) {
+  return <span className={`stage-badge s-${String(stage).toLowerCase().replace(/\s/g, "-")}`}>{stage}</span>;
+}
+
+export function Card({ title, icon, actions, footer, className = "", children }) {
+  return (
+    <section className={`card ${className}`}>
+      {(title || actions) && (
+        <header className="card-header">
+          {icon && <ObjectIcon type={icon} size={24} />}
+          <h2>{title}</h2>
+          <div className="card-actions">{actions}</div>
+        </header>
+      )}
+      <div className="card-body">{children}</div>
+      {footer && <footer className="card-footer">{footer}</footer>}
+    </section>
+  );
+}
+
+// Simple outdoor illustration for empty states (like the Lightning empty cards)
+export function EmptyState({ text, small = false }) {
+  return (
+    <div className={`empty-state ${small ? "small" : ""}`}>
+      <svg viewBox="0 0 240 90" width={small ? 160 : 230} aria-hidden="true">
+        <g fill="none" stroke="#9bc7f0" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="182" cy="26" r="11" />
+          <circle cx="182" cy="26" r="17" opacity=".5" />
+          <path d="M10 80h220" />
+          <path d="M30 80 62 40l18 22 14-16 30 34" />
+          <path d="M120 80l28-34 28 34" />
+          <path d="M196 80V58m-8 8 8-8 8 8m-8 4-10 10m10-10 10 10" />
+          <path d="M40 22c6 0 6-6 12-6s6 6 12 6" opacity=".6" />
+        </g>
+      </svg>
+      <p>{text}</p>
+    </div>
+  );
+}
+
+export function Avatar({ name, size = 32 }) {
+  const letters = (name || "?")
+    .split(" ")
+    .filter(Boolean)
+    .map((p) => p[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+  return (
+    <span className="avatar" style={{ width: size, height: size, fontSize: size * 0.4 }}>
+      {letters}
+    </span>
+  );
+}

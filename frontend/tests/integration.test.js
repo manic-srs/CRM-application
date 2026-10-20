@@ -122,8 +122,9 @@ test(
       ),
     );
     assert.equal(salesOverview(workspace).wonCount, raw.home.summary.won_deals);
+    // task alerts are emailed and kept as read (not shown on the bell), so read the full list
     const notifications = await apiRequest(
-      `/notifications?user_id=${users[0].id}`,
+      `/notifications?user_id=${users[0].id}&unread_only=false`,
     );
     assert.ok(notifications.length);
     assert.equal(

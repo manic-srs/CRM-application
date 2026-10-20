@@ -84,21 +84,49 @@ export function opportunityPayload(values) {
     owner_id: numeric(values.owner_id),
   };
 }
+const actor = (editing, actorId) =>
+  actorId ? { [editing ? "changed_by_id" : "created_by_id"]: Number(actorId) } : {};
+
+// Multipart upload (email with attachments); JSON errors are read like apiRequest does
+async function upload(path, formData) {
+  let response;
+  try {
+    response = await fetch(`${BASE}${path}`, { method: "POST", body: formData, signal: AbortSignal.timeout(60000) });
+  } catch {
+    throw new Error("Cannot reach the backend. Check that it is running and try again.");
+  }
+  const result = await response.json().catch(() => null);
+  if (!response.ok) {
+    const detail = result?.detail;
+    throw new Error(
+      typeof detail === "string"
+        ? detail
+        : Array.isArray(detail)
+          ? detail.map((d) => `${d.loc.at(-1)}: ${d.msg}`).join("; ")
+          : response.status === 413
+            ? "The attachments are too large."
+            : "The email could not be sent.",
+    );
+  }
+  return result;
+}
+
 export const api = {
-  saveLead: (v, id) =>
+  // actorId = the logged-in user, so the backend can tell an owner "assigned to you by ..."
+  saveLead: (v, id, actorId) =>
     apiRequest(id ? `/leads/${id}` : "/leads", {
       method: id ? "PUT" : "POST",
-      body: leadPayload(v, !!id),
+      body: { ...leadPayload(v, !!id), ...actor(id, actorId) },
     }),
-  saveOpportunity: (v, id) =>
+  saveOpportunity: (v, id, actorId) =>
     apiRequest(`/opportunities/${id}`, {
       method: "PUT",
-      body: opportunityPayload(v),
+      body: { ...opportunityPayload(v), ...actor(id, actorId) },
     }),
-  saveTask: (v, id) =>
+  saveTask: (v, id, actorId) =>
     apiRequest(id ? `/tasks/${id}` : "/tasks", {
       method: id ? "PUT" : "POST",
-      body: taskPayload(v, !!id),
+      body: { ...taskPayload(v, !!id), ...actor(id, actorId) },
     }),
   completeTask: (id) => apiRequest(`/tasks/${id}/complete`, { method: "PUT" }),
   stage: (collection, id, values) =>
@@ -119,6 +147,48 @@ export const api = {
     }),
   readNotification: (id) =>
     apiRequest(`/notifications/${id}/read`, { method: "PUT" }),
+  readAllNotifications: (userId) =>
+    apiRequest(`/notifications/read-all?user_id=${encodeURIComponent(userId)}`, { method: "PUT" }),
+  saveAccount: (v) =>
+    apiRequest("/accounts", {
+      method: "POST",
+      body: {
+        name: v.name.trim(),
+        industry: optional(v.industry),
+        phone: optional(v.phone),
+        website: optional(v.website),
+        address: optional(v.address),
+        owner_id: numeric(v.owner_id),
+      },
+    }),
+  saveContact: (v) =>
+    apiRequest("/contacts", {
+      method: "POST",
+      body: {
+        salutation: optional(v.salutation),
+        first_name: optional(v.first_name?.trim()),
+        last_name: v.last_name.trim(),
+        job_title: optional(v.job_title),
+        email: optional(v.email),
+        phone: optional(v.phone),
+        account_id: Number(v.account_id),
+        owner_id: numeric(v.owner_id),
+      },
+    }),
+  login: (email, password) =>
+    apiRequest("/auth/login", {
+      method: "POST",
+      body: { email: email.trim(), password },
+    }),
+  search: (q) => apiRequest(`/search?q=${encodeURIComponent(q)}`),
+  signup: (values) =>
+    apiRequest("/auth/signup", {
+      method: "POST",
+      body: { full_name: values.full_name.trim(), email: values.email.trim(), password: values.password },
+    }),
+  sendEmail: (formData) => upload("/emails", formData),
+  emails: (field, id) => apiRequest(`/emails?${field}=${encodeURIComponent(id)}`),
+  attachmentUrl: (id) => `${BASE}/emails/attachments/${id}`,
 };
 
 const idText = (value) => (value == null ? "" : String(value));

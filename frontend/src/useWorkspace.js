@@ -11,13 +11,14 @@ const empty = {
   home: null,
   notifications: [],
 };
-export function useWorkspace(collection, id) {
+// userId = the logged-in user: Home cards and the bell show "owned by me".
+export function useWorkspace(collection, id, userId) {
   const [data, setData] = useState(empty);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [hasLoaded, setHasLoaded] = useState(false);
-  const [notificationOwner, setNotificationOwner] = useState("");
+  const notificationOwner = userId ? String(userId) : "";
   const sequence = useRef(0),
     busy = useRef(false);
   const reload = useCallback(async () => {
@@ -33,8 +34,12 @@ export function useWorkspace(collection, id) {
         "contacts",
         "home",
       ];
+      const path = (name) =>
+        name === "home" && notificationOwner
+          ? `/home?owner_id=${notificationOwner}`
+          : `/${name}`;
       const [responses, detail, notifications] = await Promise.all([
-        Promise.all(names.map((name) => apiRequest(`/${name}`))),
+        Promise.all(names.map((name) => apiRequest(path(name)))),
         id && ["leads", "opportunities"].includes(collection)
           ? apiRequest(`/${collection}/${id}`)
           : null,
@@ -106,6 +111,5 @@ export function useWorkspace(collection, id) {
     error,
     hasLoaded,
     notificationOwner,
-    setNotificationOwner,
   };
 }
