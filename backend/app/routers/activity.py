@@ -59,6 +59,16 @@ def notifications(
     return db.scalars(query.order_by(Notification.created_at.desc(), Notification.id.desc())).all()
 
 
+@router.put("/notifications/read-all")
+def mark_all_read(user_id: int, db: Session = Depends(get_db)):
+    """'Mark all as read' on the bell. Returns how many were marked."""
+    items = db.scalars(select(Notification).where(Notification.user_id == user_id, Notification.is_read.is_(False))).all()
+    for item in items:
+        item.is_read = True
+    db.commit()
+    return {"marked": len(items)}
+
+
 @router.put("/notifications/{notification_id}/read", response_model=schemas.NotificationOut)
 def mark_read(notification_id: int, db: Session = Depends(get_db)):
     item = get_or_404(db, Notification, notification_id, "Notification")

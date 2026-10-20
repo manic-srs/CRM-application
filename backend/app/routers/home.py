@@ -2,7 +2,7 @@
 
 - summary, pipeline, todays_tasks, won_vs_lost: same as the SQL views in database/home-page-views.sql
 - seller_home: the Salesforce "Seller Home" cards (Close Deals, Plan My Accounts,
-  Grow Relationships, Build Pipeline, Recent Records)
+  Grow Relationships, Build Pipeline, Key Deals, Today's Events, Recent Records)
 Pass owner_id to see only one salesperson's records ("owned by me").
 """
 from datetime import date, datetime, timedelta
@@ -23,6 +23,14 @@ PIPELINE = [
     ("Opportunity", "opportunities"), ("Proposal", "opportunities"),
     ("Won", "closed deals"), ("Lost", "closed deals"),
 ]
+
+
+def this_quarter() -> tuple[date, date]:
+    """First day of this quarter and first day of the next one."""
+    today = date.today()
+    start = date(today.year, 3 * ((today.month - 1) // 3) + 1, 1)
+    end = date(start.year + (start.month == 10), (start.month + 2) % 12 + 1, 1)
+    return start, end
 
 
 def activity_split(task_lists: list[list[Task]]) -> dict:
@@ -64,16 +72,41 @@ def home_page(owner_id: int | None = Query(None, description="Only this salesper
     todays_tasks = sorted((task_out(t) for t in todays), key=lambda t: (not t.is_overdue, t.due_date))
 
     # ----- Salesforce Seller Home cards -----
-    open_amount = total(Opportunity.expected_value, Opportunity, Opportunity.stage.in_(["Opportunity", "Proposal"]))
     won_amount = total(Opportunity.final_value, Opportunity, Opportunity.stage == "Won")
     lost_amount = total(Opportunity.expected_value, Opportunity, Opportunity.stage == "Lost")
 
+    # Close Deals: opportunities closing this quarter (open ones by expected close date, closed ones by close date)
+    q_start, q_end = this_quarter()
+    my_opps = db.scalars(opps_q).all()
+
+    def close_day(o: Opportunity) -> date | None:
+        return o.closed_at.date() if o.closed_at else o.expected_close_date
+
+    quarter_opps = [o for o in my_opps if close_day(o) and q_start <= close_day(o) < q_end]
+
+    def amount(stage_names, field="expected_value") -> float:
+        return float(sum(getattr(o, field) or 0 for o in quarter_opps if o.stage in stage_names))
+
+    quarter_open = amount(("Opportunity", "Proposal"))
+    quarter_won = amount(("Won",), "final_value")
+    quarter_lost = amount(("Lost",))
+    key_deals = sorted(
+        (o for o in my_opps if o.stage in ("Opportunity", "Proposal")),
+        key=lambda o: float(o.expected_value or 0), reverse=True,
+    )[:5]
+
     accounts = db.scalars(owned(select(Account), Account)).all()
-    contacts = db.scalars(owned(select(Contact), Contact)).all()
+    contacts = db.scalars(owned(select(Contact), Contact).where(Contact.created_at >= now() - timedelta(days=90))).all()
     opps_by_contact: dict[int, list[Task]] = {}
     for opp in db.scalars(select(Opportunity).where(Opportunity.primary_contact_id.is_not(None))).all():
         opps_by_contact.setdefault(opp.primary_contact_id, []).extend(opp.tasks)
     recent_leads = db.scalars(leads_q.where(Lead.created_at >= now() - timedelta(days=30))).all()
+
+    # Today's Events: demos booked for today
+    today_start = datetime.combine(date.today(), datetime.min.time())
+    demos = db.scalars(
+        leads_q.where(Lead.demo_date >= today_start, Lead.demo_date < tomorrow).order_by(Lead.demo_date)
+    ).all()
 
     recent = []
     for model, kind, label in (
@@ -109,11 +142,22 @@ def home_page(owner_id: int | None = Query(None, description="Only this salesper
         ],
         "seller_home": {
             "close_deals": {
-                "total_pipeline": open_amount + won_amount,
-                "open": open_amount,
-                "won": won_amount,
-                "lost": lost_amount,
+                "quarter_start": q_start,
+                "total_pipeline": quarter_open + quarter_won,
+                "open": quarter_open,
+                "won": quarter_won,
+                "lost": quarter_lost,
             },
+            "key_deals": [
+                {"id": o.id, "name": o.name, "account_name": o.account.name if o.account else None, "stage": o.stage,
+                 "amount": float(o.expected_value) if o.expected_value is not None else None,
+                 "close_date": o.expected_close_date}
+                for o in key_deals
+            ],
+            "todays_events": [
+                {"type": "Demo", "lead_id": lead.id, "name": lead.name, "company": lead.company, "start": lead.demo_date}
+                for lead in demos
+            ],
             "accounts": {"total": len(accounts), **activity_split([[t for o in a.opportunities for t in o.tasks] for a in accounts])},
             "contacts": {"total": len(contacts), **activity_split([opps_by_contact.get(c.id, []) for c in contacts])},
             "build_pipeline": {

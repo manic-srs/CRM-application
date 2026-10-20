@@ -12,6 +12,7 @@ from app.database import get_db
 from app.models import Contact, Opportunity
 from app.serializers import history_out, opportunity_detail, opportunity_out
 from app.services import (
+    assignment_notice,
     auto_close_open_tasks,
     create_auto_task,
     get_or_404,
@@ -62,6 +63,8 @@ def get_opportunity(opportunity_id: int, db: Session = Depends(get_db)):
 def update_opportunity(opportunity_id: int, data: schemas.OpportunityUpdate, db: Session = Depends(get_db)):
     opp = get_or_404(db, Opportunity, opportunity_id, "Opportunity")
     changes = data.model_dump(exclude_unset=True)
+    actor = changes.pop("changed_by_id", None)
+    old_owner = opp.owner_id
     if "name" in changes and not changes["name"]:
         raise HTTPException(status_code=400, detail="name can't be empty")
     if changes.get("primary_contact_id") is not None:
@@ -70,6 +73,8 @@ def update_opportunity(opportunity_id: int, data: schemas.OpportunityUpdate, db:
         changes["owner_id"] = resolve_user_id(db, changes["owner_id"])
     for field, value in changes.items():
         setattr(opp, field, value)
+    if opp.owner_id != old_owner:
+        assignment_notice(db, owner_id=opp.owner_id, actor_id=actor, kind="Opportunity", name=opp.name, link=f"/opportunities/{opp.id}")
     db.commit()
     db.refresh(opp)
     return opportunity_out(opp)

@@ -4,6 +4,7 @@ sqlalchemy>=2.0
 psycopg[binary]
 python-dotenv
 bcrypt
+python-multipart  # file uploads (email attachments)
 # tests
 pytest
 httpx

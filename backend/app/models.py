@@ -4,7 +4,7 @@ The tables are created by the SQL script; these classes only read/write them.
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Computed, ForeignKey, String, Text, func
+from sqlalchemy import Computed, ForeignKey, LargeBinary, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -187,8 +187,44 @@ class Notification(Base):
     task_id: Mapped[int | None] = mapped_column(ForeignKey("tasks.id"))
     title: Mapped[str] = mapped_column(String(200))
     message: Mapped[str | None] = mapped_column(String(500))
+    link: Mapped[str | None] = mapped_column(String(200))  # page in the app, e.g. /leads/5
     is_read: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime | None] = mapped_column(server_default=func.now())
 
     user: Mapped[User] = relationship()
     task: Mapped[Task | None] = relationship()
+
+class Email(Base):
+    """An email sent from the CRM to a lead / contact, saved on the record's activity."""
+
+    __tablename__ = "emails"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    subject: Mapped[str] = mapped_column(String(255))
+    body: Mapped[str] = mapped_column(Text)
+    to_address: Mapped[str] = mapped_column(String(500))
+    cc_address: Mapped[str | None] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(10), default="Sent")  # Sent / Failed
+    error: Mapped[str | None] = mapped_column(Text)
+    sent_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    lead_id: Mapped[int | None] = mapped_column(ForeignKey("leads.id"))
+    opportunity_id: Mapped[int | None] = mapped_column(ForeignKey("opportunities.id"))
+    contact_id: Mapped[int | None] = mapped_column(ForeignKey("contacts.id"))
+    account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"))
+    sent_at: Mapped[datetime | None] = mapped_column(server_default=func.now())
+
+    sent_by: Mapped[User] = relationship()
+    attachments: Mapped[list["EmailAttachment"]] = relationship(back_populates="email", cascade="all, delete-orphan")
+
+
+class EmailAttachment(Base):
+    __tablename__ = "email_attachments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email_id: Mapped[int] = mapped_column(ForeignKey("emails.id", ondelete="CASCADE"))
+    filename: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[str] = mapped_column(String(100))
+    size_bytes: Mapped[int]
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+
+    email: Mapped[Email] = relationship(back_populates="attachments")

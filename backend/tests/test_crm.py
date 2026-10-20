@@ -179,8 +179,11 @@ def test_notes_and_notifications(client):
     assert note["created_by_name"] == "Ravi Kumar"
     assert client.post("/api/notes", json={"body": "x"}).status_code == 400
     assert [n["body"] for n in client.get(f"/api/leads/{lead['id']}").json()["notes"]] == ["Demo went well"]
+    # task alerts are kept as read (not on the bell); an assignment from someone else is on the bell
+    assert client.get("/api/notifications", params={"user_id": 2}).json() == []
+    new_lead(client, name="Given Away", created_by_id=1)
     bell = client.get("/api/notifications", params={"user_id": 2}).json()
-    assert len(bell) == 1 and "Make first contact" in bell[0]["message"]
+    assert len(bell) == 1 and bell[0]["title"] == "Lead assigned to you"
     client.put(f"/api/notifications/{bell[0]['id']}/read")
     assert client.get("/api/notifications", params={"user_id": 2}).json() == []
 
@@ -193,17 +196,25 @@ def test_home_page(client):
     client.post(f"/api/leads/{lost['id']}/lost", json={"lost_reason": "Price"})
     won = convert(client, new_lead(client, name="C", company="Won Co")["id"], expected_value=100000)["opportunity"]["id"]
     client.post(f"/api/opportunities/{won}/won", json={"final_value": 90000})
-    convert(client, new_lead(client, name="D", company="Open Co")["id"], expected_value=40000)
+    today = datetime.now().date().isoformat()
+    convert(client, new_lead(client, name="D", company="Open Co")["id"], expected_value=40000, expected_close_date=today)
+    later = (datetime.now() + timedelta(days=200)).date().isoformat()  # next quarter or later: not in Close Deals
+    convert(client, new_lead(client, name="F", company="Later Co")["id"], expected_value=5000, expected_close_date=later)
+    demo = new_lead(client, name="E", company="Demo Co")
+    client.put(f"/api/leads/{demo['id']}/stage", json={"stage": "Demo", "demo_date": f"{today}T23:30:00"})
 
     home = client.get("/api/home").json()
-    assert home["summary"]["total_leads"] == 4 and home["summary"]["won_deals"] == 1
+    assert home["summary"]["total_leads"] == 6 and home["summary"]["won_deals"] == 1
     assert {p["stage"]: p["total"] for p in home["pipeline"]} == {
-        "New": 1, "Nurturing": 0, "Demo": 0, "Opportunity": 1, "Proposal": 0, "Won": 1, "Lost": 1}
+        "New": 1, "Nurturing": 0, "Demo": 1, "Opportunity": 2, "Proposal": 0, "Won": 1, "Lost": 1}
     assert home["won_vs_lost"][0] == {"outcome": "Won", "deals": 1, "value": 90000}
     cards = home["seller_home"]
-    assert cards["close_deals"] == {"total_pipeline": 130000, "open": 40000, "won": 90000, "lost": 0}
-    assert cards["accounts"]["total"] == 2 and cards["contacts"]["total"] == 2
-    assert cards["build_pipeline"]["leads_last_30_days"] == 4
+    deals = cards["close_deals"]
+    assert (deals["total_pipeline"], deals["open"], deals["won"], deals["lost"]) == (130000, 40000, 90000, 0)
+    assert [d["name"] for d in cards["key_deals"]] == ["Open Co - Opportunity", "Later Co - Opportunity"]
+    assert [(e["type"], e["name"]) for e in cards["todays_events"]] == [("Demo", "E")]
+    assert cards["accounts"]["total"] == 3 and cards["contacts"]["total"] == 3
+    assert cards["build_pipeline"]["leads_last_30_days"] == 6
     assert cards["recent_records"]
     assert client.get("/api/home", params={"owner_id": 1}).json()["summary"]["total_leads"] == 0
 

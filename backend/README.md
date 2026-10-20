@@ -18,16 +18,14 @@ docker compose up --build
 
 Then open http://localhost:8001/docs. All the APIs are listed there and you can try them from the browser.
 
-- The first time, PostgreSQL loads `schema.sql`, `home-page-views.sql` and `seed-data.sql` automatically.
-- To start again with fresh sample data: `docker compose down -v` and then `docker compose up --build`
+- The first time, PostgreSQL creates the tables from `schema.sql` and `home-page-views.sql`. There is no sample data: the database starts empty.
+- Create a user with `POST /api/auth/signup` (or the Sign Up page in the app). The first user becomes the Manager, everyone after that is a Salesperson.
+- To start again with an empty database: `docker compose down -v` and then `docker compose up --build`
 - PostgreSQL is on port 5433 (user `crm_user`, password `crm_pass`, database `crm_db`) if you want to check the tables, e.g. in pgAdmin.
 - The API is on port 8001 because 8000 was already used on my laptop.
+- Emails go to a test inbox (Mailpit) at http://localhost:8026, so nothing reaches real people while we test.
 
-Sample users (password for all is `Password@123`):
-
-- priya@crm.test (Manager)
-- ravi@crm.test (Salesperson)
-- anita@crm.test (Salesperson)
+If you want sample records to try things out, load `database/seed-data.sql` by hand (see the top of that file).
 
 ## Running the tests
 
@@ -39,7 +37,7 @@ pip install -r requirements.txt
 pytest -v
 ```
 
-The tests use a temporary database, so they don't touch the PostgreSQL data. Right now all 18 pass.
+The tests use a temporary database and don't send real emails, so they don't touch the PostgreSQL data. Right now all 26 pass.
 
 ## Fields
 
@@ -70,12 +68,46 @@ Probability changes with the stage: Opportunity 20%, Proposal 75%, Won 100%, Los
 - Every stage change is saved in stage history (who changed it, when, and a note).
 - Tasks can belong to a lead, an opportunity, or nothing (general task). Status is Open, Done or Auto-closed.
 
+## Emails and notifications
+
+Send Email (lead, opportunity, contact or account page):
+
+- To, Cc, subject, message and up to 10 attachments (10 MB each, 25 MB in total).
+- The email is saved in the `emails` table and the files in `email_attachments`, so it shows on the record even later.
+- The salesperson's name is shown as the sender and replies go to their own email address.
+- If the mail server can't be reached, the email is still saved with status "Failed" and the reason.
+
+The owner gets an email when:
+
+- a follow-up task is created for them (new lead, stage change, convert)
+- a task's reminder time is reached
+- a task is overdue (once a day while it stays open)
+- someone else assigns a lead, opportunity or task to them
+
+Only assignments show on the bell. Task alerts don't, because the Tasks page and Home already show what is due
+and overdue. When a lead is converted, its emails also show on the new opportunity, contact and account.
+
+Reminders and overdue tasks are checked every minute in the background (`app/scheduler.py`).
+Notification emails are sent only after the change is saved.
+
+Mail settings (environment variables in `docker-compose.yml`; to use a real mail server, put them in a `.env` file,
+see `.env.example` in the main folder):
+
+| Setting | Meaning |
+| --- | --- |
+| `SMTP_HOST`, `SMTP_PORT` | Mail server. Docker uses Mailpit (`mailpit`, `1025`). Empty = no emails are sent |
+| `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_TLS` | For a real company mail server later |
+| `MAIL_FROM` | Sender address |
+| `APP_URL` | Link to the app inside notification emails |
+| `CHECK_INTERVAL_SECONDS` | How often reminders are checked (default 60, 0 = off) |
+
 ## APIs for each screen
 
 All APIs start with `/api`.
 
 | Screen | API |
 | --- | --- |
+| Sign up | POST /auth/signup |
 | Login | POST /auth/login |
 | Users (owner dropdown) | GET /users |
 | Home | GET /home |
@@ -97,12 +129,21 @@ All APIs start with `/api`.
 | Contacts | GET /contacts, POST /contacts, GET /contacts/{id} |
 | Notes | GET /notes, POST /notes |
 | Notifications (bell) | GET /notifications?user_id=, PUT /notifications/{id}/read |
+| Send email | POST /emails (form data with files) |
+| Emails of a record | GET /emails?lead_id= (or opportunity_id, contact_id, account_id) |
+| Download attachment | GET /emails/attachments/{id} |
 | Search box | GET /search?q= |
 | DB check | GET /health/db |
 
 The responses already include names next to the ids (owner_name, account_name, primary_contact_name and so on), so the screens don't need extra calls just to show a name.
 
-The Home API also returns the Seller Home sections like Salesforce: close deals, accounts, contacts, build pipeline and recent records.
+`GET /home?owner_id=` returns the Seller Home cards for one user, like Salesforce:
+
+- Close Deals: my opportunities closing this quarter (open, won and lost amounts)
+- Plan My Accounts / Grow Relationships (contacts from the last 90 days) / Build Pipeline (leads from the last 30 days), each split into upcoming, past and no activity
+- Key Deals: my biggest open opportunities
+- Today's Events: demos booked for today
+- Recent Records
 
 ## Folder structure
 
@@ -113,10 +154,12 @@ backend/
     database.py      PostgreSQL connection
     models.py        tables (same as database/schema.sql)
     constants.py     dropdown values and the auto tasks for each stage
-    services.py      common logic (stage history, auto-close and auto-create tasks)
+    services.py      common logic (stage history, auto-close and auto-create tasks, notifications)
+    mailer.py        sending email (SMTP)
+    scheduler.py     reminder and overdue checks every minute
     schemas.py       request and response formats
     serializers.py   adds names to the responses
-    routers/         the APIs (auth, home, leads, opportunities, tasks, accounts, activity)
+    routers/         the APIs (auth, home, leads, opportunities, tasks, accounts, activity, emails)
   tests/             tests
   Dockerfile
   requirements.txt
@@ -125,4 +168,5 @@ backend/
 ## Not done yet
 
 - Login only checks the email and password. There is no token yet.
-- Phase 2 items are pending: Apollo.io import, bulk upload, email/SMS notifications and email templates.
+- Phase 2 items are pending: Apollo.io import, bulk upload, SMS notifications and email templates.
+- Emails go to the Mailpit test inbox. To send real emails, set the company SMTP settings above.

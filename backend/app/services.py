@@ -12,6 +12,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.constants import AUTO_TASKS
+from app import mailer
 from app.models import Notification, StageHistory, Task, User
 
 
@@ -106,15 +107,54 @@ def create_auto_task(
     )
     db.add(task)
     db.flush()
-    db.add(
-        Notification(
-            user_id=owner_id,
-            task_id=task.id,
-            title="New follow-up task",
-            message=f"{task.title} (due {due:%d %b %Y %H:%M})",
-        )
+    notify(
+        db,
+        owner_id,
+        "New follow-up task",
+        f"{task.title} (due {due:%d %b %Y %I:%M %p})",
+        task_id=task.id,
+        link=record_link(lead_id=lead_id, opportunity_id=opportunity_id),
+        bell=False,
     )
     return task
+
+
+def record_link(*, lead_id: int | None = None, opportunity_id: int | None = None) -> str:
+    """App page for a record, used by notifications."""
+    if lead_id is not None:
+        return f"/leads/{lead_id}"
+    if opportunity_id is not None:
+        return f"/opportunities/{opportunity_id}"
+    return "/tasks"
+
+
+def notify(db: Session, user_id: int, title: str, message: str, *, task_id: int | None = None,
+           link: str | None = None, bell: bool = True) -> None:
+    """Emails the user (after the save is committed) and keeps a record in notifications.
+
+    bell=False: task alerts. They are saved as already read, so they don't show on the bell
+    (the Tasks page and Home already show due and overdue tasks), but the email still goes out.
+    """
+    db.add(Notification(user_id=user_id, task_id=task_id, title=title, message=message[:500], link=link,
+                        is_read=not bell))
+    user = db.get(User, user_id)
+    if user and user.email:
+        mailer.queue(
+            db,
+            user.email,
+            f"[SalesTrack] {title}",
+            f"Hi {user.full_name.split()[0]},\n\n{message}\n\nOpen in SalesTrack: {mailer.app_link(link)}\n\n"
+            "You get this email because you are the owner in SalesTrack CRM.",
+        )
+
+
+def assignment_notice(db: Session, *, owner_id: int, actor_id: int | None, kind: str, name: str, link: str) -> None:
+    """Tells the new owner when someone else assigns a lead, opportunity or task to them."""
+    if actor_id is None or actor_id == owner_id:
+        return
+    actor = db.get(User, actor_id)
+    by = f" by {actor.full_name}" if actor else ""
+    notify(db, owner_id, f"{kind} assigned to you", f"{kind} \"{name}\" was assigned to you{by}.", link=link)
 
 
 def task_related(task: Task) -> tuple[str, str | None]:

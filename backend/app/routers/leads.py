@@ -6,15 +6,16 @@ At each stage the system closes the old follow-up ("Auto-closed") and creates th
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
 from app import schemas
 from app.constants import LEAD_OPEN_STAGES, LEAD_SOURCES, LEAD_STAGES, STAGE_PROBABILITY
 from app.database import get_db
-from app.models import Account, Contact, Lead, Opportunity
+from app.models import Account, Contact, Email, Lead, Opportunity
 from app.serializers import account_out, contact_out, history_out, lead_detail, lead_out, opportunity_out, task_out
 from app.services import (
+    assignment_notice,
     auto_close_open_tasks,
     create_auto_task,
     get_or_404,
@@ -62,12 +63,13 @@ def list_leads(
 def create_lead(data: schemas.LeadCreate, db: Session = Depends(get_db)):
     """Create a lead at stage New. The system adds a 'Make first contact' task for the owner."""
     owner_id = resolve_user_id(db, data.owner_id)
-    lead = Lead(**data.model_dump(exclude={"owner_id"}), owner_id=owner_id, stage="New")
+    lead = Lead(**data.model_dump(exclude={"owner_id", "created_by_id"}), owner_id=owner_id, stage="New")
     db.add(lead)
     db.flush()
     db.refresh(lead)  # loads "name", which the database builds from first + last name
     record_stage_change(db, lead_id=lead.id, from_stage=None, to_stage="New", changed_by_id=owner_id)
     create_auto_task(db, stage="New", owner_id=owner_id, record_name=lead.name, lead_id=lead.id)
+    assignment_notice(db, owner_id=owner_id, actor_id=data.created_by_id, kind="Lead", name=lead.name, link=f"/leads/{lead.id}")
     db.commit()
     db.refresh(lead)
     return lead_detail(lead)
@@ -83,6 +85,8 @@ def get_lead(lead_id: int, db: Session = Depends(get_db)):
 def update_lead(lead_id: int, data: schemas.LeadUpdate, db: Session = Depends(get_db)):
     lead = get_or_404(db, Lead, lead_id, "Lead")
     changes = data.model_dump(exclude_unset=True)
+    actor = changes.pop("changed_by_id", None)
+    old_owner = lead.owner_id
     for field in ("last_name", "company", "source"):  # required, like Salesforce
         if field in changes and not changes[field]:
             raise HTTPException(status_code=400, detail=f"{field} can't be empty")
@@ -90,6 +94,10 @@ def update_lead(lead_id: int, data: schemas.LeadUpdate, db: Session = Depends(ge
         changes["owner_id"] = resolve_user_id(db, changes["owner_id"])
     for field, value in changes.items():
         setattr(lead, field, value)
+    if lead.owner_id != old_owner:
+        db.flush()
+        db.refresh(lead)
+        assignment_notice(db, owner_id=lead.owner_id, actor_id=actor, kind="Lead", name=lead.name, link=f"/leads/{lead.id}")
     db.commit()
     db.refresh(lead)
     return lead_out(lead)
@@ -191,6 +199,11 @@ def convert_lead(lead_id: int, data: schemas.ConvertLead | None = None, db: Sess
     db.add(opportunity)
     db.flush()
 
+    # emails sent to the lead stay visible on the new opportunity, contact and account (like Salesforce)
+    db.execute(
+        update(Email).where(Email.lead_id == lead.id)
+        .values(opportunity_id=opportunity.id, contact_id=contact.id, account_id=account.id)
+    )
     closed = auto_close_open_tasks(db, lead_id=lead.id)
     old = lead.stage
     lead.stage = "Converted"

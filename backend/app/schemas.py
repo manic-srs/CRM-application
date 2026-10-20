@@ -39,6 +39,12 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class SignupRequest(BaseModel):
+    full_name: str = Field(..., min_length=2, max_length=100)
+    email: str = Field(..., max_length=255)
+    password: str = Field(..., min_length=8, max_length=128)
+
+
 class LoginResponse(BaseModel):
     message: str
     user: UserOut
@@ -87,6 +93,7 @@ class TaskCreate(BaseModel):
     owner_id: int | None = None  # default: owner of the lead/opportunity, else the first user
     lead_id: int | None = None
     opportunity_id: int | None = None
+    created_by_id: int | None = None  # logged-in user; the owner is notified when someone else assigns it
 
 
 class TaskUpdate(BaseModel):
@@ -96,6 +103,7 @@ class TaskUpdate(BaseModel):
     reminder_at: datetime | None = None
     priority: Priority | None = None
     owner_id: int | None = None
+    changed_by_id: int | None = None  # logged-in user (not saved; used for the assignment notification)
 
 
 class NoteOut(Out):
@@ -130,6 +138,7 @@ class LeadCreate(BaseModel):
     phone: str | None = Field(None, max_length=30)
     source: LeadSource = "Other"
     owner_id: int | None = None  # default: the first user
+    created_by_id: int | None = None  # logged-in user; the owner is notified when someone else assigns it
 
 
 class LeadUpdate(BaseModel):
@@ -146,6 +155,7 @@ class LeadUpdate(BaseModel):
     source: LeadSource | None = None
     demo_date: datetime | None = None
     owner_id: int | None = None
+    changed_by_id: int | None = None  # logged-in user (not saved; used for the assignment notification)
 
 
 class LeadOut(Out):
@@ -299,6 +309,7 @@ class OpportunityUpdate(BaseModel):
     probability: int | None = Field(None, ge=0, le=100)  # set automatically by stage; can be adjusted
     primary_contact_id: int | None = None
     owner_id: int | None = None
+    changed_by_id: int | None = None  # logged-in user (not saved; used for the assignment notification)
 
 
 class OpportunityStageChange(BaseModel):
@@ -330,8 +341,36 @@ class NotificationOut(Out):
     task_id: int | None
     title: str
     message: str | None
+    link: str | None = None
     is_read: bool
     created_at: datetime | None
+
+
+# ---------- Emails ----------
+
+class AttachmentOut(Out):
+    id: int
+    filename: str
+    content_type: str
+    size_bytes: int
+
+
+class EmailOut(Out):
+    id: int
+    subject: str
+    body: str
+    to_address: str
+    cc_address: str | None
+    status: str
+    error: str | None
+    sent_by_id: int
+    sent_by_name: str | None = None
+    lead_id: int | None
+    opportunity_id: int | None
+    contact_id: int | None
+    account_id: int | None
+    sent_at: datetime | None
+    attachments: list[AttachmentOut] = []
 
 
 class SearchResult(BaseModel):

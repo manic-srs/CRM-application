@@ -4,17 +4,21 @@ Run:   uvicorn app.main:app --reload          (from the backend folder)
        or: docker compose up --build          (PostgreSQL + API, data loaded from database/*.sql)
 Docs:  http://localhost:8000/docs   (Docker: http://localhost:8001/docs)
 """
+import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app import models
 from app.database import Base, SessionLocal, engine, get_db
-from app.routers import accounts, activity, auth, home, leads, opportunities, tasks
+from app import scheduler
+from app.routers import accounts, activity, auth, emails, home, leads, opportunities, tasks
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(name)s - %(message)s")
 
 
 @asynccontextmanager
@@ -22,12 +26,13 @@ async def lifespan(app: FastAPI):
     # With PostgreSQL the tables come from database/schema.sql. Only the local SQLite fallback creates them here.
     if engine.url.get_backend_name() == "sqlite":
         Base.metadata.create_all(bind=engine)
-        with SessionLocal() as db:
-            if db.scalar(select(models.User.id).limit(1)) is None:
-                db.add(models.User(full_name="Demo User", email="demo@crm.test", role="Manager",
-                                   password_hash=auth.hash_password("Password@123")))
-                db.commit()
+    # Task reminders and overdue alerts (set CHECK_INTERVAL_SECONDS=0 to turn off)
+    checker = None
+    if int(os.getenv("CHECK_INTERVAL_SECONDS", "60")) > 0:
+        checker = asyncio.create_task(scheduler.loop(SessionLocal))
     yield
+    if checker:
+        checker.cancel()
 
 
 app = FastAPI(title="CRM API", version="1.0.0", lifespan=lifespan)
@@ -40,7 +45,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for router in (auth.router, home.router, leads.router, opportunities.router, tasks.router, accounts.router, activity.router):
+for router in (auth.router, emails.router, home.router, leads.router, opportunities.router, tasks.router, accounts.router, activity.router):
     app.include_router(router)
 
 

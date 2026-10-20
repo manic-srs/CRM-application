@@ -14,7 +14,7 @@ from app import schemas
 from app.database import get_db
 from app.models import Lead, Opportunity, Task
 from app.serializers import task_out
-from app.services import get_or_404, now, resolve_user_id, start_of_today
+from app.services import assignment_notice, get_or_404, now, record_link, resolve_user_id, start_of_today
 
 router = APIRouter(prefix="/api/tasks", tags=["Tasks"])
 
@@ -62,8 +62,11 @@ def create_task(data: schemas.TaskCreate, db: Session = Depends(get_db)):
     if data.opportunity_id is not None:
         fallback = get_or_404(db, Opportunity, data.opportunity_id, "Opportunity").owner_id
     owner_id = resolve_user_id(db, data.owner_id, fallback)
-    task = Task(**data.model_dump(exclude={"owner_id"}), owner_id=owner_id, status="Open", is_auto=False)
+    task = Task(**data.model_dump(exclude={"owner_id", "created_by_id"}), owner_id=owner_id, status="Open", is_auto=False)
     db.add(task)
+    db.flush()
+    assignment_notice(db, owner_id=owner_id, actor_id=data.created_by_id, kind="Task", name=task.title,
+                      link=record_link(lead_id=task.lead_id, opportunity_id=task.opportunity_id))
     db.commit()
     db.refresh(task)
     return task_out(task)
@@ -78,13 +81,20 @@ def get_task(task_id: int, db: Session = Depends(get_db)):
 def update_task(task_id: int, data: schemas.TaskUpdate, db: Session = Depends(get_db)):
     task = get_or_404(db, Task, task_id, "Task")
     changes = data.model_dump(exclude_unset=True)
+    actor = changes.pop("changed_by_id", None)
+    old_owner = task.owner_id
     for field in ("title", "due_date", "priority"):
         if field in changes and changes[field] is None:
             raise HTTPException(status_code=400, detail=f"{field} can't be empty")
     if "owner_id" in changes:
         changes["owner_id"] = resolve_user_id(db, changes["owner_id"])
+    if "reminder_at" in changes and changes["reminder_at"] != task.reminder_at:
+        task.reminder_sent = False  # a new reminder time sends a new reminder
     for field, value in changes.items():
         setattr(task, field, value)
+    if task.owner_id != old_owner:
+        assignment_notice(db, owner_id=task.owner_id, actor_id=actor, kind="Task", name=task.title,
+                          link=record_link(lead_id=task.lead_id, opportunity_id=task.opportunity_id))
     db.commit()
     db.refresh(task)
     return task_out(task)
