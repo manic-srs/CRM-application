@@ -1,6 +1,8 @@
 -- =====================================================
--- CRM Application - Sample data for testing
--- Run AFTER schema.sql, connected to crm_db
+-- CRM Application - Sample data for testing (OPTIONAL)
+-- Docker does NOT load this file: the app starts empty and users sign up.
+-- To try the app with sample records, run it by hand AFTER schema.sql, connected to crm_db:
+--   docker compose exec -T db psql -U crm_user -d crm_db < database/seed-data.sql
 -- All users' password: Password@123
 -- =====================================================
 -- ---------- USERS ----------
@@ -28,7 +30,7 @@ INSERT INTO contacts (id, salutation, first_name, last_name, job_title, email, a
 INSERT INTO leads (id, salutation, first_name, last_name, company, title, industry, email, phone, source, stage, demo_date, lost_reason, lost_notes, converted_at, closed_at, owner_id) VALUES
 (1, 'Mr.', 'Vikram', 'Singh', 'BrightPath Schools', 'Principal',              'Education',     'vikram@brightpath.in',      '+91 98450 11111', 'Website',  'New',       NULL, NULL, NULL, NULL, NULL, 2),
 (2, 'Ms.', 'Neha',   'Gupta', 'UrbanNest Realty',   'Sales Director',         'Real Estate',   'neha@urbannest.in',         '+91 98450 22222', 'Referral', 'Nurturing', NULL, NULL, NULL, NULL, NULL, 3),
-(3, 'Mr.', 'Rohit',  'Verma', 'CloudKart',          'CTO',                    'E-commerce',    'rohit@cloudkart.in',        '+91 98450 33333', 'Event',    'Demo', NOW() + INTERVAL '3 days', NULL, NULL, NULL, NULL, 2),
+(3, 'Mr.', 'Rohit',  'Verma', 'CloudKart',          'CTO',                    'E-commerce',    'rohit@cloudkart.in',        '+91 98450 33333', 'Event',    'Demo', CURRENT_DATE + INTERVAL '15 hours', NULL, NULL, NULL, NULL, 2),
 (4, 'Ms.', 'Pooja',  'Joshi', 'FreshMart',          'Store Manager',          'Retail',        'pooja@freshmart.in',        '+91 98450 44444', 'Phone',    'Lost', NULL, 'No response', 'No reply after 3 calls and 2 emails', NULL, NOW() - INTERVAL '5 days', 3),
 -- converted leads (each became an opportunity)
 (5, 'Dr.', 'Meera',  'Iyer',  'Sunrise Hospitals',  'Director of Operations', 'Healthcare',    'meera@sunrisehospitals.in', NULL, 'Referral', 'Converted', NULL, NULL, NULL, NOW() - INTERVAL '4 days',  NULL, 2),
@@ -41,13 +43,13 @@ INSERT INTO opportunities (id, name, stage, probability, expected_value, final_v
 (1, 'Sunrise Hospitals - CRM rollout',    'Opportunity',  20,  850000.00, NULL,      CURRENT_DATE + 40, NULL, NULL, NULL, 1, 1, 5, 2),
 (2, 'GreenLeaf Foods - Sales automation', 'Proposal',     75, 1200000.00, NULL,      CURRENT_DATE + 20, NULL, NULL, NULL, 2, 3, 6, 3),
 (3, 'Apex Logistics - Fleet CRM',         'Won',         100,  700000.00, 640000.00, CURRENT_DATE - 3,  NULL, NULL, NOW() - INTERVAL '3 days', 3, 4, 7, 2),
-(4, 'Nova Textiles - Dealer portal',      'Lost',          0,  500000.00, NULL,      NULL, 'Competitor', 'Chose a cheaper local vendor', NOW() - INTERVAL '7 days', 4, 5, 8, 3);
+(4, 'Nova Textiles - Dealer portal',      'Lost',          0,  500000.00, NULL,      CURRENT_DATE - 7, 'Competitor', 'Chose a cheaper local vendor', NOW() - INTERVAL '7 days', 4, 5, 8, 3);
 
 -- ---------- TASKS (on leads and on opportunities) ----------
 INSERT INTO tasks (title, due_date, reminder_at, status, priority, is_auto, completed_at, owner_id, lead_id, opportunity_id) VALUES
 ('Make first contact',           CURRENT_DATE + INTERVAL '17 hours', CURRENT_DATE + INTERVAL '16 hours',                    'Open',        'High',   TRUE,  NULL,                   2, 1,    NULL),
 ('Follow-up call',               NOW() - INTERVAL '2 days',  NULL,                    'Open',        'Normal', TRUE,  NULL,                   3, 2,    NULL),  -- OVERDUE
-('Conduct demo',                 NOW() + INTERVAL '3 days',  NOW() + INTERVAL '2 days',  'Open',        'High',   TRUE,  NULL,                   2, 3,    NULL),
+('Conduct demo',                 CURRENT_DATE + INTERVAL '15 hours', CURRENT_DATE + INTERVAL '14 hours',  'Open',        'High',   TRUE,  NULL,                   2, 3,    NULL),
 ('Follow-up call',               NOW() - INTERVAL '6 days',  NULL,                    'Auto-closed', 'Normal', TRUE,  NOW() - INTERVAL '5 days', 3, 4,    NULL),
 ('Prepare pricing for proposal', CURRENT_DATE + INTERVAL '15 hours', NULL,                    'Open',        'Normal', FALSE, NULL,                   2, NULL, 1),
 ('Send proposal',                NOW() - INTERVAL '5 days',  NULL,                    'Done',        'Normal', TRUE,  NOW() - INTERVAL '5 days', 3, NULL, 2),
