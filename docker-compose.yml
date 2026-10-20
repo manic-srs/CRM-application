@@ -1,7 +1,9 @@
-# Starts PostgreSQL with the tables and home-page views from database/ (the database starts empty).
-#   docker compose up
+# Starts PostgreSQL (tables and views from database/), the CRM API and a test mailbox for its emails.
+#   docker compose up --build
+#   API docs:    http://localhost:8001/docs
+#   Test inbox:  http://localhost:8026
 #   PostgreSQL:  localhost:5433  (user crm_user / crm_pass, database crm_db)
-# Start fresh:  docker compose down -v && docker compose up
+# Start fresh (empty database):  docker compose down -v && docker compose up --build
 name: crm-app
 
 services:
@@ -26,5 +28,32 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
+
+  api:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://crm_user:crm_pass@db:5432/crm_db
+      FRONTEND_URL: http://localhost:5173
+      APP_URL: http://localhost:5173       # link in notification emails
+      # Mail: the test inbox (mailpit) unless a .env file next to this file sets a real server (see .env.example)
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_TLS: ${SMTP_TLS:-false}
+      MAIL_FROM: ${MAIL_FROM:-crm@salestrack.local}
+      TZ: America/New_York     # same clock for PostgreSQL and the API, so "today" matches
+    ports:
+      - "8001:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "8026:8025"   # web inbox
 
 volumes:

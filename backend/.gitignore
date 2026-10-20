@@ -1,0 +1,3 @@
+# Local SQLite fallback database and secrets
+*.db
+.env
