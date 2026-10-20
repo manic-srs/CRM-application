@@ -1,0 +1,30 @@
+# Starts PostgreSQL with the tables and home-page views from database/ (the database starts empty).
+#   docker compose up
+#   PostgreSQL:  localhost:5433  (user crm_user / crm_pass, database crm_db)
+# Start fresh:  docker compose down -v && docker compose up
+name: crm-app
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: crm_user
+      POSTGRES_PASSWORD: crm_pass
+      POSTGRES_DB: crm_db
+      TZ: America/New_York     # same clock for PostgreSQL and the API, so "today" matches
+      PGTZ: America/New_York
+    ports:
+      - "5433:5432"
+    volumes:
+      - crm_pg_data:/var/lib/postgresql/data
+      # run in this order on the first start only (create-user.sql is not needed: POSTGRES_USER/DB above create them).
+      # seed-data.sql is not loaded: the app starts empty and users sign up.
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./database/home-page-views.sql:/docker-entrypoint-initdb.d/02-home-page-views.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crm_user -d crm_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+volumes:
