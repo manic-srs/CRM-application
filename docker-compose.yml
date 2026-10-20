@@ -1,9 +1,10 @@
-# Starts PostgreSQL (tables and views from database/), the CRM API and a test mailbox for its emails.
+# Starts the whole app: PostgreSQL (schema, home-page views and sample data from database/),
+# the CRM API and the React frontend.
 #   docker compose up --build
+#   App:         http://localhost:5173
 #   API docs:    http://localhost:8001/docs
-#   Test inbox:  http://localhost:8026
 #   PostgreSQL:  localhost:5433  (user crm_user / crm_pass, database crm_db)
-# Start fresh (empty database):  docker compose down -v && docker compose up --build
+# Start fresh (reload the SQL files):  docker compose down -v && docker compose up --build
 name: crm-app
 
 services:
@@ -19,10 +20,10 @@ services:
       - "5433:5432"
     volumes:
       - crm_pg_data:/var/lib/postgresql/data
-      # run in this order on the first start only (create-user.sql is not needed: POSTGRES_USER/DB above create them).
-      # seed-data.sql is not loaded: the app starts empty and users sign up.
+      # run in this order on the first start only (create-user.sql is not needed: POSTGRES_USER/DB above create them)
       - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
       - ./database/home-page-views.sql:/docker-entrypoint-initdb.d/02-home-page-views.sql:ro
+      - ./database/seed-data.sql:/docker-entrypoint-initdb.d/03-seed-data.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U crm_user -d crm_db"]
       interval: 5s
@@ -34,26 +35,19 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://crm_user:crm_pass@db:5432/crm_db
       FRONTEND_URL: http://localhost:5173
-      APP_URL: http://localhost:5173       # link in notification emails
-      # Mail: the test inbox (mailpit) unless a .env file next to this file sets a real server (see .env.example)
-      SMTP_HOST: ${SMTP_HOST:-mailpit}
-      SMTP_PORT: ${SMTP_PORT:-1025}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      SMTP_TLS: ${SMTP_TLS:-false}
-      MAIL_FROM: ${MAIL_FROM:-crm@salestrack.local}
       TZ: America/New_York     # same clock for PostgreSQL and the API, so "today" matches
     ports:
       - "8001:8000"
     depends_on:
       db:
         condition: service_healthy
-      mailpit:
-        condition: service_started
 
-  mailpit:
-    image: axllent/mailpit:latest
+  frontend:
+    build: ./frontend
     ports:
-      - "8026:8025"   # web inbox
+      - "5173:80"
+    depends_on:
+      - api
 
 volumes:
+  crm_pg_data:
