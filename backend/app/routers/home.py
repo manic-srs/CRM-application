@@ -3,7 +3,7 @@
 - summary, pipeline, todays_tasks, won_vs_lost: same as the SQL views in database/home-page-views.sql
 - seller_home: the Salesforce "Seller Home" cards (Close Deals, Plan My Accounts,
   Grow Relationships, Build Pipeline, Key Deals, Today's Events, Recent Records)
-Pass owner_id to see only one salesperson's records ("owned by me").
+Pass owner_id to see only one salesperson's records ("owned by me"); leave it out for the whole team.
 """
 from datetime import date, datetime, timedelta
 
@@ -167,3 +167,4 @@ def home_page(owner_id: int | None = Query(None, description="Only this salesper
             "recent_records": recent[:8],
         },
     }
+

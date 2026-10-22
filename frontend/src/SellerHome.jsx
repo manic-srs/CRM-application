@@ -87,9 +87,12 @@ function assistantItems(data, user) {
   return items.slice(0, 6);
 }
 
-export default function SellerHome({ data, user, toggleTask, openTask }) {
+export default function SellerHome({ data, user, toggleTask, openTask, scope = "team", setScope = () => {} }) {
   const home = data.home?.seller_home;
   if (!home) return null;
+  const team = scope === "team";
+  const who = team ? "owned by the team" : "owned by me";
+  const myList = (collection, mineView, teamView) => list(collection, team ? teamView : mineView);
   const deals = home.close_deals;
   const myTasks = (data.home.todays_tasks || [])
     .map((t) => data.tasks.find((x) => x.id === String(t.id)))
@@ -103,6 +106,14 @@ export default function SellerHome({ data, user, toggleTask, openTask }) {
         <p>
           {greeting()}, {firstName(user.full_name)}. Let's get selling!
         </p>
+        <div className="toggle-group scope-toggle" role="group" aria-label="Show records">
+          <button className={team ? "on" : ""} aria-pressed={team} onClick={() => setScope("team")}>
+            Whole team
+          </button>
+          <button className={team ? "" : "on"} aria-pressed={!team} onClick={() => setScope("mine")}>
+            My records
+          </button>
+        </div>
       </div>
 
       <div className="home-grid">
@@ -111,7 +122,7 @@ export default function SellerHome({ data, user, toggleTask, openTask }) {
           className="home-card"
           footer={<ViewButton href="#/opportunities">View Opportunities</ViewButton>}
         >
-          <p className="card-sub">Opportunities owned by me and closing this quarter</p>
+          <p className="card-sub">Opportunities {who} and closing this quarter</p>
           <div className="ring-row">
             <Ring
               label={`Total pipeline ${compact(deals.total_pipeline)}`}
@@ -126,47 +137,47 @@ export default function SellerHome({ data, user, toggleTask, openTask }) {
             </Ring>
             <Legend
               items={[
-                ["open", `${compact(deals.open)} Open`, list("opportunities", "My Open Opportunities")],
-                ["won", `${compact(deals.won)} Won`, list("opportunities", "My Won Opportunities")],
-                ["lost", `${compact(deals.lost)} Lost`, list("opportunities", "My Lost Opportunities")],
+                ["open", `${compact(deals.open)} Open`, myList("opportunities", "My Open Opportunities", "Open Opportunities")],
+                ["won", `${compact(deals.won)} Won`, myList("opportunities", "My Won Opportunities", "Won Opportunities")],
+                ["lost", `${compact(deals.lost)} Lost`, myList("opportunities", "My Lost Opportunities", "Lost Opportunities")],
               ]}
             />
           </div>
         </Card>
 
         <ActivityCard
-          title="Plan My Accounts"
-          subtitle="Accounts owned by me"
+          title={team ? "Plan Accounts" : "Plan My Accounts"}
+          subtitle={`Accounts ${who}`}
           stats={home.accounts}
           total={home.accounts.total}
           noun="Accounts"
           href="#/accounts"
-          listHref={list("accounts", "My Accounts")}
+          listHref={myList("accounts", "My Accounts", "All Accounts")}
           button="View Accounts"
         />
         <ActivityCard
           title="Grow Relationships"
-          subtitle="Contacts owned by me and created in the last 90 days"
+          subtitle={`Contacts ${who} and created in the last 90 days`}
           stats={home.contacts}
           total={home.contacts.total}
           noun="Contacts"
           href="#/contacts"
-          listHref={list("contacts", "My Contacts")}
+          listHref={myList("contacts", "My Contacts", "All Contacts")}
           button="View Contacts"
         />
         <ActivityCard
           title="Build Pipeline"
-          subtitle="Leads owned by me and created in the last 30 days"
+          subtitle={`Leads ${who} and created in the last 30 days`}
           stats={home.build_pipeline}
           total={home.build_pipeline.leads_last_30_days}
           noun="Leads"
           href="#/leads"
-          listHref={list("leads", "My Open Leads")}
+          listHref={myList("leads", "My Open Leads", "All Open Leads")}
           button="View Leads"
         />
 
         <Card title="Key Deals" className="home-card" footer={<ViewButton href="#/opportunities">View All</ViewButton>}>
-          <p className="card-sub">My open opportunities, largest first</p>
+          <p className="card-sub">{team ? "Open opportunities" : "My open opportunities"}, largest first</p>
           {home.key_deals.length ? (
             <ul className="deal-list">
               {home.key_deals.map((d) => (

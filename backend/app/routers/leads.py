@@ -21,7 +21,14 @@ from app.services import (
     get_or_404,
     now,
     record_stage_change,
+    notify,
+    reassign_system_tasks,
+    record_link,
     resolve_user_id,
+    schedule_close_date_task,
+    schedule_demo_tasks,
+    stage_notice,
+    task_line,
 )
 
 router = APIRouter(prefix="/api/leads", tags=["Leads"])
@@ -68,8 +75,15 @@ def create_lead(data: schemas.LeadCreate, db: Session = Depends(get_db)):
     db.flush()
     db.refresh(lead)  # loads "name", which the database builds from first + last name
     record_stage_change(db, lead_id=lead.id, from_stage=None, to_stage="New", changed_by_id=owner_id)
-    create_auto_task(db, stage="New", owner_id=owner_id, record_name=lead.name, lead_id=lead.id)
-    assignment_notice(db, owner_id=owner_id, actor_id=data.created_by_id, kind="Lead", name=lead.name, link=f"/leads/{lead.id}")
+    task = create_auto_task(db, stage="New", owner_id=owner_id, record_name=lead.name, lead_id=lead.id)
+    # one notification for the new lead; it says so when someone else created it for the owner
+    assigned = data.created_by_id is not None and data.created_by_id != owner_id
+    stage_notice(
+        db, kind="Lead", stage="New", record_name=lead.name, owner_id=owner_id,
+        actor_id=data.created_by_id, lead_id=lead.id, task=task,
+        title="Lead assigned to you" if assigned else None,
+        details=[f"Company: {lead.company}", f"Source: {lead.source}"],
+    )
     db.commit()
     db.refresh(lead)
     return lead_detail(lead)
@@ -87,6 +101,7 @@ def update_lead(lead_id: int, data: schemas.LeadUpdate, db: Session = Depends(ge
     changes = data.model_dump(exclude_unset=True)
     actor = changes.pop("changed_by_id", None)
     old_owner = lead.owner_id
+    old_demo = lead.demo_date
     for field in ("last_name", "company", "source"):  # required, like Salesforce
         if field in changes and not changes[field]:
             raise HTTPException(status_code=400, detail=f"{field} can't be empty")
@@ -97,7 +112,17 @@ def update_lead(lead_id: int, data: schemas.LeadUpdate, db: Session = Depends(ge
     if lead.owner_id != old_owner:
         db.flush()
         db.refresh(lead)
+        reassign_system_tasks(db, lead.owner_id, lead_id=lead.id)  # follow-ups and reminders go to the new owner
         assignment_notice(db, owner_id=lead.owner_id, actor_id=actor, kind="Lead", name=lead.name, link=f"/leads/{lead.id}")
+    if lead.stage == "Demo" and lead.demo_date != old_demo:
+        # demo rescheduled: move the demo reminders and tell the owner
+        prep = schedule_demo_tasks(db, lead)
+        if lead.demo_date is not None:
+            was = f" (was {old_demo:%d %b %Y %I:%M %p})" if old_demo else ""
+            notify(db, lead.owner_id, "Lead demo rescheduled",
+                   "\n".join([f'Demo with "{lead.name}" is now on {lead.demo_date:%d %b %Y at %I:%M %p}{was}.',
+                               *task_line("Prep reminder", prep)]),
+                   link=record_link(lead_id=lead.id))
     db.commit()
     db.refresh(lead)
     return lead_out(lead)
@@ -121,7 +146,7 @@ def change_stage(lead_id: int, data: schemas.LeadStageChange, db: Session = Depe
         lead.demo_date = data.demo_date
     record_stage_change(db, lead_id=lead.id, from_stage=old, to_stage=data.stage, changed_by_id=by, note=data.note)
     auto_close_open_tasks(db, lead_id=lead.id)
-    create_auto_task(
+    task = create_auto_task(
         db,
         stage=data.stage,
         owner_id=lead.owner_id,
@@ -129,6 +154,16 @@ def change_stage(lead_id: int, data: schemas.LeadStageChange, db: Session = Depe
         lead_id=lead.id,
         due_date=data.demo_date if data.stage == "Demo" else None,
     )
+    details = []
+    if data.stage == "Demo":
+        prep = schedule_demo_tasks(db, lead)  # "Conduct demo" reminder + day-before prep task
+        if lead.demo_date:
+            details.append(f"Demo date: {lead.demo_date:%d %b %Y %I:%M %p}")
+        details += task_line("Prep reminder", prep)
+    if data.note:
+        details.append(f"Note: {data.note}")
+    stage_notice(db, kind="Lead", stage=data.stage, record_name=lead.name, owner_id=lead.owner_id,
+                 actor_id=by, lead_id=lead.id, task=task, details=details)
     db.commit()
     db.refresh(lead)
     return lead_detail(lead)
@@ -147,6 +182,11 @@ def mark_lost(lead_id: int, data: schemas.MarkLost, db: Session = Depends(get_db
     lead.closed_at = now()
     record_stage_change(db, lead_id=lead.id, from_stage=old, to_stage="Lost", changed_by_id=by, note=data.lost_notes)
     auto_close_open_tasks(db, lead_id=lead.id)
+    details = [f"Lost at stage: {old}", f"Reason: {data.lost_reason}"]
+    if data.lost_notes:
+        details.append(f"Notes: {data.lost_notes}")
+    stage_notice(db, kind="Lead", stage="Lost", record_name=lead.name, owner_id=lead.owner_id,
+                 actor_id=by, lead_id=lead.id, details=details)
     db.commit()
     db.refresh(lead)
     return lead_detail(lead)
@@ -213,6 +253,13 @@ def convert_lead(lead_id: int, data: schemas.ConvertLead | None = None, db: Sess
     task = create_auto_task(
         db, stage="Opportunity", owner_id=lead.owner_id, record_name=opportunity.name, opportunity_id=opportunity.id
     )
+    details = [f"Converted from lead: {lead.name}", f"Account: {account.name}"]
+    if opportunity.expected_value is not None:
+        details.append(f"Amount: ${opportunity.expected_value:,.2f}")
+    details.append(f"Close date: {opportunity.expected_close_date:%d %b %Y}")
+    details += task_line("Close date reminder", schedule_close_date_task(db, opportunity))
+    stage_notice(db, kind="Opportunity", stage="Opportunity", record_name=opportunity.name, owner_id=lead.owner_id,
+                 actor_id=by, opportunity_id=opportunity.id, task=task, details=details)
     db.commit()
     for record in (lead, account, contact, opportunity, task):
         db.refresh(record)

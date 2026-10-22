@@ -22,9 +22,11 @@ services:
     volumes:
       - crm_pg_data:/var/lib/postgresql/data
       # run in this order on the first start only (create-user.sql is not needed: POSTGRES_USER/DB above create them).
-      # seed-data.sql is not loaded: the app starts empty and users sign up.
+      # 03-seed-data.sql loads the sample (test) data. New records are saved next to it and kept in the
+      # crm_pg_data volume across restarts. Remove the 03 line to start with an empty database instead.
       - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
       - ./database/home-page-views.sql:/docker-entrypoint-initdb.d/02-home-page-views.sql:ro
+      - ./database/seed-data.sql:/docker-entrypoint-initdb.d/03-seed-data.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U crm_user -d crm_db"]
       interval: 5s
@@ -34,9 +36,11 @@ services:
   api:
     build: ./backend
     environment:
-      DATABASE_URL: postgresql+psycopg://crm_user:crm_pass@db:5432/crm_db
-      FRONTEND_URL: http://localhost:5173
-      APP_URL: http://localhost:5173       # link in notification emails
+      # One shared database for every login. To share one database between several computers,
+      # set DATABASE_URL in .env to that PostgreSQL server (see .env.example).
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://crm_user:crm_pass@db:5432/crm_db}
+      FRONTEND_URL: ${APP_URL:-http://localhost:5173}
+      APP_URL: ${APP_URL:-http://localhost:5173}       # link in notification emails
       # Mail: the test inbox (mailpit) unless a .env file next to this file sets a real server (see .env.example)
       SMTP_HOST: ${SMTP_HOST:-mailpit}
       SMTP_PORT: ${SMTP_PORT:-1025}

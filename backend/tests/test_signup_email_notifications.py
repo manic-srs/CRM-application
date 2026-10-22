@@ -36,6 +36,14 @@ def test_signup_creates_salesperson_and_can_log_in(client):
     assert client.post("/api/auth/login", json={"email": "naga@example.com", "password": "Sales2026"}).status_code == 200
 
 
+def test_signup_with_chosen_role(client):
+    base = {"full_name": "New Person", "password": "Sales2026"}
+    for i, role in enumerate(["Salesperson", "Manager", "Admin"]):
+        res = client.post("/api/auth/signup", json={**base, "email": f"p{i}@example.com", "role": role})
+        assert res.status_code == 201 and res.json()["user"]["role"] == role
+    assert client.post("/api/auth/signup", json={**base, "email": "x@example.com", "role": "Owner"}).status_code == 422
+
+
 def test_signup_validation(client):
     ok = {"full_name": "A Person", "email": "a@b.co", "password": "Sales2026"}
     assert client.post("/api/auth/signup", json={**ok, "email": "not-an-email"}).status_code == 422
@@ -93,12 +101,45 @@ def test_email_validation_and_failed_send(client, monkeypatch):
 
 # ---------- notifications ----------
 
-def test_follow_up_task_emails_owner_but_not_on_bell(client, outbox):
+def test_lead_created_notifies_owner_on_bell_and_email(client, outbox):
     lead = new_lead(client)
-    assert client.get("/api/notifications", params={"user_id": 2}).json() == []  # bell: nothing
-    log = client.get("/api/notifications", params={"user_id": 2, "unread_only": False}).json()
-    assert log[0]["title"] == "New follow-up task" and log[0]["link"] == f"/leads/{lead['id']}"
-    assert outbox[-1]["to"] == ["ravi@crm.test"] and "[SalesTrack] New follow-up task" in outbox[-1]["subject"]
+    bell = client.get("/api/notifications", params={"user_id": 2}).json()
+    assert len(bell) == 1 and bell[0]["title"] == "Lead created" and bell[0]["link"] == f"/leads/{lead['id']}"
+    assert len(outbox) == 1  # one email per step (the follow-up task is inside it)
+    mail = outbox[0]
+    assert mail["to"] == ["ravi@crm.test"] and mail["subject"] == "[SalesTrack] Lead created"
+    assert "Next follow-up: Make first contact - Maria Lopez" in mail["body"]
+
+
+def test_every_step_sends_one_notification_and_email(client, outbox):
+    lead = new_lead(client)
+    lid = lead["id"]
+    demo = (datetime.now() + timedelta(days=2)).replace(microsecond=0, second=0).isoformat()
+    assert client.put(f"/api/leads/{lid}/stage", json={"stage": "Nurturing"}).status_code == 200
+    assert client.put(f"/api/leads/{lid}/stage", json={"stage": "Demo", "demo_date": demo}).status_code == 200
+    opp = client.post(f"/api/leads/{lid}/convert", json={"expected_value": 25000}).json()["opportunity"]
+    assert client.put(f"/api/opportunities/{opp['id']}/stage", json={"stage": "Proposal"}).status_code == 200
+    assert client.post(f"/api/opportunities/{opp['id']}/won", json={}).status_code == 200
+
+    subjects = [m["subject"].removeprefix("[SalesTrack] ") for m in outbox]
+    assert subjects == ["Lead created", "Lead moved to Nurturing", "Lead moved to Demo",
+                        "Opportunity created", "Opportunity moved to Proposal", "Opportunity won"]
+    assert all(m["to"] == ["ravi@crm.test"] for m in outbox)
+    assert "Demo date:" in outbox[2]["body"] and "Amount: $25,000.00" in outbox[3]["body"]
+    assert "Final amount: $25,000.00" in outbox[5]["body"]
+    bell = [n["title"] for n in client.get("/api/notifications", params={"user_id": 2}).json()]
+    assert sorted(bell) == sorted(subjects)
+
+
+def test_lost_steps_notify_owner(client, outbox):
+    lead = new_lead(client)
+    client.post(f"/api/leads/{lead['id']}/lost", json={"lost_reason": "No budget", "lost_notes": "Next year"})
+    assert outbox[-1]["subject"] == "[SalesTrack] Lead lost"
+    assert "Reason: No budget" in outbox[-1]["body"] and "Notes: Next year" in outbox[-1]["body"]
+    other = new_lead(client, last_name="Diaz")
+    opp = client.post(f"/api/leads/{other['id']}/convert", json={"expected_value": 1000}).json()["opportunity"]
+    client.post(f"/api/opportunities/{opp['id']}/lost", json={"lost_reason": "Competitor"})
+    assert outbox[-1]["subject"] == "[SalesTrack] Opportunity lost" and "Reason: Competitor" in outbox[-1]["body"]
 
 
 def test_assignment_notifies_new_owner(client, outbox):
@@ -128,7 +169,8 @@ def test_reminder_and_overdue_checks(client, outbox):
     outbox.clear()
 
     assert scheduler.run_checks(db) == {"reminders": 1, "overdue": 1}
-    assert client.get("/api/notifications", params={"user_id": 2}).json() == []  # not on the bell
+    # the reminder is on the bell; the overdue alert is email only
+    assert [n["title"] for n in client.get("/api/notifications", params={"user_id": 2}).json()] == ["Task reminder"]
     titles = [n["title"] for n in client.get("/api/notifications", params={"user_id": 2, "unread_only": False}).json()]
     assert {"Task reminder", "Task overdue"} <= set(titles)
     assert {m["subject"] for m in outbox} == {"[SalesTrack] Task reminder", "[SalesTrack] Task overdue"}
@@ -162,3 +204,33 @@ def test_lead_emails_move_to_opportunity_on_convert(client, outbox):
     for field, record in (("opportunity_id", "opportunity"), ("contact_id", "contact"), ("account_id", "account")):
         assert [e["subject"] for e in client.get("/api/emails", params={field: result[record]["id"]}).json()] == ["Intro"]
     assert client.get("/api/emails", params={"lead_id": lead["id"]}).json()[0]["subject"] == "Intro"
+
+
+def test_demo_reminder_is_sent_before_the_demo(client, outbox):
+    lead = new_lead(client)
+    demo = (datetime.now() + timedelta(minutes=30)).replace(microsecond=0)  # reminder time (1 hour before) has passed
+    client.put(f"/api/leads/{lead['id']}/stage", json={"stage": "Demo", "demo_date": demo.isoformat()})
+    outbox.clear()
+    db = db_session()
+    assert scheduler.run_checks(db)["reminders"] == 1
+    db.close()
+    assert outbox[-1]["subject"] == "[SalesTrack] Task reminder" and "Conduct demo - Maria Lopez" in outbox[-1]["body"]
+
+
+def test_email_health_and_test_email(client, outbox, monkeypatch):
+    monkeypatch.setenv("SMTP_HOST", "mailpit")
+    monkeypatch.setenv("SMTP_PORT", "1025")
+    assert client.get("/api/health/email").json()["mode"] == "test inbox"
+    res = client.post("/api/health/email/test", json={"to": "me@example.com"})
+    assert res.status_code == 200 and outbox[-1]["to"] == ["me@example.com"]
+    assert client.post("/api/health/email/test", json={"to": "nope"}).status_code == 422
+    monkeypatch.setattr(mailer, "send", lambda *a, **k: "Authentication failed")
+    assert client.post("/api/health/email/test", json={"to": "me@example.com"}).status_code == 502
+
+
+def test_gmail_app_password_spaces_are_removed(monkeypatch):
+    monkeypatch.setenv("SMTP_HOST", "smtp.gmail.com")
+    monkeypatch.setenv("SMTP_PASSWORD", "abcd efgh ijkl mnop")
+    assert mailer.settings()["password"] == "abcdefghijklmnop"
+    monkeypatch.setenv("SMTP_HOST", "smtp.office365.com")
+    assert mailer.settings()["password"] == "abcd efgh ijkl mnop"

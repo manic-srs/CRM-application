@@ -75,7 +75,9 @@ def test_stage_change_closes_old_task_and_creates_next(client):
     assert any(t["status"] == "Auto-closed" for t in nurt["tasks"])
     demo = client.put(f"/api/leads/{lead['id']}/stage", json={"stage": "Demo", "demo_date": demo_at}).json()
     assert demo["demo_date"] == demo_at
-    assert [(t["title"], t["due_date"]) for t in open_tasks(demo)] == [("Conduct demo - Arjun Mehta", demo_at)]
+    # the demo task is due at the demo; a prep task is due at 9 AM the day before
+    assert sorted((t["title"], t["due_date"]) for t in open_tasks(demo)) == [
+        ("Conduct demo - Arjun Mehta", demo_at), ("Prepare for demo - Arjun Mehta", "2026-11-30T09:00:00")]
     assert [h["to_stage"] for h in demo["history"]] == ["New", "Nurturing", "Demo"]
     assert demo["history"][1]["note"] == "call in 2 weeks"
     # manual correction back is allowed; same stage is not
@@ -129,7 +131,9 @@ def test_convert_into_existing_account(client):
 def test_opportunity_proposal_won(client):
     oid = convert(client, new_lead(client)["id"], expected_value=180000)["opportunity"]["id"]
     prop = client.put(f"/api/opportunities/{oid}/stage", json={"stage": "Proposal"}).json()
-    assert [t["title"] for t in open_tasks(prop)] == ["Follow up on proposal - Bright Future Coaching - Opportunity"]
+    # the close-date reminder stays open across Opportunity -> Proposal
+    assert sorted(t["title"] for t in open_tasks(prop)) == ["Close date coming up - Bright Future Coaching - Opportunity",
+                                                            "Follow up on proposal - Bright Future Coaching - Opportunity"]
     assert prop["probability"] == 75
     won = client.post(f"/api/opportunities/{oid}/won", json={}).json()
     assert won["stage"] == "Won" and won["final_value"] == 180000 and won["closed_at"] and won["probability"] == 100
@@ -179,11 +183,12 @@ def test_notes_and_notifications(client):
     assert note["created_by_name"] == "Ravi Kumar"
     assert client.post("/api/notes", json={"body": "x"}).status_code == 400
     assert [n["body"] for n in client.get(f"/api/leads/{lead['id']}").json()["notes"]] == ["Demo went well"]
-    # task alerts are kept as read (not on the bell); an assignment from someone else is on the bell
-    assert client.get("/api/notifications", params={"user_id": 2}).json() == []
+    # every step is on the owner's bell; a lead someone else created for you says "assigned to you"
+    assert [n["title"] for n in client.get("/api/notifications", params={"user_id": 2}).json()] == ["Lead created"]
+    client.put("/api/notifications/read-all", params={"user_id": 2})
     new_lead(client, name="Given Away", created_by_id=1)
     bell = client.get("/api/notifications", params={"user_id": 2}).json()
-    assert len(bell) == 1 and bell[0]["title"] == "Lead assigned to you"
+    assert len(bell) == 1 and bell[0]["title"] == "Lead assigned to you" and "by Priya Sharma" in bell[0]["message"]
     client.put(f"/api/notifications/{bell[0]['id']}/read")
     assert client.get("/api/notifications", params={"user_id": 2}).json() == []
 
@@ -250,3 +255,58 @@ def test_contacts_and_probability_edit(client):
     oid = convert(client, new_lead(client)["id"])["opportunity"]["id"]
     assert client.put(f"/api/opportunities/{oid}", json={"probability": 40}).json()["probability"] == 40
     assert client.put(f"/api/opportunities/{oid}", json={"probability": 140}).status_code == 422
+
+
+# ---------- timeline reminders (task manager) ----------
+
+def test_demo_reminders_follow_the_demo_date(client):
+    lead = new_lead(client)
+    lid = lead["id"]
+    client.put(f"/api/leads/{lid}/stage", json={"stage": "Demo", "demo_date": "2026-12-01T11:00:00"})
+    # reschedule from the Edit form: both demo tasks move, reminders are re-armed
+    client.put(f"/api/leads/{lid}", json={"demo_date": "2026-12-10T15:30:00"})
+    tasks = {t["title"].split(" - ")[0]: t for t in open_tasks(client.get(f"/api/leads/{lid}").json())}
+    assert set(tasks) == {"Conduct demo", "Prepare for demo"}
+    assert tasks["Conduct demo"]["due_date"] == "2026-12-10T15:30:00"
+    assert tasks["Conduct demo"]["reminder_at"] == "2026-12-10T14:30:00"  # 1 hour before
+    assert tasks["Prepare for demo"]["due_date"] == tasks["Prepare for demo"]["reminder_at"] == "2026-12-09T09:00:00"
+    bell = [n["title"] for n in client.get("/api/notifications", params={"user_id": 2}).json()]
+    assert "Lead demo rescheduled" in bell
+    # moving back to Nurturing closes both demo reminders
+    back = client.put(f"/api/leads/{lid}/stage", json={"stage": "Nurturing"}).json()
+    assert [t["title"] for t in open_tasks(back)] == ["Follow-up call - Arjun Mehta"]
+
+
+def test_no_prep_task_when_demo_is_too_soon(client):
+    lead = new_lead(client)
+    soon = (datetime.now() + timedelta(hours=3)).replace(microsecond=0, second=0)
+    demo = client.put(f"/api/leads/{lead['id']}/stage", json={"stage": "Demo", "demo_date": soon.isoformat()}).json()
+    titles = [t["title"] for t in open_tasks(demo)]
+    if soon.date() == datetime.now().date():  # prep time (9 AM yesterday) is already past
+        assert titles == ["Conduct demo - Arjun Mehta"]
+
+
+def test_close_date_reminder(client):
+    close = (datetime.now() + timedelta(days=20)).date()
+    oid = convert(client, new_lead(client)["id"], expected_value=1000, expected_close_date=close.isoformat())["opportunity"]["id"]
+    opp = client.get(f"/api/opportunities/{oid}").json()
+    reminder = [t for t in open_tasks(opp) if t["title"].startswith("Close date coming up")]
+    assert len(reminder) == 1
+    assert reminder[0]["due_date"] == f"{close - timedelta(days=3)}T09:00:00" == reminder[0]["reminder_at"]
+    # changing the close date moves the same reminder
+    new_close = close + timedelta(days=10)
+    client.put(f"/api/opportunities/{oid}", json={"expected_close_date": new_close.isoformat()})
+    opp = client.get(f"/api/opportunities/{oid}").json()
+    reminder = [t for t in open_tasks(opp) if t["title"].startswith("Close date coming up")]
+    assert len(reminder) == 1 and reminder[0]["due_date"] == f"{new_close - timedelta(days=3)}T09:00:00"
+    # closing the deal closes the reminder
+    lost = client.post(f"/api/opportunities/{oid}/lost", json={"lost_reason": "Price"}).json()
+    assert open_tasks(lost) == []
+
+
+def test_new_owner_gets_the_reminders(client):
+    lead = new_lead(client)
+    client.put(f"/api/leads/{lead['id']}/stage", json={"stage": "Demo", "demo_date": "2026-12-01T11:00:00"})
+    client.put(f"/api/leads/{lead['id']}", json={"owner_id": 1, "changed_by_id": 2})
+    assert {t["owner_id"] for t in open_tasks(client.get(f"/api/leads/{lead['id']}").json())} == {1}
+

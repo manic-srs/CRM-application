@@ -350,6 +350,9 @@ p {
 .user-card div {
   display: grid;
 }
+.notification small {
+  white-space: pre-line; /* step notifications have one detail per line */
+}
 .user-pop {
   width: 260px;
 }
@@ -655,14 +658,16 @@ p {
   color: #54698d;
   font-size: 14px;
 }
-.login-box input {
+.login-box input,
+.login-box select {
   height: 44px;
   padding: 0 12px;
   border: 1px solid #b4b4b4;
   border-radius: 4px;
   font-size: 14px;
 }
-.login-box input:focus {
+.login-box input:focus,
+.login-box select:focus {
   outline: 0;
   border-color: var(--brand);
   box-shadow: 0 0 3px var(--brand);
@@ -729,6 +734,17 @@ p {
   font-size: 22px;
   font-weight: 400;
 }
+/* Home: whole team / my records switch */
+.scope-toggle {
+  margin-left: auto;
+  align-self: center;
+}
+.toggle-group.scope-toggle button {
+  width: auto;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
 .card-sub {
   padding: 10px 22px 0;
   font-size: 14px;
@@ -1785,6 +1801,9 @@ a.pill:hover {
   .form-grid,
   .field-grid {
     grid-template-columns: 1fr;
+  }
+  .scope-toggle {
+    margin-left: 0;
   }
   .home-title {
     flex-direction: column;

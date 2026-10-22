@@ -26,3 +26,11 @@ AUTO_TASKS = {
     "Opportunity": ("Send proposal", 3, "Normal"),
     "Proposal": ("Follow up on proposal", 3, "High"),
 }
+
+# Timeline reminders: tasks the system keeps in step with important dates (see services.schedule_*).
+# Each task's reminder_at is its due time, so the scheduler reminds the owner (bell + email) when it is due.
+DEMO_PREP_TASK = "Prepare for demo"          # due at 9 AM the day before the demo
+DEMO_REMINDER_MINUTES = 60                   # "Conduct demo" reminder this long before the demo starts
+CLOSE_DATE_TASK = "Close date coming up"     # due at 9 AM a few days before the expected close date
+CLOSE_DATE_NOTICE_DAYS = 3
+WORKDAY_START_HOUR = 9

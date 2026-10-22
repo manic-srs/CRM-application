@@ -184,7 +184,12 @@ export const api = {
   signup: (values) =>
     apiRequest("/auth/signup", {
       method: "POST",
-      body: { full_name: values.full_name.trim(), email: values.email.trim(), password: values.password },
+      body: {
+        full_name: values.full_name.trim(),
+        email: values.email.trim(),
+        password: values.password,
+        role: values.role || "Salesperson",
+      },
     }),
   sendEmail: (formData) => upload("/emails", formData),
   emails: (field, id) => apiRequest(`/emails?${field}=${encodeURIComponent(id)}`),

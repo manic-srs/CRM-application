@@ -18,8 +18,12 @@ from app.services import (
     get_or_404,
     now,
     record_stage_change,
+    reassign_system_tasks,
     resolve_user_id,
+    schedule_close_date_task,
+    stage_notice,
 )
+from app.constants import CLOSE_DATE_TASK
 
 router = APIRouter(prefix="/api/opportunities", tags=["Opportunities"])
 
@@ -74,7 +78,11 @@ def update_opportunity(opportunity_id: int, data: schemas.OpportunityUpdate, db:
     for field, value in changes.items():
         setattr(opp, field, value)
     if opp.owner_id != old_owner:
+        db.flush()
+        reassign_system_tasks(db, opp.owner_id, opportunity_id=opp.id)  # follow-ups and reminders go to the new owner
         assignment_notice(db, owner_id=opp.owner_id, actor_id=actor, kind="Opportunity", name=opp.name, link=f"/opportunities/{opp.id}")
+    if "expected_close_date" in changes and opp.stage in OPPORTUNITY_OPEN_STAGES:
+        schedule_close_date_task(db, opp)  # move the close-date reminder to the new date
     db.commit()
     db.refresh(opp)
     return opportunity_out(opp)
@@ -92,8 +100,16 @@ def change_stage(opportunity_id: int, data: schemas.OpportunityStageChange, db: 
     opp.stage = data.stage
     opp.probability = STAGE_PROBABILITY[data.stage]
     record_stage_change(db, opportunity_id=opp.id, from_stage=old, to_stage=data.stage, changed_by_id=by, note=data.note)
-    auto_close_open_tasks(db, opportunity_id=opp.id)
-    create_auto_task(db, stage=data.stage, owner_id=opp.owner_id, record_name=opp.name, opportunity_id=opp.id)
+    auto_close_open_tasks(db, opportunity_id=opp.id, keep=(CLOSE_DATE_TASK,))  # the close-date reminder stays
+    task = create_auto_task(db, stage=data.stage, owner_id=opp.owner_id, record_name=opp.name, opportunity_id=opp.id)
+    details = [f"Probability: {opp.probability}%"]
+    if data.note:
+        details.append(f"Note: {data.note}")
+    stage_notice(
+        db, kind="Opportunity", stage=data.stage, record_name=opp.name, owner_id=opp.owner_id, actor_id=by,
+        opportunity_id=opp.id, task=task, details=details,
+        title="Opportunity moved back to Opportunity" if data.stage == "Opportunity" else None,
+    )
     db.commit()
     db.refresh(opp)
     return opportunity_detail(opp)
@@ -116,6 +132,11 @@ def mark_won(opportunity_id: int, data: schemas.MarkWon | None = None, db: Sessi
     opp.closed_at = now()
     record_stage_change(db, opportunity_id=opp.id, from_stage=old, to_stage="Won", changed_by_id=by, note=data.note)
     auto_close_open_tasks(db, opportunity_id=opp.id)
+    details = [f"Final amount: ${final_value:,.2f}"]
+    if data.note:
+        details.append(f"Note: {data.note}")
+    stage_notice(db, kind="Opportunity", stage="Won", record_name=opp.name, owner_id=opp.owner_id,
+                 actor_id=by, opportunity_id=opp.id, details=details)
     db.commit()
     db.refresh(opp)
     return opportunity_detail(opp)
@@ -137,6 +158,11 @@ def mark_lost(opportunity_id: int, data: schemas.MarkLost, db: Session = Depends
         db, opportunity_id=opp.id, from_stage=old, to_stage="Lost", changed_by_id=by, note=data.lost_notes
     )
     auto_close_open_tasks(db, opportunity_id=opp.id)
+    details = [f"Lost at stage: {old}", f"Reason: {data.lost_reason}"]
+    if data.lost_notes:
+        details.append(f"Notes: {data.lost_notes}")
+    stage_notice(db, kind="Opportunity", stage="Lost", record_name=opp.name, owner_id=opp.owner_id,
+                 actor_id=by, opportunity_id=opp.id, details=details)
     db.commit()
     db.refresh(opp)
     return opportunity_detail(opp)

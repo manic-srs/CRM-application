@@ -3,15 +3,26 @@
 - record_stage_change:   every stage change is saved in stage_history (who, when, from -> to)
 - auto_close_open_tasks: open follow-ups are closed as "Auto-closed" when a record moves on or closes
 - create_auto_task:      the system creates the next follow-up for the new stage (is_auto = TRUE)
-                         and puts a notification on the owner's bell icon
+- schedule_demo_tasks / schedule_close_date_task:
+                         reminder tasks that follow the demo date and the expected close date
+                         (created, moved when the date changes, closed when no longer needed)
+- stage_notice:          at every step (lead created, Nurturing, Demo, converted, Proposal, Won, Lost)
+                         the owner gets a bell notification and an email with the next follow-up task
 """
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 from fastapi import HTTPException
-from sqlalchemy import select, update
+from sqlalchemy import not_, or_, select, update
 from sqlalchemy.orm import Session
 
-from app.constants import AUTO_TASKS
+from app.constants import (
+    AUTO_TASKS,
+    CLOSE_DATE_NOTICE_DAYS,
+    CLOSE_DATE_TASK,
+    DEMO_PREP_TASK,
+    DEMO_REMINDER_MINUTES,
+    WORKDAY_START_HOUR,
+)
 from app import mailer
 from app.models import Notification, StageHistory, Task, User
 
@@ -66,9 +77,13 @@ def record_stage_change(
     )
 
 
-def auto_close_open_tasks(db: Session, *, lead_id: int | None = None, opportunity_id: int | None = None) -> int:
-    """Closes every Open task of a lead or an opportunity as Auto-closed. Returns how many."""
+def auto_close_open_tasks(db: Session, *, lead_id: int | None = None, opportunity_id: int | None = None,
+                          keep: tuple[str, ...] = ()) -> int:
+    """Closes every Open task of a lead or an opportunity as Auto-closed. Returns how many.
+    keep: system task titles to leave open (e.g. the close-date reminder survives Opportunity <-> Proposal)."""
     query = update(Task).where(Task.status == "Open")
+    if keep:
+        query = query.where(not_(Task.is_auto.is_(True) & or_(*(Task.title.startswith(f"{t} - ") for t in keep))))
     if lead_id is not None:
         query = query.where(Task.lead_id == lead_id)
     elif opportunity_id is not None:
@@ -89,7 +104,8 @@ def create_auto_task(
     opportunity_id: int | None = None,
     due_date: datetime | None = None,
 ) -> Task | None:
-    """Creates the system follow-up for a stage (see AUTO_TASKS) and notifies the owner."""
+    """Creates the system follow-up for a stage (see AUTO_TASKS).
+    The owner hears about it in the stage_notice for the same step (one email per step, not two)."""
     if stage not in AUTO_TASKS:
         return None
     title, days, priority = AUTO_TASKS[stage]
@@ -107,16 +123,155 @@ def create_auto_task(
     )
     db.add(task)
     db.flush()
+    return task
+
+
+# ---------- timeline reminders (demo date, close date) ----------
+
+def open_system_task(db: Session, title: str, *, lead_id: int | None = None,
+                     opportunity_id: int | None = None) -> Task | None:
+    """The open system task of a record whose title starts with "<title> - "."""
+    query = select(Task).where(Task.status == "Open", Task.is_auto.is_(True), Task.title.startswith(f"{title} - "))
+    query = query.where(Task.lead_id == lead_id) if lead_id is not None else query.where(Task.opportunity_id == opportunity_id)
+    return db.scalars(query.order_by(Task.id.desc()).limit(1)).first()
+
+
+def move_task(task: Task, due: datetime, reminder_at: datetime) -> None:
+    """New due time and reminder; the reminder is sent again for the new time."""
+    task.due_date = due
+    task.reminder_at = reminder_at
+    task.reminder_sent = False
+
+
+def upsert_timeline_task(
+    db: Session,
+    *,
+    title: str,
+    record_name: str,
+    due: datetime | None,
+    owner_id: int,
+    description: str,
+    priority: str = "High",
+    lead_id: int | None = None,
+    opportunity_id: int | None = None,
+) -> Task | None:
+    """Creates or moves a system reminder task. due=None (date gone or already past) closes it instead.
+    The reminder fires at the due time."""
+    task = open_system_task(db, title, lead_id=lead_id, opportunity_id=opportunity_id)
+    if due is None:
+        if task is not None:
+            task.status, task.completed_at = "Auto-closed", now()
+        return None
+    if task is None:
+        task = Task(title=f"{title} - {record_name}", status="Open", priority=priority, is_auto=True,
+                    owner_id=owner_id, lead_id=lead_id, opportunity_id=opportunity_id, due_date=due)
+        db.add(task)
+    task.description = description
+    move_task(task, due, due)
+    db.flush()
+    return task
+
+
+def at_workday_start(day: date) -> datetime:
+    return datetime.combine(day, time(hour=WORKDAY_START_HOUR))
+
+
+def schedule_demo_tasks(db: Session, lead) -> Task | None:
+    """Keeps a lead's demo reminders in step with lead.demo_date:
+    - "Conduct demo" is due at the demo, with a reminder DEMO_REMINDER_MINUTES before it
+    - "Prepare for demo" is due at 9 AM the day before (skipped when that time has already passed)
+    Returns the prep task, if there is one."""
+    demo = lead.demo_date
+    conduct = open_system_task(db, AUTO_TASKS["Demo"][0], lead_id=lead.id)
+    if conduct is not None and demo is not None:
+        move_task(conduct, demo, demo - timedelta(minutes=DEMO_REMINDER_MINUTES))
+    prep_due = at_workday_start(demo.date() - timedelta(days=1)) if demo is not None else None
+    if prep_due is not None and prep_due <= now():
+        prep_due = None
+    return upsert_timeline_task(
+        db, title=DEMO_PREP_TASK, record_name=lead.name, due=prep_due, owner_id=lead.owner_id, lead_id=lead.id,
+        description=f"Demo with {lead.name} ({lead.company}) on {demo:%d %b %Y at %I:%M %p}." if demo else "",
+    )
+
+
+def schedule_close_date_task(db: Session, opp) -> Task | None:
+    """Reminder before an open opportunity's expected close date: 9 AM, CLOSE_DATE_NOTICE_DAYS before it,
+    or 9 AM on the close date when that is sooner. Closed if the date is removed or already past."""
+    close = opp.expected_close_date
+    due = None
+    if close is not None:
+        for candidate in (at_workday_start(close - timedelta(days=CLOSE_DATE_NOTICE_DAYS)), at_workday_start(close)):
+            if candidate > now():
+                due = candidate
+                break
+    return upsert_timeline_task(
+        db, title=CLOSE_DATE_TASK, record_name=opp.name, due=due, owner_id=opp.owner_id, opportunity_id=opp.id,
+        description=f"Expected close date: {close:%d %b %Y}. Update the stage or the close date." if close else "",
+    )
+
+
+def reassign_system_tasks(db: Session, owner_id: int, *, lead_id: int | None = None,
+                          opportunity_id: int | None = None) -> None:
+    """When a record gets a new owner, its open system tasks (and their reminders) go to the new owner."""
+    query = update(Task).where(Task.status == "Open", Task.is_auto.is_(True))
+    query = query.where(Task.lead_id == lead_id) if lead_id is not None else query.where(Task.opportunity_id == opportunity_id)
+    db.execute(query.values(owner_id=owner_id))
+
+
+def task_line(label: str, task: Task | None) -> list[str]:
+    return [f"{label}: {task.title}, due {task.due_date:%d %b %Y %I:%M %p}."] if task is not None else []
+
+
+# Title of the notification / email subject for each step. Titles start with "Lead" or "Opportunity"
+# so the bell shows the matching icon.
+STAGE_TITLES = {
+    ("Lead", "New"): "Lead created",
+    ("Lead", "Nurturing"): "Lead moved to Nurturing",
+    ("Lead", "Demo"): "Lead moved to Demo",
+    ("Lead", "Lost"): "Lead lost",
+    ("Opportunity", "Opportunity"): "Opportunity created",
+    ("Opportunity", "Proposal"): "Opportunity moved to Proposal",
+    ("Opportunity", "Won"): "Opportunity won",
+    ("Opportunity", "Lost"): "Opportunity lost",
+}
+
+
+def stage_notice(
+    db: Session,
+    *,
+    kind: str,
+    stage: str,
+    record_name: str,
+    owner_id: int,
+    actor_id: int | None = None,
+    lead_id: int | None = None,
+    opportunity_id: int | None = None,
+    task: Task | None = None,
+    details: list[str] | None = None,
+    title: str | None = None,
+) -> None:
+    """Bell notification + email to the owner after a step in the lifecycle.
+
+    kind: "Lead" or "Opportunity". details: extra lines (demo date, amount, lost reason...).
+    task: the follow-up the system just created for this step, if any.
+    The email goes out only after the save is committed (see mailer.queue).
+    """
+    actor = db.get(User, actor_id) if actor_id is not None else None
+    title = title or STAGE_TITLES.get((kind, stage), f"{kind} moved to {stage}")
+    lines = [f'{kind} "{record_name}" is now at {stage}.']
+    if actor:
+        lines[0] = f'{kind} "{record_name}" is now at {stage} (by {actor.full_name}).'
+    lines += details or []
+    if task is not None:
+        lines.append(f"Next follow-up: {task.title}, due {task.due_date:%d %b %Y %I:%M %p}.")
     notify(
         db,
         owner_id,
-        "New follow-up task",
-        f"{task.title} (due {due:%d %b %Y %I:%M %p})",
-        task_id=task.id,
+        title,
+        "\n".join(lines),
+        task_id=task.id if task is not None else None,
         link=record_link(lead_id=lead_id, opportunity_id=opportunity_id),
-        bell=False,
     )
-    return task
 
 
 def record_link(*, lead_id: int | None = None, opportunity_id: int | None = None) -> str:

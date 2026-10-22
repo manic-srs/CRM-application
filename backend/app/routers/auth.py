@@ -1,6 +1,6 @@
 """Login (placeholder: checks email + password, no tokens yet) and the user list.
 
-Passwords are stored as bcrypt hashes. Sign up creates a Salesperson; the very first user becomes the Manager.
+Passwords are stored as bcrypt hashes. The role (Salesperson, Manager or Admin) is picked on the Sign Up form.
 """
 import re
 
@@ -47,12 +47,11 @@ def signup(data: schemas.SignupRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=422, detail="Password must have at least 8 characters, with letters and numbers")
     if db.scalar(select(User.id).where(User.email == email)) is not None:
         raise HTTPException(status_code=409, detail="An account with this email already exists. Log in instead.")
-    first_user = db.scalar(select(User.id).limit(1)) is None
     user = User(
         full_name=" ".join(data.full_name.split()),
         email=email,
         password_hash=hash_password(data.password),
-        role="Manager" if first_user else "Salesperson",
+        role=data.role,
     )
     db.add(user)
     db.commit()

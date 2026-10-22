@@ -19,13 +19,13 @@ docker compose up --build
 Then open http://localhost:8001/docs. All the APIs are listed there and you can try them from the browser.
 
 - The first time, PostgreSQL creates the tables from `schema.sql` and `home-page-views.sql`. There is no sample data: the database starts empty.
-- Create a user with `POST /api/auth/signup` (or the Sign Up page in the app). The first user becomes the Manager, everyone after that is a Salesperson.
+- Create a user with `POST /api/auth/signup` (or the Sign Up page in the app). Send `role` (Salesperson, Manager or Admin); it defaults to Salesperson.
 - To start again with an empty database: `docker compose down -v` and then `docker compose up --build`
 - PostgreSQL is on port 5433 (user `crm_user`, password `crm_pass`, database `crm_db`) if you want to check the tables, e.g. in pgAdmin.
 - The API is on port 8001 because 8000 was already used on my laptop.
 - Emails go to a test inbox (Mailpit) at http://localhost:8026, so nothing reaches real people while we test.
 
-If you want sample records to try things out, load `database/seed-data.sql` by hand (see the top of that file).
+With Docker, the sample data in `database/seed-data.sql` is loaded on the first start (password `Password@123` for every sample user). Without Docker, load it by hand (see the top of that file).
 
 ## Running the tests
 

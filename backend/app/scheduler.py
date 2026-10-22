@@ -1,8 +1,9 @@
 """Background checks for task reminders and overdue tasks (runs every minute while the API is up).
 
-- Reminder: when a task's reminder time is reached, the owner gets an email (once).
-- Overdue:  once a day, the owner of each open task that is past its due date gets an email.
-Task alerts are not shown on the bell: the Tasks page and Home already list due and overdue tasks.
+- Reminder: when a task's reminder time is reached, the owner gets a bell notification and an email (once).
+            This covers follow-ups, demo reminders ("Conduct demo", "Prepare for demo") and close-date reminders.
+- Overdue:  once a day, the owner of each open task that is past its due date gets an email
+            (not on the bell: the Tasks page and Home already list overdue tasks).
 """
 import asyncio
 import logging
@@ -25,8 +26,11 @@ def run_checks(db: Session) -> dict:
                            Task.reminder_at <= current, Task.reminder_sent.is_(False))
     ).all()
     for task in reminders:
-        notify(db, task.owner_id, "Task reminder", f"{task.title} is due {task.due_date:%d %b %Y %I:%M %p}.",
-               task_id=task.id, link=record_link(lead_id=task.lead_id, opportunity_id=task.opportunity_id), bell=False)
+        message = f"{task.title} is due {task.due_date:%d %b %Y %I:%M %p}."
+        if task.description:
+            message += f"\n{task.description}"
+        notify(db, task.owner_id, "Task reminder", message,
+               task_id=task.id, link=record_link(lead_id=task.lead_id, opportunity_id=task.opportunity_id))
         task.reminder_sent = True
 
     today = start_of_today()

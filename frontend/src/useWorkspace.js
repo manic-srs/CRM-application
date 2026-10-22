@@ -11,8 +11,9 @@ const empty = {
   home: null,
   notifications: [],
 };
-// userId = the logged-in user: Home cards and the bell show "owned by me".
-export function useWorkspace(collection, id, userId) {
+// userId = the logged-in user (the bell shows their notifications).
+// homeScope: "team" = Home shows everyone's records (shared), "mine" = only records owned by userId.
+export function useWorkspace(collection, id, userId, homeScope = "team") {
   const [data, setData] = useState(empty);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -35,7 +36,7 @@ export function useWorkspace(collection, id, userId) {
         "home",
       ];
       const path = (name) =>
-        name === "home" && notificationOwner
+        name === "home" && homeScope === "mine" && notificationOwner
           ? `/home?owner_id=${notificationOwner}`
           : `/${name}`;
       const [responses, detail, notifications] = await Promise.all([
@@ -65,7 +66,7 @@ export function useWorkspace(collection, id, userId) {
     } finally {
       if (ticket === sequence.current) setLoading(false);
     }
-  }, [collection, id, notificationOwner]);
+  }, [collection, id, notificationOwner, homeScope]);
   useEffect(() => {
     reload().catch(() => {});
     return () => {

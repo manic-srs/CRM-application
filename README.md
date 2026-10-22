@@ -13,14 +13,19 @@ Lost:         a lead or an opportunity can be marked Lost at any open stage (a r
 
 ## What it does
 
-- **Sign up and log in.** The first account becomes the Manager, everyone after that is a Salesperson.
-- **Seller Home.** My deals closing this quarter, my accounts, contacts and new leads, key deals, today's demos, today's tasks and recent records.
+- **Sign up and log in.** Pick your role (Salesperson, Manager or Admin) on the Sign Up form.
+- **Seller Home.** Deals closing this quarter, accounts, contacts and new leads, key deals, today's demos, today's tasks and recent records.
+- **One shared database.** Everyone who logs in works on the same records. Home has a **Whole team / My records** switch (Whole team is the default).
 - **Leads.** Create, edit, move through the stages, convert or mark as lost.
 - **Convert.** Turns a lead into an Account (the company), a Contact (the person) and an Opportunity (the deal) in one step.
 - **Opportunities.** List view or Kanban board (drag a deal to change its stage), then Won or Lost.
 - **Tasks.** The system creates the next follow-up at each stage and closes the old ones. You can add your own tasks with reminders.
+- **Reminders for dates.** The task manager keeps reminder tasks in step with the important dates:
+  - Demo: "Prepare for demo" at 9 AM the day before, and "Conduct demo" with a reminder 1 hour before it starts. Rescheduling the demo moves both and tells the owner.
+  - Close date: "Close date coming up" at 9 AM, 3 days before the opportunity's expected close date. It moves when the close date changes and closes when the deal is won or lost.
+  - When a record gets a new owner, its system tasks and reminders go to the new owner.
 - **Email.** Send an email with attachments from a lead, opportunity, contact or account. It is saved on the record.
-- **Notifications.** An email to the owner for new follow-ups, reminders and overdue tasks. The bell shows when someone assigns you a record.
+- **Notifications.** At every step (lead created, Nurturing, Demo, converted to an opportunity, Proposal, Won, Lost) the owner gets a bell notification and an email with the details and the next follow-up task. Task reminders appear on the bell and are emailed, overdue alerts are emailed, and the bell shows when someone assigns you a record.
 - **History.** Every stage change is saved with who did it and when.
 
 ## Run it
@@ -40,7 +45,11 @@ The first run takes a few minutes. Then open:
 | Test inbox (emails the app sends) | http://localhost:8026 |
 | Database (pgAdmin or any client) | localhost:5433, user `crm_user`, password `crm_pass`, database `crm_db` |
 
-The database starts **empty**. Click **Sign Up** and create your account.
+On the first start the database is loaded with **sample data** (`database/seed-data.sql`). Log in as
+`priya@crm.test` (Manager), `ravi@crm.test` or `anita@crm.test` (Salespeople), password `Password@123`,
+or click **Sign Up**, pick your role and create your own account. Everything you add is saved next to the sample data
+and kept when you stop and start the app.
+To wipe everything and reload only the sample data: `docker compose down -v`, then `docker compose up --build`.
 
 Useful commands:
 
@@ -64,14 +73,22 @@ Useful commands:
 ## Real email (optional)
 
 By default every email goes to the test inbox, so nothing reaches real people.
-To send real emails, copy `.env.example` to `.env`, fill in the mail server, then run `docker compose up -d`.
-`.env` is ignored by Git, so the password is never committed.
+To send real emails:
+
+1. Copy `.env.example` to `.env` (same folder as `docker-compose.yml`).
+2. Fill in the mail server and **remove the `#`** at the start of each `SMTP_...` and `MAIL_FROM` line.
+3. Run `docker compose up -d` (it restarts the API with the new settings).
+4. Check it: http://localhost:8001/docs → **GET /api/health/email** should say `real email`, then
+   **POST /api/health/email/test** with your address sends one email straight away and shows any error from the mail server.
+
+`.env` is ignored by Git, so the password is never committed. Emails are sent in the background, so clicks stay fast.
+Each user gets the notifications at the email address they signed up with.
 
 ## Folders
 
 | Folder | What is inside | Read more |
 | --- | --- | --- |
-| `database/` | PostgreSQL tables (`schema.sql`) and home page views. `seed-data.sql` is optional sample data and is not loaded. | |
+| `database/` | PostgreSQL tables (`schema.sql`), home page views, sample data (`seed-data.sql`, loaded on the first start) and handy queries (`test-queries.sql`). | |
 | `backend/` | Python FastAPI API, business rules, email and reminders, tests | [backend/README.md](backend/README.md) |
 | `frontend/` | React app (Vite), Salesforce-style screens | [frontend/README.md](frontend/README.md) |
 | `docker-compose.yml` | Starts the database, API, app and test inbox together | |

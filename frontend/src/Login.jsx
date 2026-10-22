@@ -12,10 +12,13 @@ export function BrandMark({ size = 40 }) {
   );
 }
 
+// Must match the roles allowed by the backend (users.role in database/schema.sql)
+const ROLES = ["Salesperson", "Manager", "Admin"];
+
 // Login and Sign Up. The backend checks the password (bcrypt); there are no tokens yet (POC).
 export default function Login({ onLogin }) {
   const [mode, setMode] = useState("login"); // "login" | "signup"
-  const [values, setValues] = useState({ full_name: "", email: "", password: "", confirm: "" });
+  const [values, setValues] = useState({ full_name: "", email: "", password: "", confirm: "", role: "Salesperson" });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const set = (name) => (e) => setValues((v) => ({ ...v, [name]: e.target.value }));
@@ -80,6 +83,18 @@ export default function Login({ onLogin }) {
               autoFocus={!signup}
             />
           </label>
+          {signup && (
+            <label>
+              Role
+              <select value={values.role} onChange={set("role")} required>
+                {ROLES.map((role) => (
+                  <option key={role} value={role}>
+                    {role}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <label>
             Password
             <input

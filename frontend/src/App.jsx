@@ -12,6 +12,7 @@ import { Icon } from "./ui";
 import { useWorkspace } from "./useWorkspace";
 
 const USER_KEY = "crm-user";
+const SCOPE_KEY = "crm-home-scope";
 
 // The logged-in user is remembered in this browser only (no tokens yet in this POC).
 function loadUser() {
@@ -60,7 +61,23 @@ function Workspace({ user, onLogout }) {
   const [path, query = ""] = route.split("?");
   const section = path.split("/")[1] || "home";
   const id = path.split("/")[2];
-  const { data, run, error, loading, saving, reload, hasLoaded } = useWorkspace(section, id, user.id);
+  // Home: "team" (everyone's records, the default) or "mine"; remembered in this browser
+  const [homeScope, setHomeScopeState] = useState(() => {
+    try {
+      return localStorage.getItem(SCOPE_KEY) === "mine" ? "mine" : "team";
+    } catch {
+      return "team";
+    }
+  });
+  const setHomeScope = (value) => {
+    setHomeScopeState(value);
+    try {
+      localStorage.setItem(SCOPE_KEY, value);
+    } catch {
+      /* ignore */
+    }
+  };
+  const { data, run, error, loading, saving, reload, hasLoaded } = useWorkspace(section, id, user.id, homeScope);
   const [modal, setModal] = useState(null);
   const [toast, setToast] = useState("");
   const [composer, setComposer] = useState(null);
@@ -121,7 +138,16 @@ function Workspace({ user, onLogout }) {
   const convert = (leadId) => setModal({ type: "convert", record: data.leads.find((lead) => lead.id === leadId) });
 
   let page;
-  if (section === "home") page = <SellerHome data={data} user={user} toggleTask={toggleTask} openTask={openTask} />;
+  if (section === "home") page = (
+      <SellerHome
+        data={data}
+        user={user}
+        toggleTask={toggleTask}
+        openTask={openTask}
+        scope={homeScope}
+        setScope={setHomeScope}
+      />
+    );
   else if (["leads", "opportunities"].includes(section))
     page = id ? (
       <RecordPage

@@ -1,5 +1,5 @@
 """Every test gets a fresh in-memory database with 2 users, so real data is never touched.
-(Full PostgreSQL behaviour is checked by running the API against database/schema.sql + seed-data.sql.)"""
+(Full PostgreSQL behaviour is checked by running the API against database/schema.sql.)"""
 import os
 import sys
 
@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+os.environ["MAIL_ASYNC"] = "false"  # send notification emails before the request returns, so tests can check them
 
 from app.database import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402

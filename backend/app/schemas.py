@@ -12,6 +12,7 @@ LeadSource = Literal["Website", "Referral", "Phone", "Email", "Event", "Social M
 LostReason = Literal["Price", "Competitor", "No response", "No budget", "Not interested", "Other"]
 Priority = Literal["Low", "Normal", "High"]
 Salutation = Literal["Mr.", "Ms.", "Mrs.", "Dr.", "Prof."]
+UserRole = Literal["Salesperson", "Manager", "Admin"]
 
 
 class Out(BaseModel):
@@ -43,6 +44,11 @@ class SignupRequest(BaseModel):
     full_name: str = Field(..., min_length=2, max_length=100)
     email: str = Field(..., max_length=255)
     password: str = Field(..., min_length=8, max_length=128)
+    role: UserRole = "Salesperson"  # chosen on the Sign Up form
+
+
+class TestEmail(BaseModel):
+    to: str = Field(..., min_length=3, max_length=255, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 class LoginResponse(BaseModel):
