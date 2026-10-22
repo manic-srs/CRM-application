@@ -22,11 +22,9 @@ services:
     volumes:
       - crm_pg_data:/var/lib/postgresql/data
       # run in this order on the first start only (create-user.sql is not needed: POSTGRES_USER/DB above create them).
-      # 03-seed-data.sql loads the sample (test) data. New records are saved next to it and kept in the
-      # crm_pg_data volume across restarts. Remove the 03 line to start with an empty database instead.
+      # seed-data.sql is not loaded: the app starts empty and users sign up.
       - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
       - ./database/home-page-views.sql:/docker-entrypoint-initdb.d/02-home-page-views.sql:ro
-      - ./database/seed-data.sql:/docker-entrypoint-initdb.d/03-seed-data.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U crm_user -d crm_db"]
       interval: 5s

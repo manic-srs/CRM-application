@@ -45,11 +45,9 @@ The first run takes a few minutes. Then open:
 | Test inbox (emails the app sends) | http://localhost:8026 |
 | Database (pgAdmin or any client) | localhost:5433, user `crm_user`, password `crm_pass`, database `crm_db` |
 
-On the first start the database is loaded with **sample data** (`database/seed-data.sql`). Log in as
-`priya@crm.test` (Manager), `ravi@crm.test` or `anita@crm.test` (Salespeople), password `Password@123`,
-or click **Sign Up**, pick your role and create your own account. Everything you add is saved next to the sample data
-and kept when you stop and start the app.
-To wipe everything and reload only the sample data: `docker compose down -v`, then `docker compose up --build`.
+The database starts **empty**. Click **Sign Up**, pick your role and create your account.
+Everything you add is saved in PostgreSQL and kept when you stop and start the app.
+To wipe everything and start empty again: `docker compose down -v`, then `docker compose up --build`.
 
 Useful commands:
 
@@ -88,7 +86,7 @@ Each user gets the notifications at the email address they signed up with.
 
 | Folder | What is inside | Read more |
 | --- | --- | --- |
-| `database/` | PostgreSQL tables (`schema.sql`), home page views, sample data (`seed-data.sql`, loaded on the first start) and handy queries (`test-queries.sql`). | |
+| `database/` | PostgreSQL tables (`schema.sql`), home page views, optional sample data (`seed-data.sql`, not loaded) and handy queries (`test-queries.sql`). | |
 | `backend/` | Python FastAPI API, business rules, email and reminders, tests | [backend/README.md](backend/README.md) |
 | `frontend/` | React app (Vite), Salesforce-style screens | [frontend/README.md](frontend/README.md) |
 | `docker-compose.yml` | Starts the database, API, app and test inbox together | |

@@ -25,7 +25,7 @@ Then open http://localhost:8001/docs. All the APIs are listed there and you can 
 - The API is on port 8001 because 8000 was already used on my laptop.
 - Emails go to a test inbox (Mailpit) at http://localhost:8026, so nothing reaches real people while we test.
 
-With Docker, the sample data in `database/seed-data.sql` is loaded on the first start (password `Password@123` for every sample user). Without Docker, load it by hand (see the top of that file).
+`database/seed-data.sql` has optional sample data. Docker does not load it; to try it, load it by hand (see the top of that file).
 
 ## Running the tests
 

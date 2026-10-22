@@ -1,9 +1,7 @@
 -- =====================================================
--- CRM Application - Sample data for testing
--- Docker loads this file once, when the database is first created (docker-compose.yml, 03-seed-data.sql).
--- New records (sign ups, leads, deals...) are saved next to it; the id counters are moved past the
--- sample ids at the bottom of this file, so they never clash.
--- To load it by hand instead, run it AFTER schema.sql, connected to crm_db:
+-- CRM Application - Sample data for testing (OPTIONAL)
+-- Docker does NOT load this file: the app starts empty and users sign up.
+-- To try the app with sample records, run it by hand AFTER schema.sql, connected to crm_db:
 --   docker compose exec -T db psql -U crm_user -d crm_db < database/seed-data.sql
 -- All users' password: Password@123
 -- =====================================================
