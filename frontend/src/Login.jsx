@@ -12,38 +12,24 @@ export function BrandMark({ size = 40 }) {
   );
 }
 
-// Must match the roles allowed by the backend (users.role in database/schema.sql)
-const ROLES = ["Salesperson", "Manager", "Admin"];
-
-// Login and Sign Up. The backend checks the password (bcrypt); there are no tokens yet (POC).
+// Log in. There is no sign up: the Admin creates every account (Users page) and gives you
+// your email and password. The backend checks the password (bcrypt) and returns a login token.
 export default function Login({ onLogin }) {
-  const [mode, setMode] = useState("login"); // "login" | "signup"
-  const [values, setValues] = useState({ full_name: "", email: "", password: "", confirm: "", role: "Salesperson" });
+  const [values, setValues] = useState({ email: "", password: "" });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const set = (name) => (e) => setValues((v) => ({ ...v, [name]: e.target.value }));
-  const signup = mode === "signup";
-
-  const switchMode = (next) => {
-    setMode(next);
-    setError("");
-    setValues((v) => ({ ...v, password: "", confirm: "" }));
-  };
 
   const submit = async (event) => {
     event.preventDefault();
     setError("");
-    if (signup && values.password !== values.confirm) {
-      setError("The passwords don't match.");
-      return;
-    }
     setBusy(true);
     try {
-      const { user } = signup ? await api.signup(values) : await api.login(values.email, values.password);
-      onLogin(user);
+      const { user, token } = await api.login(values.email, values.password);
+      onLogin(user, token);
     } catch (err) {
       setError(
-        !signup && /wrong email or password/i.test(err.message)
+        /wrong email or password/i.test(err.message)
           ? "Please check your username and password. If you still can't log in, contact your administrator."
           : err.message,
       );
@@ -60,70 +46,24 @@ export default function Login({ onLogin }) {
           <span>SalesTrack</span>
         </div>
         <form className="login-box" onSubmit={submit}>
-          <h1 className="login-title">{signup ? "Create your account" : "Log in"}</h1>
+          <h1 className="login-title">Log in</h1>
           {error && (
             <div className="login-error" role="alert">
               {error}
             </div>
           )}
-          {signup && (
-            <label>
-              Full Name
-              <input value={values.full_name} onChange={set("full_name")} autoComplete="name" required minLength={2} maxLength={100} autoFocus />
-            </label>
-          )}
           <label>
-            {signup ? "Work Email" : "Username"}
-            <input
-              type="email"
-              autoComplete={signup ? "email" : "username"}
-              value={values.email}
-              onChange={set("email")}
-              required
-              autoFocus={!signup}
-            />
+            Username
+            <input type="email" autoComplete="username" value={values.email} onChange={set("email")} required autoFocus />
           </label>
-          {signup && (
-            <label>
-              Role
-              <select value={values.role} onChange={set("role")} required>
-                {ROLES.map((role) => (
-                  <option key={role} value={role}>
-                    {role}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
           <label>
             Password
-            <input
-              type="password"
-              autoComplete={signup ? "new-password" : "current-password"}
-              value={values.password}
-              onChange={set("password")}
-              required
-              minLength={signup ? 8 : undefined}
-            />
+            <input type="password" autoComplete="current-password" value={values.password} onChange={set("password")} required />
           </label>
-          {signup && (
-            <>
-              <label>
-                Confirm Password
-                <input type="password" autoComplete="new-password" value={values.confirm} onChange={set("confirm")} required />
-              </label>
-              <p className="login-hint">At least 8 characters, with letters and numbers.</p>
-            </>
-          )}
           <button className="login-button" disabled={busy}>
-            {busy ? (signup ? "Creating account…" : "Logging in…") : signup ? "Sign Up" : "Log In"}
+            {busy ? "Logging in…" : "Log In"}
           </button>
-          <p className="login-switch">
-            {signup ? "Already have an account? " : "New to SalesTrack? "}
-            <button type="button" className="link" onClick={() => switchMode(signup ? "login" : "signup")}>
-              {signup ? "Log In" : "Sign Up"}
-            </button>
-          </p>
+          <p className="login-switch">Don't have an account? Contact your administrator to add you.</p>
         </form>
       </div>
     </div>

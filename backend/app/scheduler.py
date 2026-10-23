@@ -1,9 +1,9 @@
 """Background checks for task reminders and overdue tasks (runs every minute while the API is up).
 
-- Reminder: when a task's reminder time is reached, the owner gets a bell notification and an email (once).
+- Reminder: when a task's reminder time is reached, the owner gets a bell reminder and an email (once).
             This covers follow-ups, demo reminders ("Conduct demo", "Prepare for demo") and close-date reminders.
-- Overdue:  once a day, the owner of each open task that is past its due date gets an email
-            (not on the bell: the Tasks page and Home already list overdue tasks).
+- Overdue:  once a day, the owner of each open task that is past its due date gets an email and a bell reminder.
+Reminders stay on the bell until the task is done (see GET /api/notifications).
 """
 import asyncio
 import logging
@@ -29,7 +29,7 @@ def run_checks(db: Session) -> dict:
         message = f"{task.title} is due {task.due_date:%d %b %Y %I:%M %p}."
         if task.description:
             message += f"\n{task.description}"
-        notify(db, task.owner_id, "Task reminder", message,
+        notify(db, task.owner_id, "Task reminder", message, kind="reminder",
                task_id=task.id, link=record_link(lead_id=task.lead_id, opportunity_id=task.opportunity_id))
         task.reminder_sent = True
 
@@ -45,7 +45,7 @@ def run_checks(db: Session) -> dict:
         days = (today.date() - task.due_date.date()).days
         notify(db, task.owner_id, "Task overdue",
                f"{task.title} was due {task.due_date:%d %b %Y} ({days} day{'s' if days != 1 else ''} ago).",
-               task_id=task.id, link=record_link(lead_id=task.lead_id, opportunity_id=task.opportunity_id), bell=False)
+               task_id=task.id, link=record_link(lead_id=task.lead_id, opportunity_id=task.opportunity_id), kind="reminder")
         count += 1
     db.commit()
     return {"reminders": len(reminders), "overdue": count}

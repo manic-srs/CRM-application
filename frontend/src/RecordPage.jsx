@@ -123,7 +123,7 @@ function ActivityTab({ item, tasks, toggleTask, setModal, openTask, collection, 
   );
 }
 
-export default function RecordPage({ collection, item, data, openLead, openTask, toggleTask, convert, setModal, openEmail, emailVersion }) {
+export default function RecordPage({ collection, item, data, user, openLead, openTask, toggleTask, convert, setModal, openEmail, emailVersion }) {
   const lead = collection === "leads";
   const [tab, setTab] = useState("activity");
   const { emails } = useEmails(lead ? "lead_id" : "opportunity_id", item?.id, emailVersion);
@@ -139,6 +139,8 @@ export default function RecordPage({ collection, item, data, openLead, openTask,
     );
 
   const closed = ["Won", "Lost", "Converted"].includes(item.stage);
+  // Salespeople change only their own records; Managers and Admins can change any (the backend checks it too)
+  const canEdit = ["Manager", "Admin"].includes(user?.role) || item.owner_id === user?.id;
   const tasks = data.tasks.filter((t) => t.relatedId === item.id && t.relatedType === collection);
   const edit = () => (lead ? openLead(item) : setModal({ type: "opportunity", record: item }));
   const convertedTo = lead && data.opportunities.find((o) => o.leadId === item.id);
@@ -193,15 +195,17 @@ export default function RecordPage({ collection, item, data, openLead, openTask,
             <button className="sf-button" onClick={() => openTask(item.id, collection)}>
               New Task
             </button>
-            <button className="sf-button" onClick={edit}>
-              Edit
-            </button>
-            {lead && !closed && (
+            {canEdit && (
+              <button className="sf-button" onClick={edit}>
+                Edit
+              </button>
+            )}
+            {canEdit && lead && !closed && (
               <button className="sf-button" onClick={() => convert(item.id)}>
                 Convert
               </button>
             )}
-            {!closed && (
+            {canEdit && !closed && (
               <button className="sf-button" onClick={() => setModal({ type: "lost", collection, record: item })}>
                 Mark as Lost
               </button>
@@ -223,10 +227,15 @@ export default function RecordPage({ collection, item, data, openLead, openTask,
           stages={pathStages}
           current={item.stage}
           closed={closed}
-          onSelect={selectStage}
+          onSelect={canEdit ? selectStage : () => {}}
           lostLabel={item.stage === "Lost" ? (lead ? "Lost" : "Closed Lost") : null}
         />
-        {!closed && nextStage && (
+        {!canEdit && !closed && (
+          <span className="read-only-note">
+            <Icon name="lock" size={14} /> Owned by {item.owner}. Only the owner or a Manager can change it.
+          </span>
+        )}
+        {canEdit && !closed && nextStage && (
           <button className="sf-button brand" onClick={() => selectStage(nextStage)}>
             <Icon name="check" size={14} />
             {nextStage === "Converted" ? "Convert" : nextStage === "Won" ? "Mark as Won" : `Mark ${lead ? "Status" : "Stage"} as Complete`}

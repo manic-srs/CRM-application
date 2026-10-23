@@ -94,6 +94,20 @@ export default function Modal({ modal, close, data, run, notify, user }) {
       />
     </label>
   );
+  // Tick box for the no-reply email to the customer (ticked by default; the backend skips it if there is no email)
+  const customerEmail =
+    type === "won"
+      ? data.contacts.find((c) => c.id === record?.primary_contact_id)?.email
+      : record?.email;
+  const customerCheck = (label, hint) => (
+    <label className="check-field welcome-check">
+      <input type="checkbox" name="notify_customer" defaultChecked={!!customerEmail} disabled={!customerEmail} />
+      <span>
+        {label}
+        <small>{customerEmail ? `To ${customerEmail}. ${hint}` : "No email address on this record, so nothing is sent."}</small>
+      </span>
+    </label>
+  );
   const textArea = (label, name, value = "") => (
     <label className="field">
       <span>{label}</span>
@@ -127,14 +141,38 @@ export default function Modal({ modal, close, data, run, notify, user }) {
       </select>
     </label>
   );
+  // Only Managers and Admins can give a record to someone else; a Salesperson sees the owner read-only
+  const canAssign = ["Manager", "Admin"].includes(user?.role);
   const owner = () =>
-    select("Owner", "owner_id", [
+    !canAssign ? (
+      <label className="field">
+        <span>Owner</span>
+        <input readOnly value={record?.owner || user?.full_name || ""} aria-readonly="true" />
+        <input type="hidden" name="owner_id" value={record?.owner_id ?? user?.id ?? ""} />
+      </label>
+    ) : select("Owner", "owner_id", [
       ...data.users.map((user) => [user.id, user.full_name]),
       ...(record?.owner_id &&
       !data.users.some((user) => user.id === record.owner_id)
         ? [[record.owner_id, record.owner || "Current owner"]]
         : []),
     ], record?.owner_id ?? user?.id ?? "");
+  // The green message after saving says what happened (the customer email, if any, is mentioned too)
+  const doneMessage = (v, saved) => {
+    const name = record?.name;
+    const mailed = v.notify_customer === "on" ? " The customer was emailed." : "";
+    if (type === "convert") return "Lead converted. Account, contact, opportunity and follow-up task created.";
+    if (type === "lead" && !record)
+      return `Lead "${saved.name}" was created.${v.welcome_email === "on" && v.email ? " A welcome email was sent to the lead." : ""}`;
+    if (type === "stage") return `"${name}" moved to ${modal.stage}. The next follow-up task was created.`;
+    if (type === "won") return `"${name}" was marked as Won.${mailed}`;
+    if (type === "lost") return `"${name}" was marked as Lost.${mailed}`;
+    if (type === "task") return record ? "Task updated." : "Task created.";
+    if (type === "note") return "Note added.";
+    if (type === "account") return `Account "${saved.name}" was created.`;
+    if (type === "contact") return `Contact "${saved.full_name || v.last_name}" was created.`;
+    return "Your changes were saved.";
+  };
   const submit = async (event) => {
     event.preventDefault();
     if (lock.current) return;
@@ -167,11 +205,13 @@ export default function Modal({ modal, close, data, run, notify, user }) {
         await run("lost", modal.collection, record.id, {
           lost_reason: v.lost_reason,
           lost_notes: v.lost_notes || null,
+          notify_customer: v.notify_customer === "on",
         });
       if (type === "won")
         await run("won", record.id, {
           final_value: v.final_value === "" ? null : Number(v.final_value),
           note: v.note || null,
+          notify_customer: v.notify_customer === "on",
         });
       if (type === "convert")
         saved = await run("convert", record.id, {
@@ -194,13 +234,7 @@ export default function Modal({ modal, close, data, run, notify, user }) {
         await run("note", modal.collection, record.id, v.body.trim());
       }
       close();
-      notify(
-        type === "convert"
-          ? "Lead converted. Account, contact, opportunity, and follow-up task created."
-          : type === "lead" && !record
-            ? `Lead "${saved.name}" was created.`
-            : "Your changes were saved.",
-      );
+      notify(doneMessage(v, saved));
       if (type === "lead") go(`/leads/${saved.id}`);
       if (type === "account") go(`/accounts/${saved.id}`);
       if (type === "contact") go(`/contacts/${saved.id}`);
@@ -292,6 +326,15 @@ export default function Modal({ modal, close, data, run, notify, user }) {
                 true,
               )}
               {owner()}
+              {!record && (
+                <label className="check-field welcome-check">
+                  <input type="checkbox" name="welcome_email" defaultChecked />
+                  <span>
+                    Send the lead a welcome email
+                    <small>An automatic (no-reply) email to the lead's email address saying their profile was created and who will contact them.</small>
+                  </span>
+                </label>
+              )}
               {record &&
                 field(
                   "Demo Date",
@@ -404,6 +447,10 @@ export default function Modal({ modal, close, data, run, notify, user }) {
             <>
               {select("Lost Reason", "lost_reason", LOST_REASONS, "", true)}
               {textArea("Lost Notes", "lost_notes")}
+              {customerCheck(
+                "Send the customer a polite closing email",
+                "A short thank-you (no-reply). The lost reason and notes are internal and are never sent.",
+              )}
             </>
           )}
           {type === "won" && (
@@ -416,6 +463,10 @@ export default function Modal({ modal, close, data, run, notify, user }) {
                 record.expected_value ?? "",
               )}
               {textArea("Closing Note", "note")}
+              {customerCheck(
+                "Send the customer a thank-you email",
+                "A no-reply email to the deal's contact: thank you for accepting the proposal, and who will contact them about next steps.",
+              )}
             </>
           )}
           {type === "convert" && (

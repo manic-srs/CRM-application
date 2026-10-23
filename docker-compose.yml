@@ -46,6 +46,16 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_TLS: ${SMTP_TLS:-false}
       MAIL_FROM: ${MAIL_FROM:-crm@salestrack.local}
+      COMPANY_NAME: ${COMPANY_NAME:-}   # shown to customers in the lead welcome email
+      # Outlook / Microsoft 365 with OAuth instead of an SMTP password (see .env.example)
+      MAIL_PROVIDER: ${MAIL_PROVIDER:-smtp}
+      MS_TENANT_ID: ${MS_TENANT_ID:-}
+      MS_CLIENT_ID: ${MS_CLIENT_ID:-}
+      MS_CLIENT_SECRET: ${MS_CLIENT_SECRET:-}
+      # Login: the default Admin created on the first start, and the key that signs login tokens
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@salestrack.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Admin@2026}
+      SECRET_KEY: ${SECRET_KEY:-salestrack-dev-secret-change-me}
       TZ: America/New_York     # same clock for PostgreSQL and the API, so "today" matches
     ports:
       - "8001:8000"

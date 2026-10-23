@@ -33,6 +33,9 @@ class UserOut(Out):
     email: str
     role: str
     is_active: bool
+    email_stage_updates: bool = False
+    email_assignments: bool = True
+    email_reminders: bool = True
 
 
 class LoginRequest(BaseModel):
@@ -40,11 +43,45 @@ class LoginRequest(BaseModel):
     password: str
 
 
-class SignupRequest(BaseModel):
+class UserCreate(BaseModel):
+    """Admin adds a user (there is no public sign up)."""
     full_name: str = Field(..., min_length=2, max_length=100)
     email: str = Field(..., max_length=255)
     password: str = Field(..., min_length=8, max_length=128)
-    role: UserRole = "Salesperson"  # chosen on the Sign Up form
+    role: UserRole = "Salesperson"
+
+
+class UserUpdate(BaseModel):
+    full_name: str | None = Field(None, min_length=2, max_length=100)
+    email: str | None = Field(None, max_length=255)  # the login username
+    role: UserRole | None = None
+    is_active: bool | None = None
+
+
+class ProfileUpdate(BaseModel):
+    """What a user can change on their own profile (email and role are changed by the Admin).
+    Send only what changes."""
+    full_name: str | None = Field(None, min_length=2, max_length=100)
+    email_stage_updates: bool | None = None  # email me when my leads / deals move to the next stage
+    email_assignments: bool | None = None    # email me when something is assigned to me
+    email_reminders: bool | None = None      # email me reminders (tasks, demos, close dates, overdue)
+
+
+class PasswordReset(BaseModel):
+    """Admin sets a new password for a user."""
+    password: str = Field(..., min_length=8, max_length=128)
+
+
+class PasswordChange(BaseModel):
+    """A user changes their own password."""
+    current_password: str
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
+class TransferRecords(BaseModel):
+    """Move everything a user owns to another user (e.g. when someone leaves)."""
+    to_user_id: int
+    deactivate: bool = False
 
 
 class TestEmail(BaseModel):
@@ -54,6 +91,7 @@ class TestEmail(BaseModel):
 class LoginResponse(BaseModel):
     message: str
     user: UserOut
+    token: str  # send as "Authorization: Bearer <token>" on every request
 
 
 # ---------- History, tasks, notes (shown on record pages) ----------
@@ -143,8 +181,9 @@ class LeadCreate(BaseModel):
     email: str | None = Field(None, max_length=255)
     phone: str | None = Field(None, max_length=30)
     source: LeadSource = "Other"
-    owner_id: int | None = None  # default: the first user
-    created_by_id: int | None = None  # logged-in user; the owner is notified when someone else assigns it
+    owner_id: int | None = None  # default: the logged-in user
+    created_by_id: int | None = None  # ignored: the logged-in user creates it
+    welcome_email: bool = True  # email the lead (no-reply) that their details were received; needs an email
 
 
 class LeadUpdate(BaseModel):
@@ -206,8 +245,9 @@ class LeadStageChange(BaseModel):
 
 class MarkLost(BaseModel):
     lost_reason: LostReason
-    lost_notes: str | None = None
+    lost_notes: str | None = None  # internal: never sent to the customer
     changed_by_id: int | None = None
+    notify_customer: bool = True  # polite no-reply email to the customer (no reason or notes)
 
 
 class ConvertLead(BaseModel):
@@ -328,6 +368,7 @@ class MarkWon(BaseModel):
     final_value: float | None = Field(None, ge=0)  # default: the expected value
     note: str | None = None
     changed_by_id: int | None = None
+    notify_customer: bool = True  # thank-you no-reply email to the deal's contact
 
 
 class ConvertResult(BaseModel):
@@ -348,6 +389,7 @@ class NotificationOut(Out):
     title: str
     message: str | None
     link: str | None = None
+    kind: str = "update"  # "update" (vanishes once seen) or "reminder" (stays until the task is done)
     is_read: bool
     created_at: datetime | None
 

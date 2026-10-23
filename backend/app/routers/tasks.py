@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app import schemas
 from app.database import get_db
+from app.security import acting_user_id, check_owner_change, owner_for_new, require_edit
 from app.models import Lead, Opportunity, Task
 from app.serializers import task_out
 from app.services import assignment_notice, get_or_404, now, record_link, resolve_user_id, start_of_today
@@ -61,11 +62,12 @@ def create_task(data: schemas.TaskCreate, db: Session = Depends(get_db)):
         fallback = get_or_404(db, Lead, data.lead_id, "Lead").owner_id
     if data.opportunity_id is not None:
         fallback = get_or_404(db, Opportunity, data.opportunity_id, "Opportunity").owner_id
-    owner_id = resolve_user_id(db, data.owner_id, fallback)
+    # default owner: the related record's owner, else you; only Managers/Admins assign tasks to others
+    owner_id = resolve_user_id(db, owner_for_new(data.owner_id if data.owner_id is not None else fallback))
     task = Task(**data.model_dump(exclude={"owner_id", "created_by_id"}), owner_id=owner_id, status="Open", is_auto=False)
     db.add(task)
     db.flush()
-    assignment_notice(db, owner_id=owner_id, actor_id=data.created_by_id, kind="Task", name=task.title,
+    assignment_notice(db, owner_id=owner_id, actor_id=acting_user_id(), kind="Task", name=task.title,
                       link=record_link(lead_id=task.lead_id, opportunity_id=task.opportunity_id))
     db.commit()
     db.refresh(task)
@@ -80,8 +82,11 @@ def get_task(task_id: int, db: Session = Depends(get_db)):
 @router.put("/{task_id}", response_model=schemas.TaskOut)
 def update_task(task_id: int, data: schemas.TaskUpdate, db: Session = Depends(get_db)):
     task = get_or_404(db, Task, task_id, "Task")
+    require_edit(task.owner_id, "task")
     changes = data.model_dump(exclude_unset=True)
-    actor = changes.pop("changed_by_id", None)
+    changes.pop("changed_by_id", None)
+    actor = acting_user_id()
+    check_owner_change(task.owner_id, changes.get("owner_id"))
     old_owner = task.owner_id
     for field in ("title", "due_date", "priority"):
         if field in changes and changes[field] is None:
@@ -104,6 +109,7 @@ def update_task(task_id: int, data: schemas.TaskUpdate, db: Session = Depends(ge
 def complete_task(task_id: int, db: Session = Depends(get_db)):
     """Mark an open task as Done."""
     task = get_or_404(db, Task, task_id, "Task")
+    require_edit(task.owner_id, "task")
     if task.status != "Open":
         raise HTTPException(status_code=400, detail=f"Task {task_id} is already {task.status}")
     task.status = "Done"

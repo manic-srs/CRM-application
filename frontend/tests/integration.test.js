@@ -1,7 +1,7 @@
 // Run only against a disposable backend database. Never point this at shared data.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { api, apiRequest, normalizeWorkspace } from "../src/api.js";
+import { api, apiRequest, normalizeWorkspace, setToken } from "../src/api.js";
 import { salesOverview } from "../src/domain.js";
 
 const origin = process.env.CRM_TEST_ORIGIN;
@@ -13,6 +13,12 @@ test(
     t.mock.method(globalThis, "fetch", (url, options) =>
       realFetch(new URL(url, origin), options),
     );
+    // log in first (default Admin unless CRM_TEST_EMAIL / CRM_TEST_PASSWORD are set)
+    const login = await api.login(
+      process.env.CRM_TEST_EMAIL || "admin@salestrack.local",
+      process.env.CRM_TEST_PASSWORD || "Admin@2026",
+    );
+    setToken(login.token);
     const users = await apiRequest("/users");
     assert.ok(users.length);
     const values = {
@@ -20,7 +26,7 @@ test(
       last_name: `Check ${Date.now()}`,
       company: "Temporary test company",
       source: "Phone",
-      owner_id: String(users[0].id),
+      owner_id: String(login.user.id),
     };
     const lead = await api.saveLead(values);
     assert.equal(lead.stage, "New");
@@ -40,14 +46,14 @@ test(
       demo_date: "2026-12-20T11:00:00",
     });
     assert.match(
-      demo.tasks.find((task) => task.status === "Open").due_date,
+      demo.tasks.find((task) => task.status === "Open" && task.title.startsWith("Conduct demo")).due_date,
       /2026-12-20T11:00/,
     );
     const task = await api.saveTask({
       title: "Manual follow-up",
       due_date: "2026-12-21T10:00",
       priority: "Normal",
-      owner_id: String(users[0].id),
+      owner_id: String(login.user.id),
       relatedType: "leads",
       relatedId: String(lead.id),
     });
@@ -69,7 +75,7 @@ test(
         expected_value: "1100",
         probability: "20",
         expected_close_date: "2026-12-31",
-        owner_id: String(users[0].id),
+        owner_id: String(login.user.id),
         primary_contact_id: String(converted.contact.id),
       },
       opp.id,
@@ -124,7 +130,7 @@ test(
     assert.equal(salesOverview(workspace).wonCount, raw.home.summary.won_deals);
     // task alerts are emailed and kept as read (not shown on the bell), so read the full list
     const notifications = await apiRequest(
-      `/notifications?user_id=${users[0].id}&unread_only=false`,
+      "/notifications?unread_only=false",
     );
     assert.ok(notifications.length);
     assert.equal(

@@ -9,6 +9,7 @@
 - stage_notice:          at every step (lead created, Nurturing, Demo, converted, Proposal, Won, Lost)
                          the owner gets a bell notification and an email with the next follow-up task
 """
+import re
 from datetime import date, datetime, time, timedelta
 
 from fastapi import HTTPException
@@ -271,7 +272,44 @@ def stage_notice(
         "\n".join(lines),
         task_id=task.id if task is not None else None,
         link=record_link(lead_id=lead_id, opportunity_id=opportunity_id),
+        category="assignment" if "assigned" in title.lower() else "stage",
     )
+
+
+# ---------- emails to the customer (the lead / contact), no-reply ----------
+
+CUSTOMER_EMAIL_RE = re.compile(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$")
+
+
+def customer_email(db: Session, kind: str, *, to: str | None, first_name: str, owner_id: int,
+                   after_proposal: bool = True) -> bool:
+    """No-reply email to the customer at the important moments (sent only after the save succeeds):
+      welcome  a new lead: their details were received, who will contact them
+      won      the deal is won (proposal accepted): thank you, next steps
+      lost     the lead / deal is closed: a polite thank-you. The lost reason and notes are internal
+               and are never included.
+    Returns False when there is no valid email address."""
+    if not to or not CUSTOMER_EMAIL_RE.match(to.strip()):
+        return False
+    company = mailer.company_name()
+    owner = db.get(User, owner_id)
+    contact = f"{owner.full_name} ({owner.email})"
+    subject, text = {
+        "welcome": (f"Thank you for your interest in {company}",
+                    "We have received your details and created your profile.\n\n"
+                    f"{owner.full_name} will contact you soon. If you have any questions, you can reach {contact}."),
+        "won": (f"Thank you for choosing {company}",
+                "Thank you for accepting our proposal. We're excited to work with you.\n\n"
+                f"{owner.full_name} will contact you shortly about the next steps. You can reach {contact} at any time."),
+        "lost": (f"Thank you for considering {company}",
+                 f"Thank you for taking the time to consider {'our proposal' if after_proposal else 'our services'}. "
+                 "We understand this isn't the right time, and we respect your decision.\n\n"
+                 f"If anything changes or you'd like to talk again, please contact {contact}. We'd be glad to help."),
+    }[kind]
+    body = (f"Hi {first_name},\n\n{text}\n\nBest regards,\n{company}\n\n"
+            "This is an automatic email. Please don't reply to it.")
+    mailer.queue(db, to.strip(), subject, body, sender_name=f"{company} (no-reply)")  # customers see the company
+    return True
 
 
 def record_link(*, lead_id: int | None = None, opportunity_id: int | None = None) -> str:
@@ -283,17 +321,23 @@ def record_link(*, lead_id: int | None = None, opportunity_id: int | None = None
     return "/tasks"
 
 
-def notify(db: Session, user_id: int, title: str, message: str, *, task_id: int | None = None,
-           link: str | None = None, bell: bool = True) -> None:
-    """Emails the user (after the save is committed) and keeps a record in notifications.
+# Which user setting decides whether a notification is also emailed (see User.email_*)
+EMAIL_SETTING = {"stage": "email_stage_updates", "assignment": "email_assignments", "reminder": "email_reminders"}
 
-    bell=False: task alerts. They are saved as already read, so they don't show on the bell
-    (the Tasks page and Home already show due and overdue tasks), but the email still goes out.
+
+def notify(db: Session, user_id: int, title: str, message: str, *, task_id: int | None = None,
+           link: str | None = None, bell: bool = True, kind: str = "update", category: str | None = None) -> None:
+    """Puts a notification on the user's bell and, if their settings say so, emails it (after the save is committed).
+
+    category: "stage" (lead/deal moved on), "assignment" (assigned to you) or "reminder";
+              default: "reminder" for kind="reminder", otherwise "stage".
+    bell=False: saved as already read (no badge), the email still follows the settings.
     """
     db.add(Notification(user_id=user_id, task_id=task_id, title=title, message=message[:500], link=link,
-                        is_read=not bell))
+                        kind=kind, is_read=not bell))
     user = db.get(User, user_id)
-    if user and user.email:
+    category = category or ("reminder" if kind == "reminder" else "stage")
+    if user and user.email and getattr(user, EMAIL_SETTING[category], True):
         mailer.queue(
             db,
             user.email,
@@ -309,7 +353,8 @@ def assignment_notice(db: Session, *, owner_id: int, actor_id: int | None, kind:
         return
     actor = db.get(User, actor_id)
     by = f" by {actor.full_name}" if actor else ""
-    notify(db, owner_id, f"{kind} assigned to you", f"{kind} \"{name}\" was assigned to you{by}.", link=link)
+    notify(db, owner_id, f"{kind} assigned to you", f"{kind} \"{name}\" was assigned to you{by}.", link=link,
+           category="assignment")
 
 
 def task_related(task: Task) -> tuple[str, str | None]:

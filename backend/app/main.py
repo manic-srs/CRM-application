@@ -16,9 +16,21 @@ from sqlalchemy.orm import Session
 
 from app.database import Base, SessionLocal, engine, get_db
 from app import mailer, scheduler, schemas
+from app.security import authenticate, ensure_default_admin, require_admin
 from app.routers import accounts, activity, auth, emails, home, leads, opportunities, tasks
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(name)s - %(message)s")
+
+
+def upgrade_database() -> None:
+    """Adds columns that newer versions need to a database created by an older schema.sql (safe to repeat)."""
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS kind VARCHAR(10) NOT NULL DEFAULT 'update'"))
+        for column, default in (("email_stage_updates", "FALSE"), ("email_assignments", "TRUE"), ("email_reminders", "TRUE")):
+            conn.execute(text(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {column} BOOLEAN NOT NULL DEFAULT {default}"))
+        conn.execute(text("ALTER TABLE emails DROP CONSTRAINT IF EXISTS emails_status_check"))
+        conn.execute(text("ALTER TABLE emails ADD CONSTRAINT emails_status_check "
+                          "CHECK (status IN ('Sent','Failed','Gmail','Outlook'))"))
 
 
 @asynccontextmanager
@@ -26,6 +38,10 @@ async def lifespan(app: FastAPI):
     # With PostgreSQL the tables come from database/schema.sql. Only the local SQLite fallback creates them here.
     if engine.url.get_backend_name() == "sqlite":
         Base.metadata.create_all(bind=engine)
+    else:
+        upgrade_database()
+    with SessionLocal() as db:
+        ensure_default_admin(db)  # first start: the Admin who adds everyone else
     # Task reminders and overdue alerts (set CHECK_INTERVAL_SECONDS=0 to turn off)
     checker = None
     if int(os.getenv("CHECK_INTERVAL_SECONDS", "60")) > 0:
@@ -45,19 +61,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for router in (auth.router, emails.router, home.router, leads.router, opportunities.router, tasks.router, accounts.router, activity.router):
-    app.include_router(router)
+# Login is open; every other API needs the token from login (see app/security.py)
+app.include_router(auth.router)
+app.include_router(auth.protected)
+for router in (emails.router, home.router, leads.router, opportunities.router, tasks.router, accounts.router, activity.router):
+    app.include_router(router, dependencies=[Depends(authenticate)])
 
 
-@app.get("/api/health/email", tags=["Health"])
+@app.get("/api/health/email", tags=["Health"], dependencies=[Depends(authenticate)])
 def email_health():
     """Where notification emails go: the Mailpit test inbox or a real mail server (no secrets shown)."""
     return mailer.mode()
 
 
-@app.post("/api/health/email/test", tags=["Health"])
+@app.post("/api/health/email/test", tags=["Health"], dependencies=[Depends(authenticate)])
 def send_test_email(data: schemas.TestEmail):
-    """Sends one email right away and reports the mail server's answer. Use it to check SMTP settings."""
+    """Admin: sends one email right away and reports the mail server's answer. Use it to check SMTP settings."""
+    require_admin("send test emails")
     error = mailer.send([data.to], "[SalesTrack] Test email",
                         "This is a test email from SalesTrack CRM.\n\nIf you can read this, notification emails work.")
     if error:

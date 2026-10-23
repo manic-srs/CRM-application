@@ -19,6 +19,10 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(20), default="Salesperson")
     is_active: Mapped[bool] = mapped_column(default=True)
+    # Which notifications also come by email (the bell always shows everything). Changed in My Profile.
+    email_stage_updates: Mapped[bool] = mapped_column(default=False)   # lead / deal moved to the next stage
+    email_assignments: Mapped[bool] = mapped_column(default=True)      # a record was assigned to me
+    email_reminders: Mapped[bool] = mapped_column(default=True)        # task, demo, close-date, overdue reminders
     created_at: Mapped[datetime | None] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(server_default=func.now(), onupdate=func.now())
 
@@ -188,6 +192,7 @@ class Notification(Base):
     title: Mapped[str] = mapped_column(String(200))
     message: Mapped[str | None] = mapped_column(String(500))
     link: Mapped[str | None] = mapped_column(String(200))  # page in the app, e.g. /leads/5
+    kind: Mapped[str] = mapped_column(String(10), default="update")  # update | reminder
     is_read: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime | None] = mapped_column(server_default=func.now())
 

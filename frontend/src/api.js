@@ -1,12 +1,23 @@
 // The React dev server proxies /api to the locally configured backend.
 const BASE = (import.meta.env?.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
 
+// Login token from POST /auth/login, sent on every request. A 401 means the login expired
+// (or the user was deactivated): the app then goes back to the login page.
+let token = "";
+export const setToken = (value) => {
+  token = value || "";
+};
+const authHeaders = () => (token ? { Authorization: `Bearer ${token}` } : {});
+function checkLogin(response) {
+  if (response.status === 401 && token) window.dispatchEvent(new Event("crm-logout"));
+}
+
 export async function apiRequest(path, { method = "GET", body, signal } = {}) {
   let response;
   try {
     response = await fetch(`${BASE}${path}`, {
       method,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: signal || AbortSignal.timeout(15000),
     });
@@ -17,6 +28,7 @@ export async function apiRequest(path, { method = "GET", body, signal } = {}) {
         : "Cannot reach the backend. Check that it is running and try again.",
     );
   }
+  checkLogin(response);
   const result = await response.json().catch(() => null);
   if (!response.ok) {
     const detail = result?.detail;
@@ -55,6 +67,7 @@ export function leadPayload(values, editing = false) {
     owner_id: numeric(values.owner_id),
   };
   if (editing) payload.demo_date = optional(values.demo_date);
+  else payload.welcome_email = values.welcome_email === "on";
   return payload;
 }
 export function taskPayload(values, editing = false) {
@@ -91,10 +104,16 @@ const actor = (editing, actorId) =>
 async function upload(path, formData) {
   let response;
   try {
-    response = await fetch(`${BASE}${path}`, { method: "POST", body: formData, signal: AbortSignal.timeout(60000) });
+    response = await fetch(`${BASE}${path}`, {
+      method: "POST",
+      body: formData,
+      headers: authHeaders(),
+      signal: AbortSignal.timeout(60000),
+    });
   } catch {
     throw new Error("Cannot reach the backend. Check that it is running and try again.");
   }
+  checkLogin(response);
   const result = await response.json().catch(() => null);
   if (!response.ok) {
     const detail = result?.detail;
@@ -147,8 +166,8 @@ export const api = {
     }),
   readNotification: (id) =>
     apiRequest(`/notifications/${id}/read`, { method: "PUT" }),
-  readAllNotifications: (userId) =>
-    apiRequest(`/notifications/read-all?user_id=${encodeURIComponent(userId)}`, { method: "PUT" }),
+  notifications: () => apiRequest("/notifications"),
+  readAllNotifications: () => apiRequest("/notifications/read-all", { method: "PUT" }),
   saveAccount: (v) =>
     apiRequest("/accounts", {
       method: "POST",
@@ -181,19 +200,28 @@ export const api = {
       body: { email: email.trim(), password },
     }),
   search: (q) => apiRequest(`/search?q=${encodeURIComponent(q)}`),
-  signup: (values) =>
-    apiRequest("/auth/signup", {
+  me: () => apiRequest("/auth/me"),
+  // My Profile: name + which notifications also come by email
+  updateProfile: (changes) => apiRequest("/auth/me", { method: "PUT", body: changes }),
+  changePassword: (current_password, new_password) =>
+    apiRequest("/auth/password", { method: "PUT", body: { current_password, new_password } }),
+  // Admin: users
+  allUsers: () => apiRequest("/users?include_inactive=true"),
+  createUser: (v) =>
+    apiRequest("/users", {
       method: "POST",
-      body: {
-        full_name: values.full_name.trim(),
-        email: values.email.trim(),
-        password: values.password,
-        role: values.role || "Salesperson",
-      },
+      body: { full_name: v.full_name.trim(), email: v.email.trim(), password: v.password, role: v.role },
     }),
+  updateUser: (id, changes) => apiRequest(`/users/${id}`, { method: "PUT", body: changes }),
+  resetPassword: (id, password) => apiRequest(`/users/${id}/password`, { method: "PUT", body: { password } }),
+  transferRecords: (id, toUserId, deactivate) =>
+    apiRequest(`/users/${id}/transfer`, { method: "POST", body: { to_user_id: Number(toUserId), deactivate } }),
+  emailSettings: () => apiRequest("/emails/settings"),
   sendEmail: (formData) => upload("/emails", formData),
+  resendEmail: (id) => apiRequest(`/emails/${id}/resend`, { method: "POST", signal: AbortSignal.timeout(60000) }),
   emails: (field, id) => apiRequest(`/emails?${field}=${encodeURIComponent(id)}`),
-  attachmentUrl: (id) => `${BASE}/emails/attachments/${id}`,
+  // plain links can't send headers, so the download passes the login token in the address
+  attachmentUrl: (id) => `${BASE}/emails/attachments/${id}?token=${encodeURIComponent(token)}`,
 };
 
 const idText = (value) => (value == null ? "" : String(value));

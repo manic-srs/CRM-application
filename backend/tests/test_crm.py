@@ -1,3 +1,4 @@
+from conftest import login_as
 """Tests for the full CRM flow. Run from the backend folder:  pytest -v"""
 from datetime import datetime, timedelta
 
@@ -31,7 +32,8 @@ def test_login(client):
     ok = client.post("/api/auth/login", json={"email": "ravi@crm.test", "password": "Password@123"})
     assert ok.status_code == 200 and ok.json()["user"]["full_name"] == "Ravi Kumar"
     assert client.post("/api/auth/login", json={"email": "ravi@crm.test", "password": "nope"}).status_code == 401
-    assert [u["full_name"] for u in client.get("/api/users").json()] == ["Priya Sharma", "Ravi Kumar"]
+    assert ok.json()["token"]
+    assert [u["full_name"] for u in client.get("/api/users").json()] == ["Asha Rao", "Priya Sharma", "Ravi Kumar"]
 
 
 # ---------- leads ----------
@@ -51,7 +53,8 @@ def test_lead_validation(client):
     assert client.post("/api/leads", json={"last_name": "x"}).status_code == 422  # company required
     assert client.post("/api/leads", json={"last_name": "x", "company": "c", "source": "Fax"}).status_code == 422
     assert client.post("/api/leads", json={"last_name": "x", "company": "c", "salutation": "Sir"}).status_code == 422
-    assert client.post("/api/leads", json={"last_name": "x", "company": "c", "owner_id": 99}).status_code == 400
+    assert client.post("/api/leads", json={"last_name": "x", "company": "c", "owner_id": 99}).status_code == 403  # salesperson
+    assert login_as(client, 1).post("/api/leads", json={"last_name": "x", "company": "c", "owner_id": 99}).status_code == 400
     assert client.get("/api/leads/999").status_code == 404
 
 
@@ -186,11 +189,13 @@ def test_notes_and_notifications(client):
     # every step is on the owner's bell; a lead someone else created for you says "assigned to you"
     assert [n["title"] for n in client.get("/api/notifications", params={"user_id": 2}).json()] == ["Lead created"]
     client.put("/api/notifications/read-all", params={"user_id": 2})
-    new_lead(client, name="Given Away", created_by_id=1)
-    bell = client.get("/api/notifications", params={"user_id": 2}).json()
-    assert len(bell) == 1 and bell[0]["title"] == "Lead assigned to you" and "by Priya Sharma" in bell[0]["message"]
-    client.put(f"/api/notifications/{bell[0]['id']}/read")
-    assert client.get("/api/notifications", params={"user_id": 2}).json() == []
+    login_as(client, 1)
+    new_lead(client, name="Given Away")  # Priya (Manager) creates it for Ravi
+    login_as(client, 2)
+    unread = [n for n in client.get("/api/notifications").json() if not n["is_read"]]
+    assert len(unread) == 1 and unread[0]["title"] == "Lead assigned to you" and "by Priya Sharma" in unread[0]["message"]
+    client.put(f"/api/notifications/{unread[0]['id']}/read")
+    assert [n for n in client.get("/api/notifications").json() if not n["is_read"]] == []
 
 
 # ---------- home and search ----------
@@ -307,6 +312,6 @@ def test_close_date_reminder(client):
 def test_new_owner_gets_the_reminders(client):
     lead = new_lead(client)
     client.put(f"/api/leads/{lead['id']}/stage", json={"stage": "Demo", "demo_date": "2026-12-01T11:00:00"})
-    client.put(f"/api/leads/{lead['id']}", json={"owner_id": 1, "changed_by_id": 2})
+    login_as(client, 1).put(f"/api/leads/{lead['id']}", json={"owner_id": 1})  # a Manager reassigns it
     assert {t["owner_id"] for t in open_tasks(client.get(f"/api/leads/{lead['id']}").json())} == {1}
 

@@ -36,6 +36,10 @@ CREATE TABLE users (
   role          VARCHAR(20)  NOT NULL DEFAULT 'Salesperson'
                 CHECK (role IN ('Salesperson','Manager','Admin')),
   is_active     BOOLEAN   NOT NULL DEFAULT TRUE,
+  -- which notifications also come by email (the bell always shows everything); set in My Profile
+  email_stage_updates BOOLEAN NOT NULL DEFAULT FALSE,
+  email_assignments   BOOLEAN NOT NULL DEFAULT TRUE,
+  email_reminders     BOOLEAN NOT NULL DEFAULT TRUE,
   created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -208,6 +212,8 @@ CREATE TABLE notifications (
   title      VARCHAR(200) NOT NULL,
   message    VARCHAR(500),
   link       VARCHAR(200),                -- page in the app to open, e.g. /leads/5
+  kind       VARCHAR(10) NOT NULL DEFAULT 'update'
+             CHECK (kind IN ('update','reminder')),  -- update: gone once seen; reminder: stays until the task is done
   is_read    BOOLEAN   NOT NULL DEFAULT FALSE,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_notif_user FOREIGN KEY (user_id) REFERENCES users(id),
@@ -222,7 +228,7 @@ CREATE TABLE emails (
   body           TEXT NOT NULL,
   to_address     VARCHAR(500) NOT NULL,
   cc_address     VARCHAR(500),
-  status         VARCHAR(10) NOT NULL DEFAULT 'Sent' CHECK (status IN ('Sent','Failed')),
+  status         VARCHAR(10) NOT NULL DEFAULT 'Sent' CHECK (status IN ('Sent','Failed','Gmail','Outlook')),  -- Gmail/Outlook: opened in the user's own mail app
   error          TEXT,                       -- why sending failed
   sent_by_id     INT NOT NULL,
   lead_id        INT,

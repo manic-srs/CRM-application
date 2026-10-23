@@ -37,8 +37,11 @@ test("lead form uses backend fields and only requires last name and company", ()
       phone: null,
       source: "Phone",
       owner_id: 3,
+      welcome_email: false, // the "welcome email to the lead" box was not ticked
     },
   );
+  assert.equal(leadPayload({ last_name: "A", company: "B", welcome_email: "on" }).welcome_email, true);
+  assert.ok(!("welcome_email" in leadPayload({ last_name: "A", company: "B" }, true))); // editing: not sent
   assert.ok(!LEAD_STAGES.includes("Won"));
   assert.ok(LEAD_SOURCES.includes("Social Media"));
   assert.deepEqual(PRIORITIES, ["Low", "Normal", "High"]);

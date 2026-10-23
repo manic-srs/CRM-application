@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { api, setToken } from "./api";
 import { EmailComposer } from "./Email";
 import Header, { Sidebar } from "./Header";
 import ListView from "./ListView";
@@ -8,24 +9,32 @@ import RecordPage from "./RecordPage";
 import { AccountPage, ContactPage } from "./RelatedPages";
 import SellerHome from "./SellerHome";
 import TasksPage from "./TasksPage";
+import UsersPage, { ChangePassword, MyProfile } from "./UsersPage";
 import { Icon } from "./ui";
 import { useWorkspace } from "./useWorkspace";
 
-const USER_KEY = "crm-user";
+const SESSION_KEY = "crm-session";
 const SCOPE_KEY = "crm-home-scope";
 
-// The logged-in user is remembered in this browser only (no tokens yet in this POC).
-function loadUser() {
+// The login (user + token) is remembered in this browser until Log Out or until the token expires.
+function loadSession() {
   try {
-    return JSON.parse(localStorage.getItem(USER_KEY)) || null;
+    localStorage.removeItem("crm-user"); // older versions saved the user without a token
+    const session = JSON.parse(localStorage.getItem(SESSION_KEY));
+    if (session?.user && session?.token) {
+      setToken(session.token);
+      return session;
+    }
   } catch {
-    return null;
+    /* storage unavailable */
   }
+  return null;
 }
-function saveUser(user) {
+function saveSession(session) {
+  setToken(session?.token);
   try {
-    if (user) localStorage.setItem(USER_KEY, JSON.stringify(user));
-    else localStorage.removeItem(USER_KEY);
+    if (session) localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    else localStorage.removeItem(SESSION_KEY);
   } catch {
     /* storage unavailable: stay logged in for this tab only */
   }
@@ -34,29 +43,47 @@ function saveUser(user) {
 const readRoute = () => location.hash.slice(1) || "/";
 
 export default function App() {
-  const [user, setUser] = useState(loadUser);
-  if (!user)
+  const [session, setSession] = useState(loadSession);
+  const update = (next) => {
+    saveSession(next);
+    setSession(next);
+  };
+  useEffect(() => {
+    // the backend said the login is no longer valid (expired, or the user was deactivated)
+    const onExpired = () => update(null);
+    addEventListener("crm-logout", onExpired);
+    return () => removeEventListener("crm-logout", onExpired);
+  }, []);
+  useEffect(() => {
+    // pick up role / name changes the Admin made since this browser logged in
+    if (!session) return;
+    api
+      .me()
+      .then((me) => {
+        if (me.role !== session.user.role || me.full_name !== session.user.full_name) update({ ...session, user: me });
+      })
+      .catch(() => {});
+  }, [session?.token]);
+  if (!session)
     return (
       <Login
-        onLogin={(u) => {
-          saveUser(u);
-          setUser(u);
+        onLogin={(user, token) => {
+          update({ user, token });
           window.location.hash = "/";
         }}
       />
     );
   return (
     <Workspace
-      user={user}
-      onLogout={() => {
-        saveUser(null);
-        setUser(null);
-      }}
+      key={session.user.id}
+      user={session.user}
+      onLogout={() => update(null)}
+      onUserChanged={(user) => update({ ...session, user })}
     />
   );
 }
 
-function Workspace({ user, onLogout }) {
+function Workspace({ user, onLogout, onUserChanged }) {
   const [route, setRoute] = useState(readRoute);
   const [path, query = ""] = route.split("?");
   const section = path.split("/")[1] || "home";
@@ -81,6 +108,8 @@ function Workspace({ user, onLogout }) {
   const [modal, setModal] = useState(null);
   const [toast, setToast] = useState("");
   const [composer, setComposer] = useState(null);
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [emailVersion, setEmailVersion] = useState(0);
   const [collapsed, setCollapsed] = useState(() => {
     try {
@@ -112,7 +141,7 @@ function Workspace({ user, onLogout }) {
     return () => clearTimeout(t);
   }, [toast]);
   useEffect(() => {
-    const titles = { home: "Home", leads: "Leads", opportunities: "Opportunities", tasks: "Tasks", accounts: "Accounts", contacts: "Contacts" };
+    const titles = { home: "Home", leads: "Leads", opportunities: "Opportunities", tasks: "Tasks", accounts: "Accounts", contacts: "Contacts", users: "Users" };
     document.title = `${titles[section] || "SalesTrack"} | SalesTrack`;
   }, [section]);
 
@@ -155,6 +184,7 @@ function Workspace({ user, onLogout }) {
         collection={section}
         item={data[section].find((x) => x.id === id)}
         data={data}
+        user={user}
         openLead={openLead}
         openTask={openTask}
         toggleTask={toggleTask}
@@ -178,6 +208,7 @@ function Workspace({ user, onLogout }) {
     ) : (
       <ListView key={route} collection="contacts" data={data} user={user} openNew={openNew} setModal={setModal} query={query} />
     );
+  else if (section === "users" && user.role === "Admin") page = <UsersPage user={user} data={data} reload={reload} notify={notify} onSelfChanged={onUserChanged} />;
   else if (section === "tasks")
     page = <TasksPage key={route} data={data} user={user} toggleTask={toggleTask} openTask={openTask} setModal={setModal} query={query} />;
   else
@@ -200,6 +231,9 @@ function Workspace({ user, onLogout }) {
         openNew={openNew}
         run={run}
         notify={notify}
+        reload={reload}
+        openPassword={() => setPasswordOpen(true)}
+        openProfile={() => setProfileOpen(true)}
         toggleSidebar={() => setNav(!collapsed)}
       />
       <Sidebar section={section} data={data} user={user} collapsed={collapsed} />
@@ -234,6 +268,18 @@ function Workspace({ user, onLogout }) {
           Saving…
         </div>
       )}
+      {passwordOpen && <ChangePassword close={() => setPasswordOpen(false)} notify={notify} />}
+      {profileOpen && (
+        <MyProfile
+          user={user}
+          close={() => setProfileOpen(false)}
+          notify={notify}
+          onSaved={(updated) => {
+            onUserChanged(updated);
+            reload().catch(() => {});
+          }}
+        />
+      )}
       {modal && <Modal modal={modal} close={() => setModal(null)} data={data} run={run} notify={notify} user={user} />}
       {composer && (
         <EmailComposer
@@ -246,7 +292,9 @@ function Workspace({ user, onLogout }) {
             notify(
               email.status === "Sent"
                 ? `Email "${email.subject}" was sent to ${email.to_address}.`
-                : `Email saved but not sent: ${email.error}`,
+                : ["Gmail", "Outlook"].includes(email.status)
+                  ? `Email saved on the record. Finish sending it in ${email.status}.`
+                  : `Email saved but not sent: ${email.error}`,
             );
           }}
         />

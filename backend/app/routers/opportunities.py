@@ -9,9 +9,11 @@ from sqlalchemy.orm import Session
 from app import schemas
 from app.constants import OPPORTUNITY_OPEN_STAGES, OPPORTUNITY_STAGES, STAGE_PROBABILITY
 from app.database import get_db
+from app.security import acting_user_id, check_owner_change, require_edit
 from app.models import Contact, Opportunity
 from app.serializers import history_out, opportunity_detail, opportunity_out
 from app.services import (
+    customer_email,
     assignment_notice,
     auto_close_open_tasks,
     create_auto_task,
@@ -66,8 +68,11 @@ def get_opportunity(opportunity_id: int, db: Session = Depends(get_db)):
 @router.put("/{opportunity_id}", response_model=schemas.OpportunityOut)
 def update_opportunity(opportunity_id: int, data: schemas.OpportunityUpdate, db: Session = Depends(get_db)):
     opp = get_or_404(db, Opportunity, opportunity_id, "Opportunity")
+    require_edit(opp.owner_id, "opportunity")
     changes = data.model_dump(exclude_unset=True)
-    actor = changes.pop("changed_by_id", None)
+    changes.pop("changed_by_id", None)
+    actor = acting_user_id()
+    check_owner_change(opp.owner_id, changes.get("owner_id"))
     old_owner = opp.owner_id
     if "name" in changes and not changes["name"]:
         raise HTTPException(status_code=400, detail="name can't be empty")
@@ -95,7 +100,8 @@ def change_stage(opportunity_id: int, data: schemas.OpportunityStageChange, db: 
     ensure_open(opp)
     if opp.stage == data.stage:
         raise HTTPException(status_code=400, detail=f"Opportunity {opportunity_id} is already at {data.stage}")
-    by = resolve_user_id(db, data.changed_by_id, opp.owner_id)
+    require_edit(opp.owner_id, "opportunity")
+    by = acting_user_id()
     old = opp.stage
     opp.stage = data.stage
     opp.probability = STAGE_PROBABILITY[data.stage]
@@ -124,7 +130,8 @@ def mark_won(opportunity_id: int, data: schemas.MarkWon | None = None, db: Sessi
     final_value = data.final_value if data.final_value is not None else opp.expected_value
     if final_value is None:
         raise HTTPException(status_code=400, detail="final_value is required (the deal has no expected value)")
-    by = resolve_user_id(db, data.changed_by_id, opp.owner_id)
+    require_edit(opp.owner_id, "opportunity")
+    by = acting_user_id()
     old = opp.stage
     opp.stage = "Won"
     opp.probability = STAGE_PROBABILITY["Won"]
@@ -137,6 +144,8 @@ def mark_won(opportunity_id: int, data: schemas.MarkWon | None = None, db: Sessi
         details.append(f"Note: {data.note}")
     stage_notice(db, kind="Opportunity", stage="Won", record_name=opp.name, owner_id=opp.owner_id,
                  actor_id=by, opportunity_id=opp.id, details=details)
+    if data.notify_customer:
+        email_contact(db, opp, "won")
     db.commit()
     db.refresh(opp)
     return opportunity_detail(opp)
@@ -147,7 +156,8 @@ def mark_lost(opportunity_id: int, data: schemas.MarkLost, db: Session = Depends
     """Close as Lost from any open stage. A lost reason is required."""
     opp = get_or_404(db, Opportunity, opportunity_id, "Opportunity")
     ensure_open(opp)
-    by = resolve_user_id(db, data.changed_by_id, opp.owner_id)
+    require_edit(opp.owner_id, "opportunity")
+    by = acting_user_id()
     old = opp.stage
     opp.stage = "Lost"
     opp.probability = STAGE_PROBABILITY["Lost"]
@@ -163,9 +173,19 @@ def mark_lost(opportunity_id: int, data: schemas.MarkLost, db: Session = Depends
         details.append(f"Notes: {data.lost_notes}")
     stage_notice(db, kind="Opportunity", stage="Lost", record_name=opp.name, owner_id=opp.owner_id,
                  actor_id=by, opportunity_id=opp.id, details=details)
+    if data.notify_customer:
+        email_contact(db, opp, "lost", after_proposal=old == "Proposal")
     db.commit()
     db.refresh(opp)
     return opportunity_detail(opp)
+
+
+def email_contact(db: Session, opp: Opportunity, kind: str, **extra) -> None:
+    """Customer email to the deal's primary contact (the person the lead became)."""
+    contact = db.get(Contact, opp.primary_contact_id) if opp.primary_contact_id else None
+    if contact is not None:
+        customer_email(db, kind, to=contact.email, first_name=contact.first_name or contact.full_name,
+                       owner_id=opp.owner_id, **extra)
 
 
 @router.get("/{opportunity_id}/history", response_model=list[schemas.StageHistoryOut])

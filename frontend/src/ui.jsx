@@ -22,6 +22,9 @@ const paths = {
   star: "m12 3 2.8 5.7 6.2.9-4.5 4.4 1 6.2L12 17.3l-5.5 2.9 1-6.2L3 9.6l6.2-.9Z",
   user: "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8",
   filter: "M3 5h18l-7 8v6l-4 2v-8Z",
+  lock: "M6 11h12v10H6ZM8 11V7a4 4 0 0 1 8 0v4",
+  settings: "M16 19v-1a3 3 0 0 0-3-3H6a3 3 0 0 0-3 3v1M9.5 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6M21 19v-1a3 3 0 0 0-2.2-2.9M16 5.1a3 3 0 0 1 0 5.8",
+  mail: "M3 5h18v14H3ZM3 6l9 7 9-7",
 };
 
 export function Icon({ name, size = 16, className = "", ...props }) {

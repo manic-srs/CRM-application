@@ -19,7 +19,11 @@ docker compose up --build
 Then open http://localhost:8001/docs. All the APIs are listed there and you can try them from the browser.
 
 - The first time, PostgreSQL creates the tables from `schema.sql` and `home-page-views.sql`. There is no sample data: the database starts empty.
-- Create a user with `POST /api/auth/signup` (or the Sign Up page in the app). Send `role` (Salesperson, Manager or Admin); it defaults to Salesperson.
+- On the first start the API creates the default Admin (`admin@salestrack.local` / `Admin@2026`, or `ADMIN_EMAIL` / `ADMIN_PASSWORD` from `.env`).
+- Every API except login needs a token: call `POST /api/auth/login`, copy `token`, click **Authorize** in the docs and paste it.
+- The Admin adds users with `POST /api/users` (or the Users page in the app). There is no public sign up.
+- Roles are checked on every change (see `app/security.py`): a Salesperson changes only their own records,
+  a Manager changes any record and reassigns owners, an Admin also manages users.
 - To start again with an empty database: `docker compose down -v` and then `docker compose up --build`
 - PostgreSQL is on port 5433 (user `crm_user`, password `crm_pass`, database `crm_db`) if you want to check the tables, e.g. in pgAdmin.
 - The API is on port 8001 because 8000 was already used on my laptop.
@@ -37,7 +41,7 @@ pip install -r requirements.txt
 pytest -v
 ```
 
-The tests use a temporary database and don't send real emails, so they don't touch the PostgreSQL data. Right now all 26 pass.
+The tests use a temporary database and don't send real emails, so they don't touch the PostgreSQL data. Right now all 52 pass.
 
 ## Fields
 
@@ -97,7 +101,11 @@ see `.env.example` in the main folder):
 | --- | --- |
 | `SMTP_HOST`, `SMTP_PORT` | Mail server. Docker uses Mailpit (`mailpit`, `1025`). Empty = no emails are sent |
 | `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_TLS` | For a real company mail server later |
-| `MAIL_FROM` | Sender address |
+| `MAIL_FROM` | Sender address: every email goes out from it ("Name via SalesTrack"); replies go to the user (Reply-To) |
+| `MAIL_PROVIDER`, `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET` | `graph` = send through Outlook / Microsoft 365 with OAuth (Microsoft Graph) instead of SMTP |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | The default Admin created on the first start |
+| `SECRET_KEY` | Signs the login tokens (set your own) |
+| `TOKEN_HOURS` | How long a login lasts (default 12) |
 | `APP_URL` | Link to the app inside notification emails |
 | `CHECK_INTERVAL_SECONDS` | How often reminders are checked (default 60, 0 = off) |
 
@@ -107,8 +115,9 @@ All APIs start with `/api`.
 
 | Screen | API |
 | --- | --- |
-| Sign up | POST /auth/signup |
-| Login | POST /auth/login |
+| Login (returns the token) | POST /auth/login |
+| Me, change my password | GET /auth/me, PUT /auth/password |
+| Users (Admin) | GET /users?include_inactive=true, POST /users, PUT /users/{id}, PUT /users/{id}/password, POST /users/{id}/transfer |
 | Users (owner dropdown) | GET /users |
 | Home | GET /home |
 | Leads list | GET /leads (filters: stage, source, owner_id, search) |
@@ -128,7 +137,7 @@ All APIs start with `/api`.
 | Accounts | GET /accounts, POST /accounts, GET /accounts/{id} |
 | Contacts | GET /contacts, POST /contacts, GET /contacts/{id} |
 | Notes | GET /notes, POST /notes |
-| Notifications (bell) | GET /notifications?user_id=, PUT /notifications/{id}/read |
+| Notifications (bell) | GET /notifications (unseen updates + reminders for open tasks), PUT /notifications/read-all, PUT /notifications/{id}/read |
 | Send email | POST /emails (form data with files) |
 | Emails of a record | GET /emails?lead_id= (or opportunity_id, contact_id, account_id) |
 | Download attachment | GET /emails/attachments/{id} |
@@ -167,6 +176,6 @@ backend/
 
 ## Not done yet
 
-- Login only checks the email and password. There is no token yet.
+- Login tokens are signed with `SECRET_KEY`; there is no single sign-on (Microsoft login) yet.
 - Phase 2 items are pending: Apollo.io import, bulk upload, SMS notifications and email templates.
 - Emails go to the Mailpit test inbox. To send real emails, set the company SMTP settings above.

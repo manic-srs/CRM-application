@@ -45,7 +45,7 @@ export function useWorkspace(collection, id, userId, homeScope = "team") {
           ? apiRequest(`/${collection}/${id}`)
           : null,
         notificationOwner
-          ? apiRequest(`/notifications?user_id=${notificationOwner}`)
+          ? apiRequest("/notifications")
           : [],
       ]);
       if (ticket !== sequence.current) return;

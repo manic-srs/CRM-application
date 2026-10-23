@@ -10,7 +10,7 @@ The easiest way is Docker from the main project folder. It starts the database, 
 docker compose up --build
 ```
 
-Then open http://localhost:5173, click **Sign Up** to create your account, and log in.
+Then open http://localhost:5173 and log in. The first time, use the default Admin (`admin@salestrack.local` / `Admin@2026`) and add users on the **Users** page.
 
 To run only the frontend while the API is already running on port 8001:
 
@@ -28,7 +28,8 @@ Calls to `/api` are forwarded to `http://127.0.0.1:8001` (see `vite.config.js`).
 
 | Screen | What it shows |
 | --- | --- |
-| Login / Sign Up | Log in, or create an account (`POST /api/auth/signup`) |
+| Login | Log in (`POST /api/auth/login`); the token is sent on every request |
+| Users (Admin) | Add users, change roles, reset passwords, deactivate, transfer records |
 | Home (Seller Home) | Close Deals, Plan My Accounts, Grow Relationships, Build Pipeline, Key Deals, Today's Events, Today's Tasks, Recent Records and Assistant, for the logged-in user |
 | Leads | List views (All Open Leads, My Open Leads, Converted, Lost), sort, search, New |
 | Lead page | Highlights, path (New → Nurturing → Demo → Converted), Convert, Mark as Lost, Details and Activity tabs, notes, stage history |
@@ -50,7 +51,8 @@ Every notification, task, Assistant item and Home card opens the record it is ab
 | --- | --- |
 | `src/App.jsx` | Login check, page routing, dialogs and messages |
 | `src/Header.jsx` | Top bar, App Launcher, search, + menu, bell, user menu, and the side panel |
-| `src/Login.jsx` | Login and Sign Up |
+| `src/Login.jsx` | Login |
+| `src/UsersPage.jsx` | Users page (Admin) and Change Password |
 | `src/Email.jsx` | Send Email (with attachments) and the list of sent emails |
 | `src/SellerHome.jsx` | Home page cards |
 | `src/ListView.jsx` | List views and the opportunity Kanban |

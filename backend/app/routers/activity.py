@@ -1,4 +1,6 @@
 """Notes (call / demo notes), notifications (the bell icon) and the global search box."""
+from datetime import datetime, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
@@ -7,7 +9,8 @@ from app import schemas
 from app.database import get_db
 from app.models import Account, Contact, Lead, Note, Notification, Opportunity, Task
 from app.serializers import note_out
-from app.services import get_or_404, resolve_user_id
+from app.security import acting_user_id
+from app.services import get_or_404
 
 router = APIRouter(prefix="/api", tags=["Notes, notifications and search"])
 
@@ -36,7 +39,7 @@ def add_note(data: schemas.NoteCreate, db: Session = Depends(get_db)):
     )
     note = Note(
         body=data.body,
-        created_by_id=resolve_user_id(db, data.created_by_id, parent.owner_id),
+        created_by_id=acting_user_id(),
         lead_id=data.lead_id,
         opportunity_id=data.opportunity_id,
     )
@@ -47,22 +50,50 @@ def add_note(data: schemas.NoteCreate, db: Session = Depends(get_db)):
 
 
 # ---------- Notifications (bell icon) ----------
+# Two kinds:
+#   update    stage changes, assignments...: pop up when they arrive; stay in the bell list for BELL_DAYS
+#             (read or not); the red badge counts only the unread ones
+#   reminder  task / demo / close-date reminders and overdue tasks: stay on the bell until the task is done
+BELL_DAYS = 30
+BELL_MAX_UPDATES = 50
+
+def bell_items(db: Session, user_id: int) -> list[Notification]:
+    since = datetime.now() - timedelta(days=BELL_DAYS)
+    updates = db.scalars(select(Notification).where(
+        Notification.user_id == user_id, Notification.kind == "update",
+        or_(Notification.is_read.is_(False), Notification.created_at >= since))
+        .order_by(Notification.id.desc()).limit(BELL_MAX_UPDATES)).all()
+    reminders = db.scalars(
+        select(Notification).outerjoin(Task, Notification.task_id == Task.id).where(
+            Notification.user_id == user_id, Notification.kind == "reminder",
+            or_(Task.status == "Open", Notification.task_id.is_(None) & (Notification.created_at >= since)))
+        .order_by(Notification.id.desc())
+    ).all()
+    latest, seen = [], set()
+    for item in reminders:  # one reminder per task: the newest
+        key = item.task_id or f"n{item.id}"
+        if key not in seen:
+            seen.add(key)
+            latest.append(item)
+    items = list(updates) + latest
+    return sorted(items, key=lambda n: (n.created_at or datetime.min, n.id), reverse=True)
+
 
 @router.get("/notifications", response_model=list[schemas.NotificationOut])
-def notifications(
-    user_id: int, unread_only: bool = Query(True), db: Session = Depends(get_db)
-):
-    """Notifications for one user, newest first (user_id comes from login)."""
-    query = select(Notification).where(Notification.user_id == user_id)
+def notifications(unread_only: bool = Query(True, description="false = full history"), db: Session = Depends(get_db)):
+    """The logged-in user's bell: updates of the last 30 days (read or not) + reminders for open tasks, newest first."""
+    me = acting_user_id()
     if unread_only:
-        query = query.where(Notification.is_read.is_(False))
-    return db.scalars(query.order_by(Notification.created_at.desc(), Notification.id.desc())).all()
+        return bell_items(db, me)
+    return db.scalars(select(Notification).where(Notification.user_id == me)
+                      .order_by(Notification.created_at.desc(), Notification.id.desc())).all()
 
 
 @router.put("/notifications/read-all")
-def mark_all_read(user_id: int, db: Session = Depends(get_db)):
-    """'Mark all as read' on the bell. Returns how many were marked."""
-    items = db.scalars(select(Notification).where(Notification.user_id == user_id, Notification.is_read.is_(False))).all()
+def mark_all_read(db: Session = Depends(get_db)):
+    """'Mark all read' on the bell: clears the unread dots and the badge. Nothing is removed from the list."""
+    items = db.scalars(select(Notification).where(Notification.user_id == acting_user_id(),
+                                                  Notification.is_read.is_(False))).all()
     for item in items:
         item.is_read = True
     db.commit()
@@ -72,6 +103,8 @@ def mark_all_read(user_id: int, db: Session = Depends(get_db)):
 @router.put("/notifications/{notification_id}/read", response_model=schemas.NotificationOut)
 def mark_read(notification_id: int, db: Session = Depends(get_db)):
     item = get_or_404(db, Notification, notification_id, "Notification")
+    if item.user_id != acting_user_id():
+        raise HTTPException(status_code=404, detail=f"Notification {notification_id} not found")
     item.is_read = True
     db.commit()
     db.refresh(item)

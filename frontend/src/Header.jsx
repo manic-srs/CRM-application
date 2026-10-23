@@ -12,10 +12,9 @@ export const TABS = [
   ["contacts", "Contacts", "/contacts", "contact"],
 ];
 
-// "App Launcher" (the 9 dots): every page of the app plus the tools that run next to it
+// "App Launcher" (the 9 dots): every page of the app plus the test inbox (API docs are for developers, not shown here)
 const LAUNCHER_LINKS = [
   ["Test Inbox", "Emails the app has sent (local test mailbox)", "http://localhost:8026", "note"],
-  ["API Docs", "Try the backend APIs", "http://localhost:8001/docs", "event"],
 ];
 
 function AppLauncher({ onClose }) {
@@ -140,23 +139,157 @@ function GlobalSearch() {
   );
 }
 
-export default function Header({ section, user, data, onLogout, openNew, run, notify, toggleSidebar }) {
+const POLL_MS = 15000;
+// "5 min ago", "3 h ago", "Yesterday", then the date
+function when(value) {
+  if (!value) return "";
+  const minutes = Math.round((Date.now() - new Date(value).getTime()) / 60000);
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  if (minutes < 24 * 60) return `${Math.round(minutes / 60)} h ago`;
+  if (minutes < 48 * 60) return "Yesterday";
+  return new Date(value).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+const iconFor = (n) =>
+  n.kind === "reminder" ? "task" : n.title.startsWith("Lead") ? "lead" : n.title.startsWith("Opportunity") ? "opportunity" : "task";
+
+// The bell. Two kinds of notifications:
+//  - updates (stage changes, assignments): pop up in the corner when they arrive (the pop-up goes away by
+//    itself) and stay in the bell list for 30 days; unread ones have a blue dot and count in the red badge
+//  - reminders (tasks, demos, close dates, overdue): stay on the bell until the task is done
+// Clicking a notification or "Mark all read" only clears the dot; nothing is removed from the list.
+function Bell({ data, open, setOpen, notify }) {
+  const [items, setItems] = useState(data.notifications);
+  const [popups, setPopups] = useState([]);
+  const known = useRef(null);
+
+  const receive = (list) => {
+    setItems(list);
+    if (known.current === null) {
+      known.current = new Set(list.map((n) => n.id)); // first load: no pop-ups for old items
+      return;
+    }
+    const fresh = list.filter((n) => !n.is_read && !known.current.has(n.id));
+    fresh.forEach((n) => known.current.add(n.id));
+    if (fresh.length) setPopups((p) => [...fresh.slice(0, 3), ...p].slice(0, 3));
+  };
+  useEffect(() => receive(data.notifications), [data.notifications]);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (document.hidden) return;
+      api.notifications().then(receive).catch(() => {});
+    }, POLL_MS);
+    return () => clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    if (!popups.length) return;
+    const t = setTimeout(() => setPopups((p) => p.slice(0, -1)), 7000);
+    return () => clearTimeout(t);
+  }, [popups]);
+
+  const unread = items.filter((n) => !n.is_read);
+  const markAllRead = () => {
+    setItems((list) => list.map((n) => ({ ...n, is_read: true })));
+    api.readAllNotifications().catch((err) => notify(err.message));
+  };
+  useEffect(() => {
+    if (open) setPopups([]); // the list shows them now
+  }, [open]);
+
+  const go = (n) => {
+    setOpen(false);
+    setPopups((p) => p.filter((x) => x.id !== n.id));
+    if (!n.is_read) {
+      setItems((list) => list.map((x) => (x.id === n.id ? { ...x, is_read: true } : x)));
+      api.readNotification(n.id).catch(() => {});
+    }
+    window.location.hash = n.link || (n.task_id ? `/tasks?task=${n.task_id}` : "/tasks");
+  };
+  const row = (n) => (
+    <button
+      key={n.id}
+      className={`notification ${n.kind === "reminder" ? "reminder" : ""} ${n.is_read ? "read" : "unread"}`}
+      onClick={() => go(n)}
+    >
+      <ObjectIcon type={iconFor(n)} size={24} />
+      <span>
+        <b>
+          {n.title}
+          {!n.is_read && <i className="new-dot" aria-label="new" />}
+        </b>
+        <small>{n.message}</small>
+        <small className="when">{when(n.created_at)}</small>
+      </span>
+    </button>
+  );
+  const updates = items.filter((n) => n.kind !== "reminder");
+  const reminders = items.filter((n) => n.kind === "reminder");
+
+  return (
+    <>
+      <button
+        className="plain-icon"
+        title="Notifications"
+        aria-label={`Notifications${unread.length ? `, ${unread.length} new` : ""}`}
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+      >
+        <Icon name="bell" size={20} />
+        {unread.length > 0 && <span className="bell-count">{unread.length}</span>}
+      </button>
+      {open && (
+        <div className="menu-pop notifications-pop">
+          <div className="notifications-head">
+            <h3>Notifications</h3>
+            {unread.length > 0 && (
+              <button className="link" onClick={markAllRead}>
+                Mark all read
+              </button>
+            )}
+          </div>
+          {!updates.length && !reminders.length && <p className="muted">No notifications in the last 30 days.</p>}
+          {reminders.length > 0 && (
+            <>
+              <h4 className="bell-section">Reminders</h4>
+              {reminders.map(row)}
+            </>
+          )}
+          {updates.length > 0 && (
+            <>
+              <h4 className="bell-section">Updates</h4>
+              {updates.map(row)}
+            </>
+          )}
+        </div>
+      )}
+      {popups.length > 0 && !open && (
+        <div className="popups" role="status" aria-live="polite">
+          {popups.map((n) => (
+            <div key={n.id} className={`popup ${n.kind === "reminder" ? "reminder" : ""}`}>
+              <button className="popup-body" onClick={() => go(n)}>
+                <ObjectIcon type={iconFor(n)} size={28} />
+                <span>
+                  <small>{n.kind === "reminder" ? "Reminder" : "Update"}</small>
+                  <b>{n.title}</b>
+                  <span>{n.message?.split("\n")[0]}</span>
+                </span>
+              </button>
+              <button className="popup-close" aria-label="Dismiss" onClick={() => setPopups((p) => p.filter((x) => x.id !== n.id))}>
+                <Icon name="close" size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+export default function Header({ section, user, data, onLogout, openNew, notify, openPassword, openProfile, toggleSidebar }) {
   const [menu, setMenu] = useState(null); // "apps" | "new" | "bell" | "user"
   const toggle = (name) => setMenu((m) => (m === name ? null : name));
   const ref = useDismiss(!!menu, () => setMenu(null));
   useEffect(() => setMenu(null), [section]);
-  const unread = data.notifications.filter((n) => !n.is_read);
-
-  const openNotification = async (n) => {
-    setMenu(null);
-    try {
-      await run("readNotification", n.id);
-    } catch (err) {
-      notify(err.message);
-    }
-    window.location.hash = n.link || (n.task_id ? `/tasks?task=${n.task_id}` : "/tasks");
-  };
-
   return (
     <header className="global-header" ref={ref}>
       <div className="header-top">
@@ -205,49 +338,7 @@ export default function Header({ section, user, data, onLogout, openNew, run, no
             )}
           </div>
           <div className="pop-wrap">
-            <button
-              className="plain-icon"
-              title="Notifications"
-              aria-label={`Notifications${unread.length ? `, ${unread.length} unread` : ""}`}
-              onClick={() => toggle("bell")}
-            >
-              <Icon name="bell" size={20} />
-              {unread.length > 0 && <span className="bell-count">{unread.length}</span>}
-            </button>
-            {menu === "bell" && (
-              <div className="menu-pop notifications-pop">
-                <div className="notifications-head">
-                  <h3>Notifications</h3>
-                  {unread.length > 0 && (
-                    <button
-                      className="link"
-                      onClick={async () => {
-                        try {
-                          await run("readAllNotifications", user.id);
-                        } catch (err) {
-                          notify(err.message);
-                        }
-                      }}
-                    >
-                      Mark all as read
-                    </button>
-                  )}
-                </div>
-                {unread.length ? (
-                  unread.map((n) => (
-                    <button key={n.id} className="notification" onClick={() => openNotification(n)}>
-                      <ObjectIcon type={n.title.startsWith("Lead") ? "lead" : n.title.startsWith("Opportunity") ? "opportunity" : "task"} size={24} />
-                      <span>
-                        <b>{n.title}</b>
-                        <small>{n.message}</small>
-                      </span>
-                    </button>
-                  ))
-                ) : (
-                  <p className="muted">You're all caught up.</p>
-                )}
-              </div>
-            )}
+            <Bell data={data} open={menu === "bell"} setOpen={(v) => setMenu(v ? "bell" : null)} notify={notify} />
           </div>
           <div className="pop-wrap">
             <button className="avatar-button" aria-label="View profile" title={user.full_name} onClick={() => toggle("user")}>
@@ -263,6 +354,17 @@ export default function Header({ section, user, data, onLogout, openNew, run, no
                     <small>{user.role}</small>
                   </div>
                 </div>
+                <button onClick={() => (setMenu(null), openProfile())}>
+                  <Icon name="user" size={16} /> My Profile
+                </button>
+                {user.role === "Admin" && (
+                  <a href="#/users" onClick={() => setMenu(null)}>
+                    <Icon name="settings" size={16} /> Users
+                  </a>
+                )}
+                <button onClick={() => (setMenu(null), openPassword())}>
+                  <Icon name="lock" size={16} /> Change Password
+                </button>
                 <button onClick={onLogout}>
                   <Icon name="logout" size={16} /> Log Out
                 </button>
@@ -285,7 +387,7 @@ export function Sidebar({ section, data, user, collapsed }) {
         {!collapsed && <span>Sales</span>}
       </div>
       <ul>
-        {TABS.map(([key, label, path, icon]) => (
+        {[...TABS, ...(user.role === "Admin" ? [["users", "Users", "/users", "contact"]] : [])].map(([key, label, path, icon]) => (
           <li key={key}>
             <a
               href={`#${path}`}

@@ -12,9 +12,11 @@ from sqlalchemy.orm import Session
 from app import schemas
 from app.constants import LEAD_OPEN_STAGES, LEAD_SOURCES, LEAD_STAGES, STAGE_PROBABILITY
 from app.database import get_db
-from app.models import Account, Contact, Email, Lead, Opportunity
+from app.security import acting_user_id, check_owner_change, owner_for_new, require_edit
+from app.models import Account, Contact, Email, Lead, Opportunity, User
 from app.serializers import account_out, contact_out, history_out, lead_detail, lead_out, opportunity_out, task_out
 from app.services import (
+    customer_email,
     assignment_notice,
     auto_close_open_tasks,
     create_auto_task,
@@ -69,24 +71,28 @@ def list_leads(
 @router.post("", response_model=schemas.LeadDetail, status_code=status.HTTP_201_CREATED)
 def create_lead(data: schemas.LeadCreate, db: Session = Depends(get_db)):
     """Create a lead at stage New. The system adds a 'Make first contact' task for the owner."""
-    owner_id = resolve_user_id(db, data.owner_id)
-    lead = Lead(**data.model_dump(exclude={"owner_id", "created_by_id"}), owner_id=owner_id, stage="New")
+    owner_id = resolve_user_id(db, owner_for_new(data.owner_id))
+    actor_id = acting_user_id()
+    lead = Lead(**data.model_dump(exclude={"owner_id", "created_by_id", "welcome_email"}), owner_id=owner_id, stage="New")
     db.add(lead)
     db.flush()
     db.refresh(lead)  # loads "name", which the database builds from first + last name
-    record_stage_change(db, lead_id=lead.id, from_stage=None, to_stage="New", changed_by_id=owner_id)
+    record_stage_change(db, lead_id=lead.id, from_stage=None, to_stage="New", changed_by_id=actor_id)
     task = create_auto_task(db, stage="New", owner_id=owner_id, record_name=lead.name, lead_id=lead.id)
     # one notification for the new lead; it says so when someone else created it for the owner
-    assigned = data.created_by_id is not None and data.created_by_id != owner_id
+    assigned = actor_id != owner_id
     stage_notice(
         db, kind="Lead", stage="New", record_name=lead.name, owner_id=owner_id,
-        actor_id=data.created_by_id, lead_id=lead.id, task=task,
+        actor_id=actor_id, lead_id=lead.id, task=task,
         title="Lead assigned to you" if assigned else None,
         details=[f"Company: {lead.company}", f"Source: {lead.source}"],
     )
+    if data.welcome_email:
+        customer_email(db, "welcome", to=lead.email, first_name=lead.first_name or lead.name, owner_id=owner_id)
     db.commit()
     db.refresh(lead)
     return lead_detail(lead)
+
 
 
 @router.get("/{lead_id}", response_model=schemas.LeadDetail)
@@ -98,8 +104,11 @@ def get_lead(lead_id: int, db: Session = Depends(get_db)):
 @router.put("/{lead_id}", response_model=schemas.LeadOut)
 def update_lead(lead_id: int, data: schemas.LeadUpdate, db: Session = Depends(get_db)):
     lead = get_or_404(db, Lead, lead_id, "Lead")
+    require_edit(lead.owner_id, "lead")
     changes = data.model_dump(exclude_unset=True)
-    actor = changes.pop("changed_by_id", None)
+    changes.pop("changed_by_id", None)
+    actor = acting_user_id()
+    check_owner_change(lead.owner_id, changes.get("owner_id"))
     old_owner = lead.owner_id
     old_demo = lead.demo_date
     for field in ("last_name", "company", "source"):  # required, like Salesforce
@@ -138,7 +147,8 @@ def change_stage(lead_id: int, data: schemas.LeadStageChange, db: Session = Depe
     ensure_open(lead)
     if lead.stage == data.stage:
         raise HTTPException(status_code=400, detail=f"Lead {lead_id} is already at {data.stage}")
-    by = resolve_user_id(db, data.changed_by_id, lead.owner_id)
+    require_edit(lead.owner_id, "lead")
+    by = acting_user_id()
 
     old = lead.stage
     lead.stage = data.stage
@@ -174,7 +184,8 @@ def mark_lost(lead_id: int, data: schemas.MarkLost, db: Session = Depends(get_db
     """Close the lead as Lost from any open stage. A lost reason is required."""
     lead = get_or_404(db, Lead, lead_id, "Lead")
     ensure_open(lead)
-    by = resolve_user_id(db, data.changed_by_id, lead.owner_id)
+    require_edit(lead.owner_id, "lead")
+    by = acting_user_id()
     old = lead.stage
     lead.stage = "Lost"
     lead.lost_reason = data.lost_reason
@@ -187,6 +198,9 @@ def mark_lost(lead_id: int, data: schemas.MarkLost, db: Session = Depends(get_db
         details.append(f"Notes: {data.lost_notes}")
     stage_notice(db, kind="Lead", stage="Lost", record_name=lead.name, owner_id=lead.owner_id,
                  actor_id=by, lead_id=lead.id, details=details)
+    if data.notify_customer:
+        customer_email(db, "lost", to=lead.email, first_name=lead.first_name or lead.name, owner_id=lead.owner_id,
+                       after_proposal=False)  # a lead never got a proposal
     db.commit()
     db.refresh(lead)
     return lead_detail(lead)
@@ -201,7 +215,8 @@ def convert_lead(lead_id: int, data: schemas.ConvertLead | None = None, db: Sess
     data = data or schemas.ConvertLead()
     lead = get_or_404(db, Lead, lead_id, "Lead")
     ensure_open(lead)
-    by = resolve_user_id(db, data.changed_by_id, lead.owner_id)
+    require_edit(lead.owner_id, "lead")
+    by = acting_user_id()
 
     if data.account_id is not None:
         account = get_or_404(db, Account, data.account_id, "Account")

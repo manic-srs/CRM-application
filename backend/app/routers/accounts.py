@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app import schemas
 from app.database import get_db
+from app.security import owner_for_new
 from app.models import Account, Contact
 from app.serializers import account_detail, account_out, contact_out
 from app.services import get_or_404, resolve_user_id
@@ -26,7 +27,7 @@ def list_accounts(
 
 @router.post("/accounts", response_model=schemas.AccountOut, status_code=status.HTTP_201_CREATED)
 def create_account(data: schemas.AccountCreate, db: Session = Depends(get_db)):
-    account = Account(**data.model_dump(exclude={"owner_id"}), owner_id=resolve_user_id(db, data.owner_id))
+    account = Account(**data.model_dump(exclude={"owner_id"}), owner_id=resolve_user_id(db, owner_for_new(data.owner_id)))
     db.add(account)
     db.commit()
     db.refresh(account)
@@ -56,7 +57,7 @@ def list_contacts(
 def create_contact(data: schemas.ContactCreate, db: Session = Depends(get_db)):
     account = get_or_404(db, Account, data.account_id, "Account")
     contact = Contact(
-        **data.model_dump(exclude={"owner_id"}), owner_id=resolve_user_id(db, data.owner_id, account.owner_id)
+        **data.model_dump(exclude={"owner_id"}), owner_id=resolve_user_id(db, owner_for_new(data.owner_id))
     )
     db.add(contact)
     db.commit()

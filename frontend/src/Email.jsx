@@ -31,15 +31,39 @@ export function useEmails(field, id, version = 0) {
   return { emails, error, reload };
 }
 
+// "Open in Gmail / Outlook": the user sends from their own mailbox; the CRM only keeps a copy on the record.
+const composeUrl = (app, { to, cc, subject, body }) => {
+  const q = (params) =>
+    Object.entries(params)
+      .filter(([, v]) => v)
+      .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+      .join("&");
+  return app === "gmail"
+    ? `https://mail.google.com/mail/?view=cm&fs=1&${q({ to, cc, su: subject, body })}`
+    : `https://outlook.office.com/mail/deeplink/compose?${q({ to, cc, subject, body })}`;
+};
+
+// Which mail app the user's own email belongs to: Gmail addresses -> Gmail, anything else (company email) -> Outlook
+export const mailAppFor = (email = "") => (/@(gmail|googlemail)\.com$/i.test(email.trim()) ? "gmail" : "outlook");
+const APP_NAME = { gmail: "Gmail", outlook: "Outlook" };
+
 export function EmailComposer({ target, user, onClose, onSent }) {
   const [files, setFiles] = useState([]);
+  const [sender, setSender] = useState(null);
+  // "crm": the app sends it from the CRM mailbox (SMTP). "mine": opens the user's own Gmail / Outlook.
+  const [via, setVia] = useState("crm");
+  const [app, setApp] = useState(() => mailAppFor(user.email));
+  useEffect(() => {
+    api.emailSettings().then(setSender).catch(() => {});
+  }, []);
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
   const fileInput = useRef(null);
   const ref = useRef(null);
+  const formRef = useRef(null);
 
   useEffect(() => {
-    ref.current?.querySelector("input:not([readonly]),textarea")?.focus();
+    ref.current?.querySelector("input[name=to]")?.focus();
     const onKey = (e) => e.key === "Escape" && !sending && onClose();
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -66,8 +90,22 @@ export function EmailComposer({ target, user, onClose, onSent }) {
     const form = new FormData(event.target);
     if (!String(form.get("to")).trim()) return setError("Enter at least one recipient.");
     form.delete("files");
-    files.forEach((f) => form.append("files", f, f.name));
-    form.append("sent_by_id", user.id);
+    if (via === "mine") {
+      // open the user's own mailbox right away (inside the click, so the browser doesn't block it)
+      window.open(
+        composeUrl(app, {
+          to: form.get("to"),
+          cc: form.get("cc"),
+          subject: form.get("subject"),
+          body: form.get("body"),
+        }),
+        "_blank",
+        "noopener",
+      );
+      form.append("open_in", app);
+    } else {
+      files.forEach((f) => form.append("files", f, f.name));
+    }
     form.append(target.field, target.id);
     setSending(true);
     try {
@@ -89,7 +127,7 @@ export function EmailComposer({ target, user, onClose, onSent }) {
         <header className="modal-header">
           <h2 id="email-title">New Email</h2>
         </header>
-        <form onSubmit={submit} autoComplete="off">
+        <form ref={formRef} onSubmit={submit} autoComplete="off">
           <div className="modal-body">
             <div className="email-related">
               <ObjectIcon type={target.type} size={20} />
@@ -97,10 +135,48 @@ export function EmailComposer({ target, user, onClose, onSent }) {
                 Related to <b>{target.name}</b>
               </span>
             </div>
-            <label className="field">
-              <span>From</span>
-              <input readOnly value={`${user.full_name} <${user.email}>`} />
-            </label>
+            <fieldset className="send-from">
+              <legend>Send from</legend>
+              <label className={`send-option ${via === "crm" ? "on" : ""}`}>
+                <input type="radio" name="via" checked={via === "crm"} onChange={() => setVia("crm")} />
+                <span>
+                  <b>CRM mailbox</b>
+                  <small>
+                    Sent by SalesTrack. Replies come to you.
+                  </small>
+                </span>
+              </label>
+              <label className={`send-option ${via === "mine" ? "on" : ""}`}>
+                <input type="radio" name="via" checked={via === "mine"} onChange={() => setVia("mine")} />
+                <span>
+                  <b>My email ({APP_NAME[app]})</b>
+                  <small>
+                    Sent from your {APP_NAME[app]}.{" "}
+                    <button
+                      type="button"
+                      className="link"
+                      onClick={() => {
+                        setVia("mine");
+                        setApp(app === "gmail" ? "outlook" : "gmail");
+                      }}
+                    >
+                      Switch to {APP_NAME[app === "gmail" ? "outlook" : "gmail"]}
+                    </button>
+                  </small>
+                </span>
+              </label>
+            </fieldset>
+            {via === "crm" ? (
+              <label className="field">
+                <span>Reply-To</span>
+                <input name="reply_to" type="email" defaultValue={user.email} autoComplete="off" />
+                <small className="field-hint">Replies from the customer go to this address.</small>
+              </label>
+            ) : (
+              <p className="field-hint send-note">
+                Opens {APP_NAME[app]} in a new tab. Add attachments there.
+              </p>
+            )}
             <label className="field">
               <span>
                 To <i>*</i>
@@ -123,6 +199,7 @@ export function EmailComposer({ target, user, onClose, onSent }) {
               </span>
               <textarea name="body" rows={9} required defaultValue={target.greeting || ""} />
             </label>
+            {via === "crm" && (
             <div
               className="dropzone"
               onDragOver={(e) => e.preventDefault()}
@@ -146,7 +223,8 @@ export function EmailComposer({ target, user, onClose, onSent }) {
                 }}
               />
             </div>
-            {files.length > 0 && (
+            )}
+            {via === "crm" && files.length > 0 && (
               <ul className="file-list">
                 {files.map((f) => (
                   <li key={f.name + f.size}>
@@ -171,7 +249,7 @@ export function EmailComposer({ target, user, onClose, onSent }) {
               Cancel
             </button>
             <button type="submit" className="sf-button brand" disabled={sending} aria-busy={sending}>
-              {sending ? "Sending…" : "Send"}
+              {sending ? "Sending…" : via === "mine" ? `Open in ${APP_NAME[app]}` : "Send"}
             </button>
           </div>
         </form>
@@ -180,8 +258,26 @@ export function EmailComposer({ target, user, onClose, onSent }) {
   );
 }
 
-export function EmailItem({ email }) {
+export function EmailItem({ email: initial }) {
   const [open, setOpen] = useState(false);
+  const [email, setEmail] = useState(initial);
+  const [resending, setResending] = useState(false);
+  const [resendError, setResendError] = useState("");
+  useEffect(() => setEmail(initial), [initial]);
+  // A failed email can be sent again (same text and attachments), e.g. after the mail server is fixed
+  const resend = async () => {
+    setResending(true);
+    setResendError("");
+    try {
+      const updated = await api.resendEmail(email.id);
+      setEmail(updated);
+      if (updated.status === "Failed") setResendError(`Still not sent: ${updated.error}`);
+    } catch (err) {
+      setResendError(err.message);
+    } finally {
+      setResending(false);
+    }
+  };
   return (
     <li className={`email-item ${email.status === "Failed" ? "failed" : ""}`}>
       <ObjectIcon type="note" size={24} />
@@ -193,6 +289,7 @@ export function EmailItem({ email }) {
           {email.sent_by_name} to {email.to_address}
           {email.attachments.length ? ` • ${email.attachments.length} attachment${email.attachments.length > 1 ? "s" : ""}` : ""}
           {email.status === "Failed" ? " • Not sent" : ""}
+          {["Gmail", "Outlook"].includes(email.status) ? ` • Opened in ${email.status}` : ""}
         </small>
         {open && (
           <div className="email-open">
@@ -215,7 +312,19 @@ export function EmailItem({ email }) {
           </div>
         )}
       </div>
-      <span className="due">{dateTime(email.sent_at)}</span>
+      <span className="email-side">
+        <span className="due">{dateTime(email.sent_at)}</span>
+        {email.status === "Failed" && (
+          <button className="sf-button small" onClick={resend} disabled={resending} aria-busy={resending}>
+            {resending ? "Sending…" : "Resend"}
+          </button>
+        )}
+        {resendError && (
+          <small className="form-error" role="alert">
+            {resendError}
+          </small>
+        )}
+      </span>
     </li>
   );
 }
