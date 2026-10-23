@@ -44,13 +44,17 @@ const readRoute = () => location.hash.slice(1) || "/";
 
 export default function App() {
   const [session, setSession] = useState(loadSession);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const update = (next) => {
     saveSession(next);
     setSession(next);
   };
   useEffect(() => {
     // the backend said the login is no longer valid (expired, or the user was deactivated)
-    const onExpired = () => update(null);
+    const onExpired = () => {
+      setSessionExpired(true);
+      update(null);
+    };
     addEventListener("crm-logout", onExpired);
     return () => removeEventListener("crm-logout", onExpired);
   }, []);
@@ -67,7 +71,9 @@ export default function App() {
   if (!session)
     return (
       <Login
+        sessionExpired={sessionExpired}
         onLogin={(user, token) => {
+          setSessionExpired(false);
           update({ user, token });
           window.location.hash = "/";
         }}
