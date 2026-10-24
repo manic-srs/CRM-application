@@ -2151,3 +2151,143 @@ a.pill:hover {
 .email-settings small {
   color: var(--text-weak);
 }
+
+/* ---------- Roles & Permissions ---------- */
+.perm-intro {
+  margin: 10px 0 0;
+}
+.perm-table th {
+  padding: 10px 12px;
+  color: var(--text-weak);
+}
+.perm-table th.perm-role {
+  width: 150px;
+  text-align: center;
+}
+.perm-table td {
+  padding: 10px 12px;
+  white-space: normal;
+  vertical-align: middle;
+}
+.perm-table td b {
+  display: block;
+  font-weight: 600;
+}
+.perm-table td small {
+  color: var(--text-weak);
+}
+.perm-cell {
+  text-align: center;
+}
+.perm-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.perm-check input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--brand);
+  cursor: pointer;
+}
+.perm-check input:disabled {
+  cursor: not-allowed;
+}
+.perm-changed {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+}
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.switch input {
+  width: 32px;
+  height: 18px;
+  appearance: none;
+  border-radius: 9px;
+  background: #c9c9c9;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.switch input::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: left 0.15s;
+}
+.switch input:checked {
+  background: var(--brand);
+}
+.switch input:checked::after {
+  left: 16px;
+}
+.switch input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---------- skipped stages must be confirmed ---------- */
+.skip-box {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid #f9c78a;
+  border-radius: 6px;
+  background: #fff6eb;
+}
+.skip-box p {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  font-weight: 600;
+}
+.skip-box .check-field {
+  margin-top: 4px;
+}
+.skip-box .field {
+  margin-top: 8px;
+}
+
+/* ---------- duplicate email on a new lead ---------- */
+.dup-box {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid #f9c78a;
+  border-radius: 6px;
+  background: #fff6eb;
+}
+.dup-box.blocked {
+  border-color: #f4a6ae;
+  background: #fef1ee;
+}
+.dup-box p {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  font-weight: 600;
+}
+.dup-box ul {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+.dup-box small {
+  color: var(--text-weak);
+}
+.dup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

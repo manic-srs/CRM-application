@@ -23,8 +23,23 @@ class User(Base):
     email_stage_updates: Mapped[bool] = mapped_column(default=False)   # lead / deal moved to the next stage
     email_assignments: Mapped[bool] = mapped_column(default=True)      # a record was assigned to me
     email_reminders: Mapped[bool] = mapped_column(default=True)        # task, demo, close-date, overdue reminders
+    team_access: Mapped[bool] = mapped_column(default=False)           # a Manager let this user see the team's records
     created_at: Mapped[datetime | None] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(server_default=func.now(), onupdate=func.now())
+
+
+class RolePermission(Base):
+    """What the Admin changed on the Roles & Permissions page (the defaults live in app/security.py)."""
+
+    __tablename__ = "role_permissions"
+
+    role: Mapped[str] = mapped_column(String(20), primary_key=True)
+    permission: Mapped[str] = mapped_column(String(40), primary_key=True)
+    allowed: Mapped[bool]
+    updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    updated_at: Mapped[datetime | None] = mapped_column(server_default=func.now(), onupdate=func.now())
+
+    updated_by: Mapped[User | None] = relationship()
 
 
 class Account(Base):

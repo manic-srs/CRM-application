@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.security import acting_user
 from app.models import Account, Contact, Lead, Opportunity, Task
 from app.serializers import task_out
 from app.services import now
@@ -49,6 +50,9 @@ def activity_split(task_lists: list[list[Task]]) -> dict:
 
 @router.get("/home")
 def home_page(owner_id: int | None = Query(None, description="Only this salesperson's records"), db: Session = Depends(get_db)):
+    me = acting_user()
+    if not me.can("view_team_dashboard"):
+        owner_id = me.id  # without the team dashboard, Home shows only your own records
     def owned(query, model):
         return query.where(model.owner_id == owner_id) if owner_id is not None else query
 

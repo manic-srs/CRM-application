@@ -10,6 +10,8 @@ import { AccountPage, ContactPage } from "./RelatedPages";
 import SellerHome from "./SellerHome";
 import TasksPage from "./TasksPage";
 import UsersPage, { ChangePassword, MyProfile } from "./UsersPage";
+import PermissionsPage from "./PermissionsPage";
+import { can } from "./permissions";
 import { Icon } from "./ui";
 import { useWorkspace } from "./useWorkspace";
 
@@ -44,13 +46,17 @@ const readRoute = () => location.hash.slice(1) || "/";
 
 export default function App() {
   const [session, setSession] = useState(loadSession);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const update = (next) => {
     saveSession(next);
     setSession(next);
   };
   useEffect(() => {
     // the backend said the login is no longer valid (expired, or the user was deactivated)
-    const onExpired = () => update(null);
+    const onExpired = () => {
+      setSessionExpired(true);
+      update(null);
+    };
     addEventListener("crm-logout", onExpired);
     return () => removeEventListener("crm-logout", onExpired);
   }, []);
@@ -60,14 +66,18 @@ export default function App() {
     api
       .me()
       .then((me) => {
-        if (me.role !== session.user.role || me.full_name !== session.user.full_name) update({ ...session, user: me });
+        const changed = ["role", "full_name", "team_access"].some((k) => me[k] !== session.user[k]) ||
+          (me.permissions || []).join() !== (session.user.permissions || []).join();
+        if (changed) update({ ...session, user: me });
       })
       .catch(() => {});
   }, [session?.token]);
   if (!session)
     return (
       <Login
+        sessionExpired={sessionExpired}
         onLogin={(user, token) => {
+          setSessionExpired(false);
           update({ user, token });
           window.location.hash = "/";
         }}
@@ -89,13 +99,15 @@ function Workspace({ user, onLogout, onUserChanged }) {
   const section = path.split("/")[1] || "home";
   const id = path.split("/")[2];
   // Home: "team" (everyone's records, the default) or "mine"; remembered in this browser
-  const [homeScope, setHomeScopeState] = useState(() => {
+  const teamDashboard = can(user, "view_team_dashboard");
+  const [savedScope, setHomeScopeState] = useState(() => {
     try {
       return localStorage.getItem(SCOPE_KEY) === "mine" ? "mine" : "team";
     } catch {
       return "team";
     }
   });
+  const homeScope = teamDashboard ? savedScope : "mine"; // without the team dashboard: only your own records
   const setHomeScope = (value) => {
     setHomeScopeState(value);
     try {
@@ -175,6 +187,7 @@ function Workspace({ user, onLogout, onUserChanged }) {
         openTask={openTask}
         scope={homeScope}
         setScope={setHomeScope}
+        teamDashboard={teamDashboard}
       />
     );
   else if (["leads", "opportunities"].includes(section))
@@ -208,7 +221,8 @@ function Workspace({ user, onLogout, onUserChanged }) {
     ) : (
       <ListView key={route} collection="contacts" data={data} user={user} openNew={openNew} setModal={setModal} query={query} />
     );
-  else if (section === "users" && user.role === "Admin") page = <UsersPage user={user} data={data} reload={reload} notify={notify} onSelfChanged={onUserChanged} />;
+  else if (section === "permissions" && can(user, "manage_permissions")) page = <PermissionsPage notify={notify} />;
+  else if (section === "users" && (can(user, "manage_users") || can(user, "grant_team_access"))) page = <UsersPage user={user} data={data} reload={reload} notify={notify} onSelfChanged={onUserChanged} />;
   else if (section === "tasks")
     page = <TasksPage key={route} data={data} user={user} toggleTask={toggleTask} openTask={openTask} setModal={setModal} query={query} />;
   else

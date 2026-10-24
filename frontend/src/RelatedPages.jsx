@@ -8,7 +8,7 @@ function NotFound({ collection }) {
     <div className="page">
       <Card title="Record not found">
         <p className="pad">
-          This record may have been deleted. <a href={`#/${collection}`}>Back to list</a>
+          This record doesn't exist, or you don't have access to it. <a href={`#/${collection}`}>Back to list</a>
         </p>
       </Card>
     </div>

@@ -1,5 +1,6 @@
 """Login tokens, roles (Admin / Manager / Salesperson), the bell (updates vs reminders) and email sender.
 Users: 1 Priya (Manager), 2 Ravi (Salesperson, default), 3 Asha (Admin)."""
+import itertools
 from datetime import datetime, timedelta
 
 import pytest
@@ -23,8 +24,11 @@ def db_session():
     return next(app.dependency_overrides[get_db]())
 
 
+EMAILS = itertools.count(1)
+
+
 def lead(client, owner_id=None, name="Lopez"):
-    body = {"last_name": name, "company": "Bluebird", "email": "maria@bluebird.example"}
+    body = {"last_name": name, "company": "Bluebird", "email": f"{name.lower().replace(' ', '.')}{next(EMAILS)}@bluebird.example"}
     if owner_id is not None:
         body["owner_id"] = owner_id
     res = client.post("/api/leads", json=body)
@@ -74,29 +78,75 @@ def test_default_admin_is_created_once(client, monkeypatch):
 
 # ---------- roles ----------
 
-def test_salesperson_sees_team_records_but_edits_only_own(client):
+def test_salesperson_sees_and_changes_only_own_records(client):
     priyas = lead(login_as(client, 1), name="Priya Lead")  # Priya's own lead
     login_as(client, 2)
-    assert [l["name"] for l in client.get("/api/leads").json()] == ["Priya Lead"]  # shared view
+    mine = lead(client, name="Ravi Lead")
+    assert mine["owner_name"] == "Ravi Kumar"  # owner defaults to the logged-in user
+    # lists, search and Home show only Ravi's records
+    assert [l["name"] for l in client.get("/api/leads").json()] == ["Ravi Lead"]
+    assert [r["name"] for r in client.get("/api/search", params={"q": "Lead"}).json() if r["type"] == "Lead"] == ["Ravi Lead"]
+    assert {t["owner_id"] for t in client.get("/api/tasks").json()} == {2}
+    assert client.get("/api/home", params={"owner_id": 1}).json()["summary"]["total_leads"] == 1  # forced to "my records"
+    # someone else's record can't be opened or changed
     lid = priyas["id"]
     for method, url, body in (
+        ("get", f"/api/leads/{lid}", None),
+        ("get", f"/api/leads/{lid}/history", None),
         ("put", f"/api/leads/{lid}", {"title": "CEO"}),
         ("put", f"/api/leads/{lid}/stage", {"stage": "Nurturing"}),
         ("post", f"/api/leads/{lid}/lost", {"lost_reason": "Price"}),
         ("post", f"/api/leads/{lid}/convert", {}),
+        ("get", "/api/notes", None),
     ):
-        res = getattr(client, method)(url, json=body)
-        assert res.status_code == 403, (url, res.text)
-    mine = lead(client)
-    assert mine["owner_name"] == "Ravi Kumar"  # owner defaults to the logged-in user
+        res = client.request(method.upper(), url, json=body, params={"lead_id": lid} if url == "/api/notes" else None)
+        assert res.status_code == 404, (url, res.text)
+    assert client.put(f"/api/tasks/{priyas['tasks'][0]['id']}/complete").status_code == 404
+    assert client.get("/api/emails", params={"lead_id": lid}).status_code == 404
+    # own records work as before; a salesperson can't hand a record to someone else
     assert client.put(f"/api/leads/{mine['id']}/stage", json={"stage": "Nurturing"}).status_code == 200
-    # a salesperson can't hand a record to someone else
     assert client.put(f"/api/leads/{mine['id']}", json={"owner_id": 1}).status_code == 403
     assert client.post("/api/leads", json={"last_name": "X", "company": "Y", "owner_id": 1}).status_code == 403
     assert client.post("/api/tasks", json={"title": "T", "due_date": "2026-12-01T10:00:00", "owner_id": 1}).status_code == 403
-    # Priya's tasks can't be completed by Ravi
-    task_id = priyas["tasks"][0]["id"]
-    assert client.put(f"/api/tasks/{task_id}/complete").status_code == 403
+
+
+def test_manager_gives_team_access_to_view_not_edit(client, outbox):
+    priyas = lead(login_as(client, 1), name="Priya Lead")
+    assert client.put("/api/users/2/team-access", json={"team_access": True}).json()["team_access"] is True
+    assert client.put("/api/users/3/team-access", json={"team_access": True}).status_code == 400  # Admin
+    login_as(client, 2)
+    me = client.get("/api/auth/me").json()
+    assert "view_team_records" in me["permissions"] and "edit_team_records" not in me["permissions"]
+    assert [l["name"] for l in client.get("/api/leads").json()] == ["Priya Lead"]
+    assert client.get(f"/api/leads/{priyas['id']}").status_code == 200
+    assert client.put(f"/api/leads/{priyas['id']}/stage", json={"stage": "Nurturing"}).status_code == 403  # view only
+    assert client.put("/api/users/2/team-access", json={"team_access": False}).status_code == 403  # Ravi can't grant
+    assert "Team access given" in [n["title"] for n in client.get("/api/notifications").json()]
+    login_as(client, 1).put("/api/users/2/team-access", json={"team_access": False})
+    assert login_as(client, 2).get(f"/api/leads/{priyas['id']}").status_code == 404
+
+
+def test_roles_and_permissions_matrix(client):
+    assert client.get("/api/permissions").status_code == 403  # Salesperson
+    assert login_as(client, 1).put("/api/permissions", json={"role": "Salesperson", "permission": "view_team_records",
+                                                              "allowed": True}).status_code == 403  # Manager
+    login_as(client, 3)
+    matrix = client.get("/api/permissions").json()
+    rows = {r["key"]: r["roles"] for r in matrix["permissions"]}
+    assert rows["view_team_records"]["Salesperson"]["allowed"] is False
+    assert rows["view_team_records"]["Manager"]["allowed"] is True
+    assert all(r["Admin"]["allowed"] and r["Admin"]["locked"] for r in rows.values())
+    assert client.put("/api/permissions", json={"role": "Admin", "permission": "manage_users", "allowed": False}).status_code == 400
+    # give every Salesperson the team view
+    assert client.put("/api/permissions", json={"role": "Salesperson", "permission": "view_team_records",
+                                                "allowed": True}).status_code == 200
+    changed = {r["key"]: r["roles"] for r in client.get("/api/permissions").json()["permissions"]}["view_team_records"]
+    assert changed["Salesperson"]["allowed"] is True and changed["Salesperson"]["changed_by"] == "Asha Rao"
+    lead(login_as(client, 1), name="Priya Lead")
+    assert [l["name"] for l in login_as(client, 2).get("/api/leads").json()] == ["Priya Lead"]
+    # take reassign away from Managers
+    login_as(client, 3).put("/api/permissions", json={"role": "Manager", "permission": "reassign_owner", "allowed": False})
+    assert login_as(client, 1).post("/api/leads", json={"last_name": "X", "company": "Y", "owner_id": 2}).status_code == 403
 
 
 def test_manager_edits_and_reassigns_any_record(client):
@@ -131,7 +181,7 @@ def test_transfer_records_when_someone_leaves(client, outbox):
     lost = lead(client, name="Lost One")
     client.post(f"/api/leads/{lost['id']}/lost", json={"lost_reason": "Price"})
     converted = lead(client, name="Deal One")
-    opp = client.post(f"/api/leads/{converted['id']}/convert", json={"expected_value": 5000}).json()["opportunity"]
+    opp = client.post(f"/api/leads/{converted['id']}/convert", json={"completed_stages": ["Nurturing", "Demo"], "expected_value": 5000}).json()["opportunity"]
 
     login_as(client, 3)
     assert client.post("/api/users/2/transfer", json={"to_user_id": 2}).status_code == 400
@@ -204,12 +254,14 @@ def test_email_from_crm_mailbox_with_reply_to(client, outbox, monkeypatch):
     assert client.post("/api/emails", data={**base, "reply_to": "nope"}).status_code == 422
 
 
-def test_open_in_gmail_saves_without_sending(client, outbox):
+def test_open_in_outlook_saves_without_sending(client, outbox):
     record = lead(client)
     outbox.clear()
     res = client.post("/api/emails", data={"to": "maria@bluebird.example", "subject": "Hi", "body": "Hello",
-                                           "lead_id": str(record["id"]), "open_in": "gmail"}).json()
-    assert res["status"] == "Gmail" and outbox == []
+                                           "lead_id": str(record["id"]), "open_in": "outlook"}).json()
+    assert res["status"] == "Outlook" and outbox == []
+    assert client.post("/api/emails", data={"to": "a@b.co", "subject": "Hi", "body": "x", "lead_id": str(record["id"]),
+                                            "open_in": "gmail"}).status_code == 422  # Outlook only
     assert client.post("/api/emails", data={"to": "a@b.co", "subject": "Hi", "body": "x", "lead_id": str(record["id"]),
                                             "open_in": "yahoo"}).status_code == 422
 
@@ -279,8 +331,8 @@ def test_customer_gets_welcome_won_and_lost_emails(client, outbox, monkeypatch):
     assert welcome[0]["body"].startswith("Hi Mani,") and "Ravi Kumar (ravi@crm.test)" in welcome[0]["body"]
     assert "don't reply" in welcome[0]["body"] and welcome[0]["sender_name"] == "SRS Consulting (no-reply)"
 
-    opp = client.post(f"/api/leads/{lead['id']}/convert", json={"expected_value": 1000}).json()["opportunity"]
-    client.post(f"/api/opportunities/{opp['id']}/won", json={})
+    opp = client.post(f"/api/leads/{lead['id']}/convert", json={"completed_stages": ["Nurturing", "Demo"], "expected_value": 1000}).json()["opportunity"]
+    client.post(f"/api/opportunities/{opp['id']}/won", json={"completed_stages": ["Proposal"]})
     assert outbox[-1]["to"] == ["mani.personal@example.com"]  # the contact the lead became
     assert outbox[-1]["subject"] == "Thank you for choosing SRS Consulting"
     assert "accepting our proposal" in outbox[-1]["body"]
@@ -320,8 +372,59 @@ def test_email_settings(client, outbox):
     saved = client.put("/api/auth/me", json={"email_stage_updates": True, "email_assignments": False}).json()
     assert (saved["email_stage_updates"], saved["email_assignments"], saved["full_name"]) == (True, False, "Ravi Kumar")
     outbox.clear()
-    client.put(f"/api/leads/{record['id']}/stage", json={"stage": "Demo", "demo_date": "2026-12-01T10:00:00"})
+    client.put(f"/api/leads/{record['id']}/stage", json={"completed_stages": ["Nurturing"], "stage": "Demo", "demo_date": "2026-12-01T10:00:00"})
     assert [m["subject"] for m in outbox if m["to"] == ["ravi@crm.test"]] == ["[SalesTrack] Lead moved to Demo"]
     outbox.clear()
     lead(login_as(client, 1), owner_id=2)
     assert not [m for m in outbox if m["to"] == ["ravi@crm.test"]]
+
+
+# ---------- duplicate email and stage order ----------
+
+def test_duplicate_email_on_new_lead(client, outbox):
+    first = client.post("/api/leads", json={"last_name": "Reddy", "company": "Styra", "email": "Mani@Example.com",
+                                            "welcome_email": False}).json()
+    check = client.get("/api/leads/duplicates", params={"email": "mani@example.com"}).json()
+    assert check["has_open_lead"] is True and check["matches"][0]["name"] == "Reddy"
+    # an open lead with the same email: blocked
+    res = client.post("/api/leads", json={"last_name": "Again", "company": "Styra", "email": "mani@example.com"})
+    assert res.status_code == 409 and "open lead" in res.json()["detail"]
+    # after it is lost: allowed only when confirmed (returning customer)
+    client.post(f"/api/leads/{first['id']}/lost", json={"lost_reason": "Price", "notify_customer": False})
+    res = client.post("/api/leads", json={"last_name": "Again", "company": "Styra", "email": "mani@example.com"})
+    assert res.status_code == 409 and "already exists" in res.json()["detail"]
+    again = client.post("/api/leads", json={"last_name": "Again", "company": "Styra", "email": "mani@example.com",
+                                            "confirm_duplicate": True, "welcome_email": False}).json()
+    assert "Returning customer" in again["history"][0]["note"]
+    # changing another lead's email to this one is blocked while it is open
+    other = client.post("/api/leads", json={"last_name": "Other", "company": "X", "email": "other@example.com"}).json()
+    assert client.put(f"/api/leads/{other['id']}", json={"email": "mani@example.com"}).status_code == 409
+    # someone else's lead with that email is reported but can't be opened by a salesperson
+    login_as(client, 1)
+    client.post("/api/leads", json={"last_name": "Priya's", "company": "P", "email": "p@example.com"})
+    match = login_as(client, 2).get("/api/leads/duplicates", params={"email": "p@example.com"}).json()["matches"][0]
+    assert match["owner_name"] == "Priya Sharma" and match["can_open"] is False
+
+
+def test_stages_cannot_be_skipped(client, outbox):
+    record = lead(client)
+    lid = record["id"]
+    res = client.put(f"/api/leads/{lid}/stage", json={"stage": "Demo"})
+    assert res.status_code == 409 and "Complete Nurturing" in res.json()["detail"]
+    assert client.post(f"/api/leads/{lid}/convert", json={}).status_code == 409
+    # confirm the skipped stage: saved in the history
+    res = client.put(f"/api/leads/{lid}/stage", json={"stage": "Demo", "completed_stages": ["Nurturing"],
+                                                       "completed_note": "Discussed on the first call"})
+    assert res.status_code == 200
+    history = [(h["from_stage"], h["to_stage"], h["note"]) for h in res.json()["history"]]
+    assert history[-2] == ("New", "Nurturing", "Confirmed as completed: Discussed on the first call")
+    assert history[-1][:2] == ("Nurturing", "Demo")
+    # going back is allowed, and from Demo convert needs nothing more
+    opp = client.post(f"/api/leads/{lid}/convert", json={"expected_value": 1000}).json()["opportunity"]
+    res = client.post(f"/api/opportunities/{opp['id']}/won", json={})
+    assert res.status_code == 409 and "Complete Proposal" in res.json()["detail"]
+    won = client.post(f"/api/opportunities/{opp['id']}/won", json={"completed_stages": ["Proposal"]}).json()
+    assert won["stage"] == "Won" and [h["to_stage"] for h in won["history"]][-2:] == ["Proposal", "Won"]
+    # Lost is allowed from any stage
+    other = lead(client, name="Other")
+    assert client.post(f"/api/leads/{other['id']}/lost", json={"lost_reason": "Price"}).status_code == 200

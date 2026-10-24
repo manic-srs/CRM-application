@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app import schemas
 from app.database import get_db
-from app.security import owner_for_new
+from app.security import acting_user, owner_for_new, require_view, visible
 from app.models import Account, Contact
 from app.serializers import account_detail, account_out, contact_out
 from app.services import get_or_404, resolve_user_id
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api", tags=["Accounts and contacts"])
 def list_accounts(
     search: str | None = Query(None), owner_id: int | None = Query(None), db: Session = Depends(get_db)
 ):
-    query = select(Account)
+    query = visible(select(Account), Account)
     if owner_id is not None:
         query = query.where(Account.owner_id == owner_id)
     if search:
@@ -37,14 +37,21 @@ def create_account(data: schemas.AccountCreate, db: Session = Depends(get_db)):
 @router.get("/accounts/{account_id}", response_model=schemas.AccountDetail)
 def get_account(account_id: int, db: Session = Depends(get_db)):
     """The account page: details, its contacts and its opportunities."""
-    return account_detail(get_or_404(db, Account, account_id, "Account"))
+    account = get_or_404(db, Account, account_id, "Account")
+    require_view(account.owner_id, "account")
+    detail = account_detail(account)
+    me = acting_user()
+    if not me.sees_team:  # without team access: only your own contacts and deals on the account
+        detail.contacts = [c for c in detail.contacts if c.owner_id == me.id]
+        detail.opportunities = [o for o in detail.opportunities if o.owner_id == me.id]
+    return detail
 
 
 @router.get("/contacts", response_model=list[schemas.ContactOut])
 def list_contacts(
     account_id: int | None = Query(None), search: str | None = Query(None), db: Session = Depends(get_db)
 ):
-    query = select(Contact)
+    query = visible(select(Contact), Contact)
     if account_id is not None:
         query = query.where(Contact.account_id == account_id)
     if search:
@@ -56,6 +63,7 @@ def list_contacts(
 @router.post("/contacts", response_model=schemas.ContactOut, status_code=status.HTTP_201_CREATED)
 def create_contact(data: schemas.ContactCreate, db: Session = Depends(get_db)):
     account = get_or_404(db, Account, data.account_id, "Account")
+    require_view(account.owner_id, "account")
     contact = Contact(
         **data.model_dump(exclude={"owner_id"}), owner_id=resolve_user_id(db, owner_for_new(data.owner_id))
     )
@@ -67,4 +75,6 @@ def create_contact(data: schemas.ContactCreate, db: Session = Depends(get_db)):
 
 @router.get("/contacts/{contact_id}", response_model=schemas.ContactOut)
 def get_contact(contact_id: int, db: Session = Depends(get_db)):
-    return contact_out(get_or_404(db, Contact, contact_id, "Contact"))
+    contact = get_or_404(db, Contact, contact_id, "Contact")
+    require_view(contact.owner_id, "contact")
+    return contact_out(contact)

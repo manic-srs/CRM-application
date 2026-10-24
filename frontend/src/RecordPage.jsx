@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { EmailList, useEmails } from "./Email";
+import { can } from "./permissions";
 import { amount, dateTime, shortDate } from "./format";
 import { Card, Icon, ObjectIcon, PathBar, StageBadge } from "./ui";
 
@@ -132,7 +133,7 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
       <div className="page">
         <Card title="Record not found">
           <p className="pad">
-            This record may have been deleted. <a href={`#/${collection}`}>Back to list</a>
+            This record doesn't exist, or you don't have access to it. <a href={`#/${collection}`}>Back to list</a>
           </p>
         </Card>
       </div>
@@ -140,7 +141,7 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
 
   const closed = ["Won", "Lost", "Converted"].includes(item.stage);
   // Salespeople change only their own records; Managers and Admins can change any (the backend checks it too)
-  const canEdit = ["Manager", "Admin"].includes(user?.role) || item.owner_id === user?.id;
+  const canEdit = item.owner_id === user?.id || can(user, "edit_team_records");
   const tasks = data.tasks.filter((t) => t.relatedId === item.id && t.relatedType === collection);
   const edit = () => (lead ? openLead(item) : setModal({ type: "opportunity", record: item }));
   const convertedTo = lead && data.opportunities.find((o) => o.leadId === item.id);

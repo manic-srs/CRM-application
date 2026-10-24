@@ -2,6 +2,11 @@
 
 LEAD_STAGES = ["New", "Nurturing", "Demo", "Converted", "Lost"]
 LEAD_OPEN_STAGES = ["New", "Nurturing", "Demo"]
+# The order a deal must follow to be won: no stage can be skipped. A salesperson may confirm that a stage
+# was already done (for example the demo happened outside the CRM); that is saved in the stage history.
+# Lost is allowed from any open stage.
+LEAD_FLOW = ["New", "Nurturing", "Demo"]          # then Convert
+OPPORTUNITY_FLOW = ["Opportunity", "Proposal"]     # then Won
 LEAD_SOURCES = ["Website", "Referral", "Phone", "Email", "Event", "Social Media", "Other"]
 
 OPPORTUNITY_STAGES = ["Opportunity", "Proposal", "Won", "Lost"]

@@ -31,28 +31,23 @@ export function useEmails(field, id, version = 0) {
   return { emails, error, reload };
 }
 
-// "Open in Gmail / Outlook": the user sends from their own mailbox; the CRM only keeps a copy on the record.
+// "My Outlook": opens a new message in the user's own Outlook; the CRM only keeps a copy on the record.
 const composeUrl = (app, { to, cc, subject, body }) => {
   const q = (params) =>
     Object.entries(params)
       .filter(([, v]) => v)
       .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
       .join("&");
-  return app === "gmail"
-    ? `https://mail.google.com/mail/?view=cm&fs=1&${q({ to, cc, su: subject, body })}`
-    : `https://outlook.office.com/mail/deeplink/compose?${q({ to, cc, subject, body })}`;
+  return `https://outlook.office.com/mail/deeplink/compose?${q({ to, cc, subject, body })}`;
 };
-
-// Which mail app the user's own email belongs to: Gmail addresses -> Gmail, anything else (company email) -> Outlook
-export const mailAppFor = (email = "") => (/@(gmail|googlemail)\.com$/i.test(email.trim()) ? "gmail" : "outlook");
-const APP_NAME = { gmail: "Gmail", outlook: "Outlook" };
+const APP_NAME = { outlook: "Outlook" };
 
 export function EmailComposer({ target, user, onClose, onSent }) {
   const [files, setFiles] = useState([]);
   const [sender, setSender] = useState(null);
   // "crm": the app sends it from the CRM mailbox (SMTP). "mine": opens the user's own Gmail / Outlook.
   const [via, setVia] = useState("crm");
-  const [app, setApp] = useState(() => mailAppFor(user.email));
+  const app = "outlook"; // "My email" always opens Outlook (company mail)
   useEffect(() => {
     api.emailSettings().then(setSender).catch(() => {});
   }, []);
@@ -149,20 +144,8 @@ export function EmailComposer({ target, user, onClose, onSent }) {
               <label className={`send-option ${via === "mine" ? "on" : ""}`}>
                 <input type="radio" name="via" checked={via === "mine"} onChange={() => setVia("mine")} />
                 <span>
-                  <b>My email ({APP_NAME[app]})</b>
-                  <small>
-                    Sent from your {APP_NAME[app]}.{" "}
-                    <button
-                      type="button"
-                      className="link"
-                      onClick={() => {
-                        setVia("mine");
-                        setApp(app === "gmail" ? "outlook" : "gmail");
-                      }}
-                    >
-                      Switch to {APP_NAME[app === "gmail" ? "outlook" : "gmail"]}
-                    </button>
-                  </small>
+                  <b>My Outlook</b>
+                  <small>Sent from your own Outlook.</small>
                 </span>
               </label>
             </fieldset>

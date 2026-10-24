@@ -7,12 +7,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import schemas
-from app.constants import OPPORTUNITY_OPEN_STAGES, OPPORTUNITY_STAGES, STAGE_PROBABILITY
+from app.constants import OPPORTUNITY_FLOW, OPPORTUNITY_OPEN_STAGES, OPPORTUNITY_STAGES, STAGE_PROBABILITY
 from app.database import get_db
-from app.security import acting_user_id, check_owner_change, require_edit
+from app.security import acting_user_id, check_owner_change, require_edit, require_view, visible
 from app.models import Contact, Opportunity
 from app.serializers import history_out, opportunity_detail, opportunity_out
 from app.services import (
+    confirm_skipped,
     customer_email,
     assignment_notice,
     auto_close_open_tasks,
@@ -47,7 +48,7 @@ def list_opportunities(
 ):
     if stage and stage not in OPPORTUNITY_STAGES:
         raise HTTPException(status_code=400, detail=f"Unknown stage '{stage}'. Use: {', '.join(OPPORTUNITY_STAGES)}")
-    query = select(Opportunity)
+    query = visible(select(Opportunity), Opportunity)
     if stage:
         query = query.where(Opportunity.stage == stage)
     if owner_id is not None:
@@ -62,7 +63,9 @@ def list_opportunities(
 @router.get("/{opportunity_id}", response_model=schemas.OpportunityDetail)
 def get_opportunity(opportunity_id: int, db: Session = Depends(get_db)):
     """The opportunity record page: details, tasks, notes and stage history."""
-    return opportunity_detail(get_or_404(db, Opportunity, opportunity_id, "Opportunity"))
+    opp = get_or_404(db, Opportunity, opportunity_id, "Opportunity")
+    require_view(opp.owner_id, "opportunity")
+    return opportunity_detail(opp)
 
 
 @router.put("/{opportunity_id}", response_model=schemas.OpportunityOut)
@@ -132,6 +135,10 @@ def mark_won(opportunity_id: int, data: schemas.MarkWon | None = None, db: Sessi
         raise HTTPException(status_code=400, detail="final_value is required (the deal has no expected value)")
     require_edit(opp.owner_id, "opportunity")
     by = acting_user_id()
+    # Won comes after Proposal: it must be done (or confirmed as done)
+    opp.stage = confirm_skipped(db, flow=OPPORTUNITY_FLOW, current=opp.stage, target_index=len(OPPORTUNITY_FLOW),
+                                completed=data.completed_stages, note=data.completed_note, by=by,
+                                opportunity_id=opp.id, what="marking it as Won")
     old = opp.stage
     opp.stage = "Won"
     opp.probability = STAGE_PROBABILITY["Won"]
@@ -191,4 +198,5 @@ def email_contact(db: Session, opp: Opportunity, kind: str, **extra) -> None:
 @router.get("/{opportunity_id}/history", response_model=list[schemas.StageHistoryOut])
 def opportunity_history(opportunity_id: int, db: Session = Depends(get_db)):
     opp = get_or_404(db, Opportunity, opportunity_id, "Opportunity")
+    require_view(opp.owner_id, "opportunity")
     return [history_out(h) for h in sorted(opp.history, key=lambda h: h.id)]

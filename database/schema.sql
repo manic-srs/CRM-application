@@ -17,6 +17,7 @@ DROP TABLE IF EXISTS opportunities CASCADE;
 DROP TABLE IF EXISTS leads CASCADE;
 DROP TABLE IF EXISTS contacts CASCADE;
 DROP TABLE IF EXISTS accounts CASCADE;
+DROP TABLE IF EXISTS role_permissions CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
 
 -- updated_at is set automatically on every UPDATE (MySQL did this with ON UPDATE CURRENT_TIMESTAMP)
@@ -40,8 +41,20 @@ CREATE TABLE users (
   email_stage_updates BOOLEAN NOT NULL DEFAULT FALSE,
   email_assignments   BOOLEAN NOT NULL DEFAULT TRUE,
   email_reminders     BOOLEAN NOT NULL DEFAULT TRUE,
+  team_access         BOOLEAN NOT NULL DEFAULT FALSE,  -- a Manager let this user see the whole team's records
   created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 1b. ROLE_PERMISSIONS: changes the Admin made on the Roles & Permissions page
+--     (the default permissions of each role are in backend/app/security.py)
+CREATE TABLE role_permissions (
+  role          VARCHAR(20) NOT NULL CHECK (role IN ('Salesperson','Manager')),
+  permission    VARCHAR(40) NOT NULL,
+  allowed       BOOLEAN     NOT NULL,
+  updated_by_id INT REFERENCES users(id),
+  updated_at    TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (role, permission)
 );
 
 -- 2. ACCOUNTS: customer companies

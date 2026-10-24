@@ -3,10 +3,12 @@
 - After login the API returns a signed token. The app sends it on every request:
       Authorization: Bearer <token>
   (file downloads may pass it as ?token=... because a plain link can't send headers).
-- Roles:
-      Salesperson  sees the team's records; edits only records they own; can't change the owner
-      Manager      edits every record and can reassign owners
-      Admin        everything a Manager can do, plus managing users (add, role, deactivate, transfer records)
+- Permissions (see PERMISSIONS): each role has a set of permissions, which the Admin can change on the
+  Roles & Permissions page (saved in the role_permissions table). The API checks permissions, not role names.
+      Salesperson  sees and changes only their own records (unless given team access)
+      Manager      sees and changes the team's records, reassigns owners, gives team access to salespeople
+      Admin        everything, plus users and permissions (the Admin's permissions can't be changed)
+- Team access: a Manager can let one salesperson see the whole team's records (users.team_access).
 - A default Admin is created on start when no active Admin exists (ADMIN_EMAIL / ADMIN_PASSWORD in .env).
 
 Settings (environment variables):
@@ -35,7 +37,46 @@ from app.models import User
 log = logging.getLogger("crm.security")
 
 ROLES = ("Salesperson", "Manager", "Admin")
-MANAGERS = ("Manager", "Admin")
+
+# key: (label, description, default roles). The Admin always has every permission.
+PERMISSIONS = {
+    "view_team_records": ("View team records", "See leads, deals, accounts, contacts and tasks owned by others",
+                          ("Manager",)),
+    "view_team_dashboard": ("View team dashboard", "Use the Whole team view on Home", ("Manager",)),
+    "edit_team_records": ("Edit team records", "Change stages and details of records owned by others", ("Manager",)),
+    "reassign_owner": ("Reassign owner", "Give a record to another user", ("Manager",)),
+    "grant_team_access": ("Give team access", "Let a salesperson see the whole team's records", ("Manager",)),
+    "send_emails": ("Send emails", "Send emails to leads and contacts", ("Manager", "Salesperson")),
+    "manage_users": ("Manage users", "Add users, change roles, reset passwords, deactivate, transfer records", ()),
+    "manage_permissions": ("Manage roles & permissions", "Change this permission matrix", ()),
+}
+LOCKED_FOR_ADMIN = True  # the Admin keeps every permission, so nobody can lock themselves out
+
+
+def default_permissions(role: str) -> set[str]:
+    if role == "Admin":
+        return set(PERMISSIONS)
+    return {key for key, (_, _, roles) in PERMISSIONS.items() if role in roles}
+
+
+def role_permissions(db: Session, role: str) -> set[str]:
+    """The permissions of a role: the defaults, changed by what the Admin saved in role_permissions."""
+    from app.models import RolePermission  # avoid a circular import
+
+    if role == "Admin":
+        return set(PERMISSIONS)
+    allowed = default_permissions(role)
+    for row in db.scalars(select(RolePermission).where(RolePermission.role == role)).all():
+        if row.permission in PERMISSIONS:
+            (allowed.add if row.allowed else allowed.discard)(row.permission)
+    return allowed
+
+
+def user_permissions(db: Session, user: User) -> set[str]:
+    allowed = role_permissions(db, user.role)
+    if user.team_access:  # given by a Manager: see (not change) the whole team's records
+        allowed |= {"view_team_records", "view_team_dashboard"}
+    return allowed
 
 DEFAULT_ADMIN_EMAIL = "admin@salestrack.local"
 DEFAULT_ADMIN_PASSWORD = "Admin@2026"
@@ -80,14 +121,18 @@ class Acting:
     role: str
     full_name: str
     email: str
+    permissions: frozenset = frozenset()
 
-    @property
-    def is_manager(self) -> bool:
-        return self.role in MANAGERS
+    def can(self, permission: str) -> bool:
+        return permission in self.permissions
 
     @property
     def is_admin(self) -> bool:
         return self.role == "Admin"
+
+    @property
+    def sees_team(self) -> bool:
+        return self.can("view_team_records")
 
 
 _acting: ContextVar[Acting | None] = ContextVar("acting_user", default=None)
@@ -104,7 +149,8 @@ async def authenticate(request: Request, credentials: HTTPAuthorizationCredentia
     user = db.get(User, user_id) if user_id is not None else None
     if user is None or not user.is_active:
         raise HTTPException(status_code=401, detail="Please log in again", headers={"WWW-Authenticate": "Bearer"})
-    acting = Acting(id=user.id, role=user.role, full_name=user.full_name, email=user.email)
+    acting = Acting(id=user.id, role=user.role, full_name=user.full_name, email=user.email,
+                    permissions=frozenset(user_permissions(db, user)))
     _acting.set(acting)
     return acting
 
@@ -120,43 +166,61 @@ def acting_user_id() -> int:
     return acting_user().id
 
 
-# ---------- role checks ----------
+# ---------- permission checks ----------
 
-def require_manager(action: str = "do this") -> Acting:
+def require(permission: str) -> Acting:
     me = acting_user()
-    if not me.is_manager:
-        raise HTTPException(status_code=403, detail=f"Only a Manager or Admin can {action}")
+    if not me.can(permission):
+        label = PERMISSIONS[permission][0]
+        raise HTTPException(status_code=403, detail=f"You don't have the \"{label}\" permission. Contact your Admin.")
     return me
 
 
 def require_admin(action: str = "manage users") -> Acting:
+    """Kept for the user screens: needs the Manage users permission."""
+    return require("manage_users")
+
+
+def can_view(owner_id: int | None) -> bool:
     me = acting_user()
-    if not me.is_admin:
-        raise HTTPException(status_code=403, detail=f"Only an Admin can {action}")
-    return me
+    return owner_id == me.id or me.sees_team
+
+
+def require_view(owner_id: int | None, label: str = "record") -> Acting:
+    """Without team access, a user can open only the records they own (others look like they don't exist)."""
+    if not can_view(owner_id):
+        raise HTTPException(status_code=404, detail=f"This {label} doesn't exist or you don't have access to it")
+    return acting_user()
+
+
+def visible(query, model):
+    """Adds "owned by me" to a list query when the user can't see the team's records."""
+    me = acting_user()
+    return query if me.sees_team else query.where(model.owner_id == me.id)
 
 
 def require_edit(owner_id: int | None, label: str = "record") -> Acting:
-    """Salespeople may change only the records they own; Managers and Admins may change any."""
+    """Users change their own records; changing someone else's needs Edit team records."""
+    require_view(owner_id, label)
     me = acting_user()
-    if not me.is_manager and owner_id != me.id:
-        raise HTTPException(status_code=403, detail=f"You can only change your own {label}s. Contact a Manager to reassign it.")
+    if owner_id != me.id and not me.can("edit_team_records"):
+        raise HTTPException(status_code=403, detail=f"You can only change your own records. This {label} belongs to someone else.")
     return me
 
 
 def owner_for_new(owner_id: int | None) -> int:
-    """Owner of a new record: the logged-in user by default. Only Managers/Admins may give it to someone else."""
+    """Owner of a new record: the logged-in user by default. Giving it to someone else needs Reassign owner."""
     me = acting_user()
     if owner_id is None or owner_id == me.id:
         return me.id
-    if not me.is_manager:
+    if not me.can("reassign_owner"):
         raise HTTPException(status_code=403, detail="Only a Manager or Admin can assign a record to someone else")
     return owner_id
 
 
 def check_owner_change(old_owner_id: int, new_owner_id: int | None) -> None:
     if new_owner_id is not None and new_owner_id != old_owner_id:
-        require_manager("change the owner")
+        require("reassign_owner")
 
 
 # ---------- default Admin ----------

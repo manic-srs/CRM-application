@@ -68,6 +68,7 @@ export function leadPayload(values, editing = false) {
   };
   if (editing) payload.demo_date = optional(values.demo_date);
   else payload.welcome_email = values.welcome_email === "on";
+  if (!editing && values.confirm_duplicate) payload.confirm_duplicate = true; // returning customer
   return payload;
 }
 export function taskPayload(values, editing = false) {
@@ -217,6 +218,14 @@ export const api = {
   transferRecords: (id, toUserId, deactivate) =>
     apiRequest(`/users/${id}/transfer`, { method: "POST", body: { to_user_id: Number(toUserId), deactivate } }),
   emailSettings: () => apiRequest("/emails/settings"),
+  // Roles & Permissions (Admin) and team access (Manager)
+  permissions: () => apiRequest("/permissions"),
+  setPermission: (role, permission, allowed) =>
+    apiRequest("/permissions", { method: "PUT", body: { role, permission, allowed } }),
+  setTeamAccess: (userId, team_access) =>
+    apiRequest(`/users/${userId}/team-access`, { method: "PUT", body: { team_access } }),
+  // duplicate email check before creating a lead
+  leadDuplicates: (email) => apiRequest(`/leads/duplicates?email=${encodeURIComponent(email)}`),
   sendEmail: (formData) => upload("/emails", formData),
   resendEmail: (id) => apiRequest(`/emails/${id}/resend`, { method: "POST", signal: AbortSignal.timeout(60000) }),
   emails: (field, id) => apiRequest(`/emails?${field}=${encodeURIComponent(id)}`),

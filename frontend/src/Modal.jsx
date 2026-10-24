@@ -1,7 +1,9 @@
 // Create / edit dialogs (lead, opportunity, task, account, contact) and the stage actions
 // (lost, won, convert, stage change, note). Form logic by Samhit; Salesforce-style layout.
 import React, { useEffect, useRef, useState } from "react";
+import { api } from "./api";
 import { LEAD_SOURCES, LOST_REASONS, PRIORITIES, SALUTATIONS, localInput } from "./domain";
+import { can } from "./permissions";
 import { Icon } from "./ui";
 
 const go = (path) => {
@@ -16,6 +18,9 @@ export default function Modal({ modal, close, data, run, notify, user }) {
     [submitting, setSubmitting] = useState(false);
   const record = modal.record;
   const type = modal.type;
+  // duplicate email on a new lead: { email, matches, has_open_lead } from the backend
+  const [duplicate, setDuplicate] = useState(null);
+  const confirmDuplicate = useRef(false);
   const [relatedType, setRelatedType] = useState(
     record?.relatedType || modal.relatedType || "general",
   );
@@ -94,6 +99,40 @@ export default function Modal({ modal, close, data, run, notify, user }) {
       />
     </label>
   );
+  // Stage order: a deal can't skip a stage. Stages skipped on the way must be confirmed as done (saved in history).
+  const LEAD_FLOW = ["New", "Nurturing", "Demo"];
+  const skippedStages = (() => {
+    if (!record) return [];
+    if (type === "stage" && modal.collection === "leads") {
+      const from = LEAD_FLOW.indexOf(record.stage), to = LEAD_FLOW.indexOf(modal.stage);
+      return to > from ? LEAD_FLOW.slice(from + 1, to) : [];
+    }
+    if (type === "convert") return LEAD_FLOW.slice(LEAD_FLOW.indexOf(record.stage) + 1);
+    if (type === "won") return record.stage === "Opportunity" ? ["Proposal"] : [];
+    return [];
+  })();
+  const skipPayload = (v) =>
+    skippedStages.length
+      ? { completed_stages: skippedStages.filter((stage) => v[`done_${stage}`] === "on"), completed_note: v.completed_note || null }
+      : {};
+  const skippedChecklist = () =>
+    skippedStages.length > 0 && (
+      <div className="skip-box" role="group" aria-label="Skipped stages">
+        <p>
+          <Icon name="warn" size={14} /> Stages can't be skipped. Confirm that{" "}
+          {skippedStages.length > 1 ? "these stages were" : "this stage was"} completed:
+        </p>
+        {skippedStages.map((stage) => (
+          <label key={stage} className="check-field">
+            <input type="checkbox" name={`done_${stage}`} required /> {stage} completed
+          </label>
+        ))}
+        <label className="field">
+          <span>How was it completed? (saved in Stage History)</span>
+          <input name="completed_note" maxLength={300} placeholder="e.g. Demo was done on a call" />
+        </label>
+      </div>
+    );
   // Tick box for the no-reply email to the customer (ticked by default; the backend skips it if there is no email)
   const customerEmail =
     type === "won"
@@ -142,7 +181,7 @@ export default function Modal({ modal, close, data, run, notify, user }) {
     </label>
   );
   // Only Managers and Admins can give a record to someone else; a Salesperson sees the owner read-only
-  const canAssign = ["Manager", "Admin"].includes(user?.role);
+  const canAssign = can(user, "reassign_owner");
   const owner = () =>
     !canAssign ? (
       <label className="field">
@@ -173,6 +212,60 @@ export default function Modal({ modal, close, data, run, notify, user }) {
     if (type === "contact") return `Contact "${saved.full_name || v.last_name}" was created.`;
     return "Your changes were saved.";
   };
+  const duplicateBox = () =>
+    duplicate && (
+      <div className={`dup-box ${duplicate.has_open_lead ? "blocked" : ""}`} role="alert">
+        <p>
+          <Icon name="warn" size={14} />
+          {duplicate.has_open_lead
+            ? "This email already has an open lead. Use that lead instead of creating a new one."
+            : "This email is already in the CRM. Is this a returning customer?"}
+        </p>
+        <ul>
+          {duplicate.matches.map((m) => (
+            <li key={m.type + m.id}>
+              {m.can_open ? (
+                <a href={`#/${m.type === "Lead" ? "leads" : "contacts"}/${m.id}`} onClick={close}>
+                  {m.name}
+                </a>
+              ) : (
+                <b>{m.name}</b>
+              )}{" "}
+              <small>
+                {m.type}
+                {m.company ? ` • ${m.company}` : ""}
+                {m.stage ? ` • ${m.stage}` : ""} • Owner: {m.owner_name}
+              </small>
+            </li>
+          ))}
+        </ul>
+        <div className="dup-actions">
+          {!duplicate.has_open_lead && (
+            <button
+              type="button"
+              className="sf-button brand small"
+              onClick={() => {
+                confirmDuplicate.current = true;
+                ref.current.querySelector("form").requestSubmit();
+              }}
+            >
+              Create new lead for this customer
+            </button>
+          )}
+          <button
+            type="button"
+            className="sf-button small"
+            onClick={() => {
+              setDuplicate(null);
+              confirmDuplicate.current = false;
+              ref.current.querySelector("input[name=email]")?.focus();
+            }}
+          >
+            Use a different email
+          </button>
+        </div>
+      </div>
+    );
   const submit = async (event) => {
     event.preventDefault();
     if (lock.current) return;
@@ -185,7 +278,15 @@ export default function Modal({ modal, close, data, run, notify, user }) {
       if (type === "lead") {
         if (!v.last_name.trim() || !v.company.trim())
           throw new Error("Last name and company are required.");
-        saved = await run("saveLead", v, record?.id, user?.id);
+        const email = (v.email || "").trim().toLowerCase();
+        if (!record && email && !(confirmDuplicate.current && duplicate?.email === email)) {
+          const check = await api.leadDuplicates(email);
+          if (check.matches.length) {
+            setDuplicate(check); // show who has it, and let the salesperson decide
+            return;
+          }
+        }
+        saved = await run("saveLead", { ...v, confirm_duplicate: confirmDuplicate.current }, record?.id, user?.id);
       }
       if (type === "opportunity")
         saved = await run("saveOpportunity", v, record.id, user?.id);
@@ -212,6 +313,7 @@ export default function Modal({ modal, close, data, run, notify, user }) {
           final_value: v.final_value === "" ? null : Number(v.final_value),
           note: v.note || null,
           notify_customer: v.notify_customer === "on",
+          ...skipPayload(v),
         });
       if (type === "convert")
         saved = await run("convert", record.id, {
@@ -220,11 +322,13 @@ export default function Modal({ modal, close, data, run, notify, user }) {
             v.expected_value === "" ? null : Number(v.expected_value),
           expected_close_date: v.expected_close_date || null,
           account_id: v.account_id ? Number(v.account_id) : null,
+          ...skipPayload(v),
         });
       if (type === "stage")
         await run("stage", modal.collection, record.id, {
           stage: modal.stage,
           note: v.note || null,
+          ...skipPayload(v),
           ...(modal.collection === "leads" && modal.stage === "Demo"
             ? { demo_date: v.demo_date || null }
             : {}),
@@ -308,6 +412,7 @@ export default function Modal({ modal, close, data, run, notify, user }) {
               {owner()}
             </div>
           )}
+          {type === "lead" && duplicateBox()}
           {type === "lead" && (
             <div className="form-grid">
               {select("Salutation", "salutation", SALUTATIONS)}
@@ -455,6 +560,7 @@ export default function Modal({ modal, close, data, run, notify, user }) {
           )}
           {type === "won" && (
             <>
+              {skippedChecklist()}
               {field(
                 "Final Amount",
                 "final_value",
@@ -471,6 +577,7 @@ export default function Modal({ modal, close, data, run, notify, user }) {
           )}
           {type === "convert" && (
             <>
+              {skippedChecklist()}
               <div className="form-grid">
                 {field("Opportunity Name", "opportunity_name")}
                 {field("Amount", "expected_value", "number")}
@@ -491,6 +598,7 @@ export default function Modal({ modal, close, data, run, notify, user }) {
           )}
           {type === "stage" && (
             <>
+              {skippedChecklist()}
               {modal.stage === "Demo" &&
                 field(
                   "Demo Date",

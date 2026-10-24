@@ -15,7 +15,9 @@ from app import mailer, schemas
 from app.constants import LEAD_OPEN_STAGES, OPPORTUNITY_OPEN_STAGES
 from app.database import get_db
 from app.models import Account, Contact, Lead, Opportunity, Task, User
-from app.security import acting_user, authenticate, make_token, require_admin
+from app.models import RolePermission
+from app.security import (PERMISSIONS, ROLES, acting_user, authenticate, make_token, require, require_admin,
+                          role_permissions, user_permissions)
 from app.services import get_or_404, notify
 
 router = APIRouter(prefix="/api", tags=["Login and users"])
@@ -48,13 +50,18 @@ def login(data: schemas.LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Wrong email or password")
     if not user.is_active:
         raise HTTPException(status_code=403, detail="This account is deactivated. Contact your Admin.")
-    return {"message": "Login successful", "user": user, "token": make_token(user.id)}
+    return {"message": "Login successful", "user": with_permissions(db, user), "token": make_token(user.id)}
+
+
+def with_permissions(db: Session, user: User) -> schemas.UserOut:
+    """The user plus what they are allowed to do (the app shows or hides buttons with it)."""
+    return schemas.UserOut.model_validate(user).model_copy(update={"permissions": sorted(user_permissions(db, user))})
 
 
 @protected.get("/auth/me", response_model=schemas.UserOut)
 def me(db: Session = Depends(get_db)):
-    """The logged-in user (the app calls this to check the saved login is still valid)."""
-    return db.get(User, acting_user().id)
+    """The logged-in user and their permissions (the app calls this to check the saved login is still valid)."""
+    return with_permissions(db, db.get(User, acting_user().id))
 
 
 @protected.put("/auth/me", response_model=schemas.UserOut)
@@ -68,7 +75,7 @@ def update_my_profile(data: schemas.ProfileUpdate, db: Session = Depends(get_db)
         setattr(user, field, value)
     db.commit()
     db.refresh(user)
-    return user
+    return with_permissions(db, user)
 
 
 @protected.put("/auth/password")
@@ -85,7 +92,8 @@ def change_my_password(data: schemas.PasswordChange, db: Session = Depends(get_d
 def list_users(include_inactive: bool = False, db: Session = Depends(get_db)):
     """Active users for the owner / assigned-to dropdowns. include_inactive=true (Admin): everyone."""
     query = select(User).order_by(User.full_name)
-    if not (include_inactive and acting_user().is_admin):
+    me = acting_user()
+    if not (include_inactive and (me.can("manage_users") or me.can("grant_team_access"))):
         query = query.where(User.is_active.is_(True))
     return db.scalars(query).all()
 
@@ -205,3 +213,65 @@ def transfer_records(user_id: int, data: schemas.TransferRecords, db: Session = 
                f"{me.full_name} moved {source.full_name}'s records to you: {summary}.", link="/")
     db.commit()
     return {"moved": moved, "total": total, "deactivated": bool(data.deactivate)}
+
+
+# ---------- team access (Manager) ----------
+
+@protected.put("/users/{user_id}/team-access", response_model=schemas.UserOut)
+def set_team_access(user_id: int, data: schemas.TeamAccess, db: Session = Depends(get_db)):
+    """A Manager (or Admin) lets a salesperson see the whole team's records, or takes it back."""
+    me = require("grant_team_access")
+    user = get_or_404(db, User, user_id, "User")
+    if user.role != "Salesperson":
+        raise HTTPException(status_code=400, detail="Team access is only for Salespeople (Managers and Admins already have it)")
+    if user.team_access != data.team_access:
+        user.team_access = data.team_access
+        notify(db, user.id, "Team access given" if data.team_access else "Team access removed",
+               f"{me.full_name} {'gave you access to see' if data.team_access else 'removed your access to'} "
+               "the whole team's records.", link="/", category="assignment")
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+# ---------- roles & permissions (Admin) ----------
+
+@protected.get("/permissions")
+def permission_matrix(db: Session = Depends(get_db)):
+    """The Roles & Permissions page: every permission and which roles have it."""
+    if not acting_user().can("manage_permissions"):
+        require("manage_users")
+    changes = {(r.role, r.permission): r for r in db.scalars(select(RolePermission)).all()}
+    granted = {role: role_permissions(db, role) for role in ROLES}
+    rows = []
+    for key, (label, description, _) in PERMISSIONS.items():
+        roles = {}
+        for role in ROLES:
+            row = changes.get((role, key))
+            roles[role] = {
+                "allowed": key in granted[role],
+                "locked": role == "Admin",
+                "changed_by": row.updated_by.full_name if row and row.updated_by else None,
+                "changed_at": row.updated_at if row else None,
+            }
+        rows.append({"key": key, "label": label, "description": description, "roles": roles})
+    return {"roles": list(ROLES), "permissions": rows}
+
+
+@protected.put("/permissions")
+def set_permission(data: schemas.PermissionChange, db: Session = Depends(get_db)):
+    """Admin turns one permission on or off for Manager or Salesperson (the Admin's own are locked)."""
+    me = require("manage_permissions")
+    if data.permission not in PERMISSIONS:
+        raise HTTPException(status_code=404, detail=f"Unknown permission {data.permission}")
+    if data.role == "Admin":
+        raise HTTPException(status_code=400, detail="The Admin's permissions can't be changed")
+    row = db.get(RolePermission, (data.role, data.permission))
+    if row is None:
+        row = RolePermission(role=data.role, permission=data.permission, allowed=data.allowed)
+        db.add(row)
+    row.allowed = data.allowed
+    row.updated_by_id = me.id
+    db.commit()
+    label = PERMISSIONS[data.permission][0]
+    return {"message": f"{label} {'given to' if data.allowed else 'removed from'} {data.role}s"}

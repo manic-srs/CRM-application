@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { BrandMark } from "./Login";
+import { can } from "./permissions";
 import { Avatar, Icon, ObjectIcon } from "./ui";
 
 export const TABS = [
@@ -357,9 +358,14 @@ export default function Header({ section, user, data, onLogout, openNew, notify,
                 <button onClick={() => (setMenu(null), openProfile())}>
                   <Icon name="user" size={16} /> My Profile
                 </button>
-                {user.role === "Admin" && (
+                {(can(user, "manage_users") || can(user, "grant_team_access")) && (
                   <a href="#/users" onClick={() => setMenu(null)}>
                     <Icon name="settings" size={16} /> Users
+                  </a>
+                )}
+                {can(user, "manage_permissions") && (
+                  <a href="#/permissions" onClick={() => setMenu(null)}>
+                    <Icon name="lock" size={16} /> Roles &amp; Permissions
                   </a>
                 )}
                 <button onClick={() => (setMenu(null), openPassword())}>
@@ -387,7 +393,11 @@ export function Sidebar({ section, data, user, collapsed }) {
         {!collapsed && <span>Sales</span>}
       </div>
       <ul>
-        {[...TABS, ...(user.role === "Admin" ? [["users", "Users", "/users", "contact"]] : [])].map(([key, label, path, icon]) => (
+        {[
+          ...TABS,
+          ...(can(user, "manage_users") || can(user, "grant_team_access") ? [["users", "Users", "/users", "contact"]] : []),
+          ...(can(user, "manage_permissions") ? [["permissions", "Permissions", "/permissions", "contact"]] : []),
+        ].map(([key, label, path, icon]) => (
           <li key={key}>
             <a
               href={`#${path}`}

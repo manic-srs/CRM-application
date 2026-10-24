@@ -26,7 +26,12 @@ def upgrade_database() -> None:
     """Adds columns that newer versions need to a database created by an older schema.sql (safe to repeat)."""
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS kind VARCHAR(10) NOT NULL DEFAULT 'update'"))
-        for column, default in (("email_stage_updates", "FALSE"), ("email_assignments", "TRUE"), ("email_reminders", "TRUE")):
+        conn.execute(text("""CREATE TABLE IF NOT EXISTS role_permissions (
+            role VARCHAR(20) NOT NULL, permission VARCHAR(40) NOT NULL, allowed BOOLEAN NOT NULL,
+            updated_by_id INT REFERENCES users(id), updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (role, permission))"""))
+        for column, default in (("email_stage_updates", "FALSE"), ("email_assignments", "TRUE"), ("email_reminders", "TRUE"),
+                                ("team_access", "FALSE")):
             conn.execute(text(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {column} BOOLEAN NOT NULL DEFAULT {default}"))
         conn.execute(text("ALTER TABLE emails DROP CONSTRAINT IF EXISTS emails_status_check"))
         conn.execute(text("ALTER TABLE emails ADD CONSTRAINT emails_status_check "

@@ -312,6 +312,31 @@ def customer_email(db: Session, kind: str, *, to: str | None, first_name: str, o
     return True
 
 
+# ---------- stage order: no skipping ----------
+
+def confirm_skipped(db: Session, *, flow: list[str], current: str, target_index: int, completed: list[str],
+                    note: str | None, by: int, lead_id: int | None = None, opportunity_id: int | None = None,
+                    what: str) -> str:
+    """Checks the stage order before moving forward to flow[target_index] (or past the end: Convert / Won).
+
+    Every stage between the current one and the target must have been done. A stage that was skipped in the CRM
+    must be in `completed` (the salesperson confirms it was done); it is then saved in the stage history.
+    Returns the stage the record is at after the confirmed stages."""
+    start = flow.index(current)
+    skipped = flow[start + 1:target_index]
+    missing = [stage for stage in skipped if stage not in completed]
+    if missing:
+        raise HTTPException(status_code=409, detail=(
+            f"Complete {' and '.join(missing)} before {what}. Stages can't be skipped; "
+            f"if {'they were' if len(missing) > 1 else 'it was'} already done, confirm it."))
+    previous = current
+    for stage in skipped:
+        record_stage_change(db, lead_id=lead_id, opportunity_id=opportunity_id, from_stage=previous, to_stage=stage,
+                            changed_by_id=by, note=f"Confirmed as completed{': ' + note if note else ''}")
+        previous = stage
+    return previous
+
+
 def record_link(*, lead_id: int | None = None, opportunity_id: int | None = None) -> str:
     """App page for a record, used by notifications."""
     if lead_id is not None:

@@ -1,177 +1,196 @@
 # SalesTrack CRM
 
-SalesTrack is a CRM for our sales team, built as a POC and modeled on Salesforce Sales Cloud.
-It follows a customer from the first enquiry to a won or lost deal. At every step the system creates the
-next follow-up task, notifies the owner and keeps the full history.
+SalesTrack is a web-based Customer Relationship Management (CRM) application for managing the sales cycle from first
+enquiry to a won or lost deal. It is modeled on Salesforce Sales Cloud: leads, opportunities, accounts, contacts and
+tasks, with role-based access, automated follow-ups, notifications and email.
 
 ![Seller Home](frontend/docs/seller-home.png)
+
+## Contents
+
+- [Features](#features)
+- [Tech stack](#tech-stack)
+- [Getting started](#getting-started)
+- [Configuration](#configuration)
+- [Sales process](#sales-process)
+- [Roles and permissions](#roles-and-permissions)
+- [Running tests](#running-tests)
+- [Project structure](#project-structure)
+- [Known limitations and roadmap](#known-limitations-and-roadmap)
+
+## Features
+
+**Sales pipeline**
+- Leads and opportunities with list views, search, sorting and an opportunity Kanban board.
+- Stage path on every record, with enforced stage order and a full stage history.
+- One-step lead conversion into an Account, a Contact and an Opportunity.
+- Automatic follow-up tasks and reminders at each stage.
+- Duplicate email detection when creating a lead.
+
+**Access control**
+- Role-based access (Salesperson, Manager, Admin) with a configurable **Roles & Permissions** matrix.
+- Record-level visibility: salespeople see only their own records unless a Manager grants team access.
+- All rules are enforced in the API, not only in the UI.
+
+**Notifications and email**
+- In-app notifications (bell and pop-ups) with a 30-day history, plus due-date reminders.
+- Per-user email notification preferences.
+- Send emails with attachments from any record, through the CRM mailbox or the user's own Outlook. Every email is logged on the record.
+- Automatic no-reply emails to customers when a lead is created, won or lost (optional per action).
+
+**Administration**
+- User management: create users, assign roles, reset passwords, deactivate users and transfer their records.
+- Welcome email with login details for new users; self-service profile and password change.
 
 ## Tech stack
 
 | Layer | Technology |
 | --- | --- |
-| Frontend | React 19, Vite 6, plain CSS (Salesforce Lightning style) |
+| Frontend | React 19, Vite 6, CSS |
 | Backend | Python 3.12, FastAPI, SQLAlchemy 2, Pydantic |
 | Database | PostgreSQL 16 |
-| Email | SMTP (Gmail / company mail server), Microsoft Graph for Outlook (optional), Mailpit as the local test inbox |
-| Login | Signed login tokens, passwords stored as bcrypt hashes |
-| Run | Docker Compose (database, API, app and test inbox together), nginx serves the app |
-| Tests | Pytest (backend), Node test runner (frontend) |
-
-## Sales flow
-
-```
-Lead:         New  ->  Nurturing  ->  Demo  ->  Convert
-Opportunity:  Opportunity  ->  Proposal  ->  Won
-Lost:         a lead or an opportunity can be marked Lost at any open stage (a reason is required)
-```
-
-1. **Lead.** A salesperson creates a lead (Last Name and Company are required). A "Make first contact" task is created.
-2. **Nurturing and Demo.** Each stage closes the old follow-up and creates the next one. For a demo, the system adds
-   "Prepare for demo" (9 AM the day before) and a reminder 1 hour before the demo.
-3. **Convert.** One click creates the Account (company), the Contact (person) and the Opportunity (deal).
-   Emails sent to the lead move to the opportunity.
-4. **Proposal.** The probability goes up to 75% and a "Follow up on proposal" task is created.
-   A "Close date coming up" reminder is kept 3 days before the expected close date.
-5. **Won or Lost.** The deal is closed, open tasks are closed, and Home shows it under Close Deals.
-
-## Roles
-
-There is no public sign up. The Admin creates every account.
-
-| Role | Access |
-| --- | --- |
-| Salesperson | Sees the whole team's records. Creates and changes only their own records. Can't change the owner. |
-| Manager | Changes any record and reassigns owners. |
-| Admin | Everything a Manager can do, plus the **Users** page: add users, change roles, edit name and email, reset passwords, deactivate users and transfer someone's open records to another user (for example when they leave). |
-
-The same rules are checked in the API, not only on the screen.
-
-## Features
-
-**Home**
-- Close Deals (open, won and lost this quarter), accounts, contacts, new leads, key deals, today's demos and tasks.
-- **Whole team / My records** switch.
-
-**Leads and opportunities**
-- List views with an Owner column, search and sorting. Opportunities also have a Kanban board (drag a deal to change its stage).
-- Record page with the stage path, tasks, emails, notes and stage history (who changed what and when).
-
-**Notifications**
-- **Updates** (lead created, stage changes, converted, Won, Lost, assigned to you) pop up in the corner and stay in the
-  bell for 30 days. Unread ones are highlighted and counted on the bell. **Mark all read** clears the count.
-- **Reminders** (task due, demo coming up, close date, overdue tasks) stay on the bell until the task is done.
-- **My Profile → Email Notifications:** each user chooses what also comes by email.
-  Stage changes are off by default; assignments and reminders are on.
-
-**Email**
-- **Send Email** from a lead, opportunity, contact or account, with attachments. Every email is saved on the record.
-- **Send from:**
-  - **CRM mailbox** - sent by SalesTrack from the company mailbox (`MAIL_FROM`). Replies go to the salesperson (Reply-To).
-  - **My email** - opens the salesperson's own Outlook or Gmail with the message ready to send.
-- A failed email can be sent again with **Resend**.
-
-**Emails to the customer** (no-reply, from "Company Name (no-reply)")
-- New lead: thank you for your interest, and who will contact them.
-- Won: thank you for choosing us, and the next steps.
-- Lost: a short, polite thank-you. The lost reason and notes are internal and are never sent.
-- Each one has a tick box on the form, so the salesperson can skip it.
-
-**Users and profile**
-- Welcome email with the login details when the Admin creates a user, and an email when the Admin resets a password.
-- **My Profile** (name and email settings) and **Change Password** for every user.
+| Authentication | Token-based login, bcrypt password hashing |
+| Email | Microsoft 365 / Outlook (Microsoft Graph) or SMTP; Mailpit for local testing |
+| Deployment | Docker Compose, nginx |
+| Testing | Pytest (backend), Node test runner (frontend) |
 
 ## Getting started
 
-**You need:** Docker Desktop and Git.
+### Prerequisites
 
-**1. Clone the repo**
-```
-git clone https://github.com/manic-srs/CRM-application.git
-cd CRM-application
-```
+- Docker Desktop
+- Git
 
-**2. Settings (optional for a first try)**
-```
-cp .env.example .env
-```
-Fill in the mail server, company name, Admin login and `SECRET_KEY` (see [Configuration](#configuration)).
-Without a `.env` file, every email goes to the local test inbox, so nothing reaches real people.
+### Installation
 
-**3. Start**
-```
-docker compose up -d --build
-```
-The first run takes a few minutes.
+1. Clone the repository:
+   ```
+   git clone https://github.com/manic-srs/CRM-application.git
+   cd CRM-application
+   ```
+2. (Optional) Create the environment file and update the values (see [Configuration](#configuration)):
+   ```
+   cp .env.example .env
+   ```
+   Without a `.env` file, all outgoing email is captured by the local test inbox.
+3. Build and start the services:
+   ```
+   docker compose up -d --build
+   ```
 
-**4. Open**
+### Services
 
-| What | Link |
+| Service | URL |
 | --- | --- |
-| App | http://localhost:5173 |
-| Test inbox (emails the app sends) | http://localhost:8026 |
-| API docs | http://localhost:8001/docs |
-| Database (pgAdmin or any client) | `localhost:5433`, user `crm_user`, password `crm_pass`, database `crm_db` |
+| Application | http://localhost:5173 |
+| API documentation (Swagger) | http://localhost:8001/docs |
+| Test mail inbox (Mailpit) | http://localhost:8026 |
+| PostgreSQL | `localhost:5433` (database `crm_db`) |
 
-**5. First login**
-- Log in as the default Admin: `admin@salestrack.local` / `Admin@2026` (or the `ADMIN_EMAIL` / `ADMIN_PASSWORD` from `.env`).
-- Change the password: profile picture (top right) → **Change Password**.
-- Open **Users** → **New User** and add your Managers and Salespeople. Each user gets a welcome email.
+### First login
 
-The database starts empty. Everything is saved in PostgreSQL and stays when you stop or rebuild the app.
+1. Sign in with the default Admin account defined by `ADMIN_EMAIL` / `ADMIN_PASSWORD`
+   (default `admin@salestrack.local` / `Admin@2026`).
+2. Change the default password from the profile menu → **Change Password**.
+3. Go to **Users** → **New User** to add Managers and Salespeople.
 
-**Useful commands**
+The database starts empty and is upgraded automatically on startup. Data is persisted in a Docker volume.
 
-| Command | What it does |
+### Common commands
+
+| Command | Description |
 | --- | --- |
-| `docker compose up -d --build` | Start (or restart after code changes) |
-| `docker compose down` | Stop. The data is kept. |
-| `docker compose down -v` | Stop and **delete all data** |
-| `docker compose logs api --tail 50` | Backend logs (for example email errors) |
+| `docker compose up -d --build` | Build and start (or restart after code changes) |
+| `docker compose down` | Stop the services (data is kept) |
+| `docker compose down -v` | Stop the services and delete all data |
+| `docker compose logs api --tail 50` | View backend logs |
 
 ## Configuration
 
-All settings go in `.env` (next to `docker-compose.yml`). `.env` is ignored by Git, so passwords are never committed.
+Settings are read from `.env` in the project root. This file is excluded from version control.
 
-| Setting | Purpose |
+| Variable | Description |
 | --- | --- |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_TLS` | Mail server, for example `smtp.gmail.com`, `587`, `true` |
-| `SMTP_USER`, `SMTP_PASSWORD` | Mailbox login (for Gmail, a 16-letter App Password) |
-| `MAIL_FROM` | Address every email is sent from (for Gmail, the same as `SMTP_USER`) |
-| `COMPANY_NAME` | Shown to customers, for example `SRS Consulting` |
-| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Default Admin, created on the first start |
-| `SECRET_KEY` | Signs the login tokens. Set your own long random text. |
-| `MAIL_PROVIDER=graph`, `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET` | Send through Outlook / Microsoft 365 (needs an Azure app from IT with the Mail.Send permission) |
-| `APP_URL` | Link used in emails (default `http://localhost:5173`) |
+| `MAIL_PROVIDER`, `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET` | Send email through Microsoft 365 / Outlook using Microsoft Graph (`MAIL_PROVIDER=graph`; requires an Azure app registration with `Mail.Send`) |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_TLS`, `SMTP_USER`, `SMTP_PASSWORD` | SMTP server settings (used when Graph is not configured) |
+| `MAIL_FROM` | Sender address for all outgoing email |
+| `COMPANY_NAME` | Company name shown in customer emails |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Default Admin account created on first start |
+| `SECRET_KEY` | Secret used to sign login tokens (use a long random value) |
+| `APP_URL` | Base URL used in email links (default `http://localhost:5173`) |
 
-After changing `.env`, run `docker compose up -d`.
+Apply changes with `docker compose up -d`.
 
-## Tests
+## Sales process
+
+```
+Lead:         New -> Nurturing -> Demo -> Convert
+Opportunity:  Opportunity -> Proposal -> Won
+Lost:         available from any open stage (reason required)
+```
+
+| Stage | System behavior |
+| --- | --- |
+| New | Creates a "Make first contact" task |
+| Nurturing / Demo | Closes the previous follow-up and creates the next; demo preparation task and a 1-hour reminder |
+| Convert | Creates the Account, Contact and Opportunity; moves lead emails to the opportunity |
+| Proposal | Sets probability to 75%, creates a proposal follow-up and a close-date reminder |
+| Won / Lost | Closes the deal and its open tasks; optional customer email |
+
+**Stage order.** Stages cannot be skipped. Moving forward past a stage requires the user to confirm that stage as
+completed, with an optional note recorded in the stage history. Moving back and marking Lost are always allowed.
+Implemented in `backend/app/services.py` (`confirm_skipped`).
+
+**Duplicate email.** A lead cannot be created with an email that belongs to an open lead. If the email belongs to a
+closed lead or a contact, the user can create a new lead for the returning customer or use a different email.
+
+## Roles and permissions
+
+| Role | Default access |
+| --- | --- |
+| Salesperson | Views and edits own leads, opportunities, accounts, contacts, tasks and emails |
+| Manager | Views and edits all records, reassigns owners, grants team access to salespeople |
+| Admin | Full access, including user management and the permissions matrix |
+
+- **Roles & Permissions** (Admin): enable or disable each permission for the Salesperson and Manager roles. Admin permissions are fixed.
+- **Team access** (Users page): grants a salesperson read-only access to all team records.
+- Records outside a user's access are hidden from lists, search, dashboards and direct links.
+
+Access rules are implemented in `backend/app/security.py`.
+
+## Running tests
 
 ```
 docker compose exec api pip install -q pytest httpx
-docker compose exec -e MAIL_ASYNC=false api pytest -q    # backend
-cd frontend && npm test                                   # frontend
+docker compose exec -e MAIL_ASYNC=false api pytest -q   # backend
+cd frontend && npm test                                  # frontend
 ```
-The backend tests use a temporary database and never send real emails.
+
+Backend tests run against a temporary database and do not send real email.
 
 ## Project structure
 
-| Folder | Contents |
-| --- | --- |
-| `database/` | PostgreSQL tables (`schema.sql`), Home views, optional sample data (`seed-data.sql`, not loaded) |
-| `backend/` | FastAPI API: routers, business rules, login and roles (`app/security.py`), email (`app/mailer.py`), reminders (`app/scheduler.py`), tests. See [backend/README.md](backend/README.md) |
-| `frontend/` | React app: Home, list views, record pages, Users page, email composer. See [frontend/README.md](frontend/README.md) |
-| `docker-compose.yml` | Database, API, app and test inbox |
+```
+CRM-application/
+├── backend/              FastAPI application (routers, models, security, email, scheduler, tests)
+├── frontend/             React application (pages, components, styles)
+├── database/             PostgreSQL schema, views and optional seed data
+├── docker-compose.yml    Database, API, frontend and mail inbox services
+└── .env.example          Environment variable template
+```
 
-## Current limits and next steps
+See [backend/README.md](backend/README.md) and [frontend/README.md](frontend/README.md) for module details.
 
-- The app runs on one machine. To share data across the team, it needs a shared database or a hosted server.
-- Real emails use a test Gmail account. For production we need a company mailbox (Outlook via Microsoft Graph is supported).
-- Customer replies are not read back into the CRM yet.
-- No "Forgot password" on the login page yet. The Admin resets passwords.
-- Next: Apollo.io lead enrichment from a LinkedIn URL (needs an API key), bulk lead import, email templates.
+## Known limitations and roadmap
 
-## Team
+**Limitations**
+- Runs as a single local deployment; a shared database or hosted environment is required for multi-user access across machines.
+- Production email requires a Microsoft 365 mailbox and Azure app registration.
+- Customer replies are not synced back into the CRM.
+- Self-service password reset is not available; passwords are reset by an Admin.
 
-Naga Mani Chappidi (backend and integration), Sharanya Utkuri (database), Samhit Eppanapally (frontend), Akhil Arroju (review).
+**Roadmap**
+- Lead enrichment (Apollo.io)
+- Bulk lead import
+- Email templates
+- Inbound email sync

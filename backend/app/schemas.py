@@ -36,6 +36,8 @@ class UserOut(Out):
     email_stage_updates: bool = False
     email_assignments: bool = True
     email_reminders: bool = True
+    team_access: bool = False
+    permissions: list[str] = []  # filled for the logged-in user (login, /auth/me)
 
 
 class LoginRequest(BaseModel):
@@ -65,6 +67,16 @@ class ProfileUpdate(BaseModel):
     email_stage_updates: bool | None = None  # email me when my leads / deals move to the next stage
     email_assignments: bool | None = None    # email me when something is assigned to me
     email_reminders: bool | None = None      # email me reminders (tasks, demos, close dates, overdue)
+
+
+class TeamAccess(BaseModel):
+    team_access: bool
+
+
+class PermissionChange(BaseModel):
+    role: UserRole
+    permission: str
+    allowed: bool
 
 
 class PasswordReset(BaseModel):
@@ -184,6 +196,7 @@ class LeadCreate(BaseModel):
     owner_id: int | None = None  # default: the logged-in user
     created_by_id: int | None = None  # ignored: the logged-in user creates it
     welcome_email: bool = True  # email the lead (no-reply) that their details were received; needs an email
+    confirm_duplicate: bool = False  # the email already exists on a closed lead / contact: create a new lead anyway
 
 
 class LeadUpdate(BaseModel):
@@ -241,6 +254,8 @@ class LeadStageChange(BaseModel):
     demo_date: datetime | None = None  # used when moving to Demo: the demo task is due then
     note: str | None = None
     changed_by_id: int | None = None  # default: the lead owner
+    completed_stages: list[str] = []  # stages skipped on the way, confirmed as already done by the salesperson
+    completed_note: str | None = Field(None, max_length=500)  # e.g. "Demo was done on a call"
 
 
 class MarkLost(BaseModel):
@@ -258,6 +273,8 @@ class ConvertLead(BaseModel):
     expected_close_date: date | None = None
     account_id: int | None = None
     changed_by_id: int | None = None
+    completed_stages: list[str] = []  # stages skipped on the way, confirmed as already done by the salesperson
+    completed_note: str | None = Field(None, max_length=500)  # e.g. "Demo was done on a call"
 
 
 # ---------- Accounts and contacts ----------
@@ -369,6 +386,8 @@ class MarkWon(BaseModel):
     note: str | None = None
     changed_by_id: int | None = None
     notify_customer: bool = True  # thank-you no-reply email to the deal's contact
+    completed_stages: list[str] = []  # stages skipped on the way, confirmed as already done by the salesperson
+    completed_note: str | None = Field(None, max_length=500)  # e.g. "Demo was done on a call"
 
 
 class ConvertResult(BaseModel):

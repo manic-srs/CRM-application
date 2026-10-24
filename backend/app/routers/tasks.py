@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app import schemas
 from app.database import get_db
-from app.security import acting_user_id, check_owner_change, owner_for_new, require_edit
+from app.security import acting_user_id, check_owner_change, owner_for_new, require_edit, require_view, visible
 from app.models import Lead, Opportunity, Task
 from app.serializers import task_out
 from app.services import assignment_notice, get_or_404, now, record_link, resolve_user_id, start_of_today
@@ -32,7 +32,7 @@ def list_tasks(
     db: Session = Depends(get_db),
 ):
     """Tasks, soonest first."""
-    query = select(Task)
+    query = visible(select(Task), Task)
     if status_filter:
         query = query.where(Task.status == status_filter)
     if owner_id is not None:
@@ -60,8 +60,10 @@ def create_task(data: schemas.TaskCreate, db: Session = Depends(get_db)):
     fallback = None
     if data.lead_id is not None:
         fallback = get_or_404(db, Lead, data.lead_id, "Lead").owner_id
+        require_view(fallback, "lead")
     if data.opportunity_id is not None:
         fallback = get_or_404(db, Opportunity, data.opportunity_id, "Opportunity").owner_id
+        require_view(fallback, "opportunity")
     # default owner: the related record's owner, else you; only Managers/Admins assign tasks to others
     owner_id = resolve_user_id(db, owner_for_new(data.owner_id if data.owner_id is not None else fallback))
     task = Task(**data.model_dump(exclude={"owner_id", "created_by_id"}), owner_id=owner_id, status="Open", is_auto=False)
@@ -76,7 +78,9 @@ def create_task(data: schemas.TaskCreate, db: Session = Depends(get_db)):
 
 @router.get("/{task_id}", response_model=schemas.TaskOut)
 def get_task(task_id: int, db: Session = Depends(get_db)):
-    return task_out(get_or_404(db, Task, task_id, "Task"))
+    task = get_or_404(db, Task, task_id, "Task")
+    require_view(task.owner_id, "task")
+    return task_out(task)
 
 
 @router.put("/{task_id}", response_model=schemas.TaskOut)

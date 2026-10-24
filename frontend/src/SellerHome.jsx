@@ -87,7 +87,7 @@ function assistantItems(data, user) {
   return items.slice(0, 6);
 }
 
-export default function SellerHome({ data, user, toggleTask, openTask, scope = "team", setScope = () => {} }) {
+export default function SellerHome({ data, user, toggleTask, openTask, scope = "team", setScope = () => {}, teamDashboard = true }) {
   const home = data.home?.seller_home;
   if (!home) return null;
   const team = scope === "team";
@@ -106,6 +106,7 @@ export default function SellerHome({ data, user, toggleTask, openTask, scope = "
         <p>
           {greeting()}, {firstName(user.full_name)}. Let's get selling!
         </p>
+        {teamDashboard && (
         <div className="toggle-group scope-toggle" role="group" aria-label="Show records">
           <button className={team ? "on" : ""} aria-pressed={team} onClick={() => setScope("team")}>
             Whole team
@@ -114,6 +115,7 @@ export default function SellerHome({ data, user, toggleTask, openTask, scope = "
             My records
           </button>
         </div>
+        )}
       </div>
 
       <div className="home-grid">

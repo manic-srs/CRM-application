@@ -6,16 +6,17 @@ At each stage the system closes the old follow-up ("Auto-closed") and creates th
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app import schemas
-from app.constants import LEAD_OPEN_STAGES, LEAD_SOURCES, LEAD_STAGES, STAGE_PROBABILITY
+from app.constants import LEAD_FLOW, LEAD_OPEN_STAGES, LEAD_SOURCES, LEAD_STAGES, STAGE_PROBABILITY
 from app.database import get_db
-from app.security import acting_user_id, check_owner_change, owner_for_new, require_edit
+from app.security import acting_user, acting_user_id, check_owner_change, owner_for_new, require_edit, require_view, visible
 from app.models import Account, Contact, Email, Lead, Opportunity, User
 from app.serializers import account_out, contact_out, history_out, lead_detail, lead_out, opportunity_out, task_out
 from app.services import (
+    confirm_skipped,
     customer_email,
     assignment_notice,
     auto_close_open_tasks,
@@ -55,7 +56,7 @@ def list_leads(
         raise HTTPException(status_code=400, detail=f"Unknown stage '{stage}'. Use: {', '.join(LEAD_STAGES)}")
     if source and source not in LEAD_SOURCES:
         raise HTTPException(status_code=400, detail=f"Unknown source '{source}'. Use: {', '.join(LEAD_SOURCES)}")
-    query = select(Lead)
+    query = visible(select(Lead), Lead)
     if stage:
         query = query.where(Lead.stage == stage)
     if source:
@@ -68,16 +69,67 @@ def list_leads(
     return [lead_out(lead) for lead in db.scalars(query.order_by(Lead.id.desc())).all()]
 
 
+# ---------- duplicate email check ----------
+
+def find_duplicates(db: Session, email: str | None, exclude_lead_id: int | None = None) -> list[dict]:
+    """Leads and contacts that already have this email (any owner, any stage)."""
+    email = (email or "").strip().lower()
+    if not email:
+        return []
+    me = acting_user()
+    found = []
+    query = select(Lead).where(func.lower(Lead.email) == email)
+    if exclude_lead_id is not None:
+        query = query.where(Lead.id != exclude_lead_id)
+    for lead in db.scalars(query.order_by(Lead.id.desc())).all():
+        found.append({"type": "Lead", "id": lead.id, "name": lead.name, "company": lead.company, "stage": lead.stage,
+                      "open": lead.stage in LEAD_OPEN_STAGES, "owner_name": lead.owner.full_name if lead.owner else None,
+                      "can_open": lead.owner_id == me.id or me.sees_team})
+    for contact in db.scalars(select(Contact).where(func.lower(Contact.email) == email)).all():
+        found.append({"type": "Contact", "id": contact.id, "name": contact.full_name,
+                      "company": contact.account.name if contact.account else None, "stage": None, "open": False,
+                      "owner_name": contact.owner.full_name if contact.owner else None,
+                      "can_open": contact.owner_id == me.id or me.sees_team})
+    return found
+
+
+@router.get("/duplicates")
+def check_duplicates(email: str = Query(..., min_length=3), exclude_lead_id: int | None = Query(None),
+                     db: Session = Depends(get_db)):
+    """Before saving a lead: is this email already in the CRM? (open lead = can't create another one)"""
+    matches = find_duplicates(db, email, exclude_lead_id)
+    return {"email": email.strip().lower(), "matches": matches, "has_open_lead": any(m["open"] for m in matches)}
+
+
+def check_email_free(db: Session, email: str | None, *, confirmed: bool, exclude_lead_id: int | None = None) -> list[dict]:
+    matches = find_duplicates(db, email, exclude_lead_id)
+    open_lead = next((m for m in matches if m["open"]), None)
+    if open_lead:
+        raise HTTPException(status_code=409, detail=(
+            f'An open lead with this email already exists: {open_lead["name"]} ({open_lead["company"]}), '
+            f'owner {open_lead["owner_name"]}. Use that lead instead.'))
+    if matches and not confirmed:
+        first = matches[0]
+        raise HTTPException(status_code=409, detail=(
+            f'This email already exists: {first["type"].lower()} {first["name"]} ({first["company"]}). '
+            "Confirm to create a new lead for the returning customer, or use a different email."))
+    return matches
+
+
 @router.post("", response_model=schemas.LeadDetail, status_code=status.HTTP_201_CREATED)
 def create_lead(data: schemas.LeadCreate, db: Session = Depends(get_db)):
     """Create a lead at stage New. The system adds a 'Make first contact' task for the owner."""
     owner_id = resolve_user_id(db, owner_for_new(data.owner_id))
     actor_id = acting_user_id()
-    lead = Lead(**data.model_dump(exclude={"owner_id", "created_by_id", "welcome_email"}), owner_id=owner_id, stage="New")
+    previous = check_email_free(db, data.email, confirmed=data.confirm_duplicate)
+    lead = Lead(**data.model_dump(exclude={"owner_id", "created_by_id", "welcome_email", "confirm_duplicate"}),
+                owner_id=owner_id, stage="New")
     db.add(lead)
     db.flush()
     db.refresh(lead)  # loads "name", which the database builds from first + last name
-    record_stage_change(db, lead_id=lead.id, from_stage=None, to_stage="New", changed_by_id=actor_id)
+    record_stage_change(db, lead_id=lead.id, from_stage=None, to_stage="New", changed_by_id=actor_id,
+                        note=(f"Returning customer (already in the CRM as {previous[0]['type'].lower()} "
+                              f"{previous[0]['name']}, {previous[0]['stage'] or 'contact'})") if previous else None)
     task = create_auto_task(db, stage="New", owner_id=owner_id, record_name=lead.name, lead_id=lead.id)
     # one notification for the new lead; it says so when someone else created it for the owner
     assigned = actor_id != owner_id
@@ -98,7 +150,9 @@ def create_lead(data: schemas.LeadCreate, db: Session = Depends(get_db)):
 @router.get("/{lead_id}", response_model=schemas.LeadDetail)
 def get_lead(lead_id: int, db: Session = Depends(get_db)):
     """The lead record page: details, tasks, notes and stage history."""
-    return lead_detail(get_or_404(db, Lead, lead_id, "Lead"))
+    lead = get_or_404(db, Lead, lead_id, "Lead")
+    require_view(lead.owner_id, "lead")
+    return lead_detail(lead)
 
 
 @router.put("/{lead_id}", response_model=schemas.LeadOut)
@@ -111,6 +165,9 @@ def update_lead(lead_id: int, data: schemas.LeadUpdate, db: Session = Depends(ge
     check_owner_change(lead.owner_id, changes.get("owner_id"))
     old_owner = lead.owner_id
     old_demo = lead.demo_date
+    if changes.get("email") and (changes["email"] or "").strip().lower() != (lead.email or "").strip().lower():
+        if any(m["open"] for m in find_duplicates(db, changes["email"], exclude_lead_id=lead.id)):
+            raise HTTPException(status_code=409, detail="An open lead with this email already exists. Use that lead instead.")
     for field in ("last_name", "company", "source"):  # required, like Salesforce
         if field in changes and not changes[field]:
             raise HTTPException(status_code=400, detail=f"{field} can't be empty")
@@ -150,6 +207,10 @@ def change_stage(lead_id: int, data: schemas.LeadStageChange, db: Session = Depe
     require_edit(lead.owner_id, "lead")
     by = acting_user_id()
 
+    if LEAD_FLOW.index(data.stage) > LEAD_FLOW.index(lead.stage):  # forward: no skipping (going back is allowed)
+        lead.stage = confirm_skipped(db, flow=LEAD_FLOW, current=lead.stage, target_index=LEAD_FLOW.index(data.stage),
+                                     completed=data.completed_stages, note=data.completed_note, by=by,
+                                     lead_id=lead.id, what=data.stage)
     old = lead.stage
     lead.stage = data.stage
     if data.stage == "Demo" and data.demo_date:
@@ -215,6 +276,11 @@ def convert_lead(lead_id: int, data: schemas.ConvertLead | None = None, db: Sess
     data = data or schemas.ConvertLead()
     lead = get_or_404(db, Lead, lead_id, "Lead")
     ensure_open(lead)
+    require_edit(lead.owner_id, "lead")
+    # Convert comes after Demo: New -> Nurturing -> Demo must be done (or confirmed as done)
+    lead.stage = confirm_skipped(db, flow=LEAD_FLOW, current=lead.stage, target_index=len(LEAD_FLOW),
+                                 completed=data.completed_stages, note=data.completed_note, by=acting_user_id(),
+                                 lead_id=lead.id, what="converting")
     require_edit(lead.owner_id, "lead")
     by = acting_user_id()
 
@@ -291,4 +357,5 @@ def convert_lead(lead_id: int, data: schemas.ConvertLead | None = None, db: Sess
 @router.get("/{lead_id}/history", response_model=list[schemas.StageHistoryOut])
 def lead_history(lead_id: int, db: Session = Depends(get_db)):
     lead = get_or_404(db, Lead, lead_id, "Lead")
+    require_view(lead.owner_id, "lead")
     return [history_out(h) for h in sorted(lead.history, key=lambda h: h.id)]

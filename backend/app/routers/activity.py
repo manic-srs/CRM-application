@@ -9,7 +9,7 @@ from app import schemas
 from app.database import get_db
 from app.models import Account, Contact, Lead, Note, Notification, Opportunity, Task
 from app.serializers import note_out
-from app.security import acting_user_id
+from app.security import acting_user, acting_user_id, require_view, visible
 from app.services import get_or_404
 
 router = APIRouter(prefix="/api", tags=["Notes, notifications and search"])
@@ -21,9 +21,13 @@ router = APIRouter(prefix="/api", tags=["Notes, notifications and search"])
 def list_notes(lead_id: int | None = Query(None), opportunity_id: int | None = Query(None), db: Session = Depends(get_db)):
     query = select(Note)
     if lead_id is not None:
+        require_view(get_or_404(db, Lead, lead_id, "Lead").owner_id, "lead")
         query = query.where(Note.lead_id == lead_id)
     if opportunity_id is not None:
+        require_view(get_or_404(db, Opportunity, opportunity_id, "Opportunity").owner_id, "opportunity")
         query = query.where(Note.opportunity_id == opportunity_id)
+    if lead_id is None and opportunity_id is None and not acting_user().sees_team:
+        query = query.where(Note.created_by_id == acting_user_id())
     return [note_out(n) for n in db.scalars(query.order_by(Note.id.desc())).all()]
 
 
@@ -37,6 +41,7 @@ def add_note(data: schemas.NoteCreate, db: Session = Depends(get_db)):
         if data.lead_id is not None
         else get_or_404(db, Opportunity, data.opportunity_id, "Opportunity")
     )
+    require_view(parent.owner_id, "record")
     note = Note(
         body=data.body,
         created_by_id=acting_user_id(),
@@ -118,14 +123,14 @@ def search(q: str = Query(..., min_length=1), db: Session = Depends(get_db)):
     """The 'Search...' box: leads, opportunities, accounts, contacts and tasks (up to 20 results)."""
     like = f"%{q.strip()}%"
     results = []
-    for lead in db.scalars(select(Lead).where(or_(Lead.name.ilike(like), Lead.company.ilike(like), Lead.email.ilike(like))).limit(20)):
+    for lead in db.scalars(visible(select(Lead), Lead).where(or_(Lead.name.ilike(like), Lead.company.ilike(like), Lead.email.ilike(like))).limit(20)):
         results.append({"type": "Lead", "id": lead.id, "name": lead.name, "detail": lead.company})
-    for opp in db.scalars(select(Opportunity).where(Opportunity.name.ilike(like)).limit(20)):
+    for opp in db.scalars(visible(select(Opportunity), Opportunity).where(Opportunity.name.ilike(like)).limit(20)):
         results.append({"type": "Opportunity", "id": opp.id, "name": opp.name, "detail": opp.stage})
-    for acc in db.scalars(select(Account).where(Account.name.ilike(like)).limit(20)):
+    for acc in db.scalars(visible(select(Account), Account).where(Account.name.ilike(like)).limit(20)):
         results.append({"type": "Account", "id": acc.id, "name": acc.name, "detail": acc.industry})
-    for con in db.scalars(select(Contact).where(or_(Contact.full_name.ilike(like), Contact.email.ilike(like))).limit(20)):
+    for con in db.scalars(visible(select(Contact), Contact).where(or_(Contact.full_name.ilike(like), Contact.email.ilike(like))).limit(20)):
         results.append({"type": "Contact", "id": con.id, "name": con.full_name, "detail": con.job_title})
-    for task in db.scalars(select(Task).where(Task.title.ilike(like)).limit(20)):
+    for task in db.scalars(visible(select(Task), Task).where(Task.title.ilike(like)).limit(20)):
         results.append({"type": "Task", "id": task.id, "name": task.title, "detail": task.status})
     return results[:20]

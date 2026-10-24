@@ -3,12 +3,13 @@
 // Also the "Change password" dialog every user can open from their profile menu.
 import React, { useEffect, useState } from "react";
 import { api } from "./api";
+import { can } from "./permissions";
 import { Avatar, Icon, ObjectIcon } from "./ui";
 
 const ROLES = ["Salesperson", "Manager", "Admin"];
 const ROLE_TEXT = {
-  Salesperson: "Sees the team's records, changes only their own",
-  Manager: "Changes any record and reassigns owners",
+  Salesperson: "Sees and changes only their own records",
+  Manager: "Sees and changes the team's records, reassigns owners, gives team access",
   Admin: "Everything, plus managing users",
 };
 
@@ -321,6 +322,7 @@ function Transfer({ target, users, close, notify }) {
 }
 
 export default function UsersPage({ user, data, reload, notify, onSelfChanged }) {
+  const admin = can(user, "manage_users"); // Managers see this page only to give team access
   const [users, setUsers] = useState(null);
   const [error, setError] = useState("");
   const [dialog, setDialog] = useState(null); // {type: "new" | "edit" | "reset" | "transfer", target}
@@ -354,6 +356,18 @@ export default function UsersPage({ user, data, reload, notify, onSelfChanged })
       setBusyId(null);
     }
   };
+  const teamAccess = async (target, value) => {
+    setBusyId(target.id);
+    try {
+      await api.setTeamAccess(target.id, value);
+      notify(value ? `${target.full_name} can now see the whole team's records.` : `${target.full_name} now sees only their own records.`);
+      await load();
+    } catch (err) {
+      notify(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
   const closeDialog = (result) => {
     setDialog(null);
     if (result?.id === user.id && result.email) onSelfChanged?.(result); // the Admin edited their own name / email
@@ -372,11 +386,13 @@ export default function UsersPage({ user, data, reload, notify, onSelfChanged })
             <small>Setup</small>
             <h1>Users</h1>
           </div>
-          <div className="list-buttons">
-            <button className="sf-button brand" onClick={() => setDialog({ type: "new" })}>
-              New User
-            </button>
-          </div>
+          {admin && (
+            <div className="list-buttons">
+              <button className="sf-button brand" onClick={() => setDialog({ type: "new" })}>
+                New User
+              </button>
+            </div>
+          )}
         </div>
         <ul className="role-legend">
           {ROLES.map((r) => (
@@ -401,6 +417,7 @@ export default function UsersPage({ user, data, reload, notify, onSelfChanged })
                 <th>Email</th>
                 <th>Role</th>
                 <th>Status</th>
+                <th>Team Access</th>
                 <th className="num">Open Records</th>
                 <th aria-label="Actions" />
               </tr>
@@ -422,7 +439,7 @@ export default function UsersPage({ user, data, reload, notify, onSelfChanged })
                       <select
                         aria-label={`Role of ${u.full_name}`}
                         value={u.role}
-                        disabled={self || busyId === u.id}
+                        disabled={!admin || self || busyId === u.id}
                         title={self ? "You can't change your own role" : undefined}
                         onChange={(e) => change(u, { role: e.target.value }, `${u.full_name} is now ${e.target.value}.`)}
                       >
@@ -434,8 +451,25 @@ export default function UsersPage({ user, data, reload, notify, onSelfChanged })
                     <td>
                       <span className={`pill ${u.is_active ? "pill-ok" : "pill-off"}`}>{u.is_active ? "Active" : "Inactive"}</span>
                     </td>
+                    <td>
+                      {u.role === "Salesperson" ? (
+                        <label className="switch" title="Let this salesperson see the whole team's records (view only)">
+                          <input
+                            type="checkbox"
+                            checked={!!u.team_access}
+                            disabled={!can(user, "grant_team_access") || busyId === u.id}
+                            onChange={(e) => teamAccess(u, e.target.checked)}
+                            aria-label={`Team access for ${u.full_name}`}
+                          />
+                          <span>{u.team_access ? "Whole team" : "Own records"}</span>
+                        </label>
+                      ) : (
+                        <span className="muted">Whole team</span>
+                      )}
+                    </td>
                     <td className="num">{owned(u.id)}</td>
                     <td>
+                      {admin && (
                       <span className="row-actions">
                         <button className="sf-button small" onClick={() => setDialog({ type: "edit", target: u })}>
                           Edit
@@ -462,6 +496,7 @@ export default function UsersPage({ user, data, reload, notify, onSelfChanged })
                           </button>
                         )}
                       </span>
+                      )}
                     </td>
                   </tr>
                 );

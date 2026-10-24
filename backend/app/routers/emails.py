@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from app import mailer, schemas
 from app.database import get_db
 from app.models import Account, Contact, Email, EmailAttachment, Lead, Opportunity, User
-from app.security import acting_user
+from app.security import acting_user, require, require_view
 from app.services import get_or_404
 
 router = APIRouter(prefix="/api/emails", tags=["Emails"])
@@ -40,6 +40,19 @@ def address_list(value: str | None, label: str, required: bool = False) -> list[
     return items
 
 
+def email_visible(db: Session, email: Email) -> bool:
+    """You can see an email you sent, or one on a record you can see."""
+    me = acting_user()
+    if me.sees_team or email.sent_by_id == me.id:
+        return True
+    for model, record_id in ((Lead, email.lead_id), (Opportunity, email.opportunity_id),
+                             (Contact, email.contact_id), (Account, email.account_id)):
+        record = db.get(model, record_id) if record_id is not None else None
+        if record is not None and record.owner_id == me.id:
+            return True
+    return False
+
+
 def email_out(e: Email) -> schemas.EmailOut:
     return schemas.EmailOut.model_validate(e).model_copy(
         update={"sent_by_name": e.sent_by.full_name if e.sent_by else None}
@@ -54,7 +67,7 @@ async def send_email(
     sent_by_id: int | None = Form(None, description="Ignored: the logged-in user sends it"),
     cc: str | None = Form(None),
     reply_to: str | None = Form(None, description="Where replies go; default: your own email"),
-    open_in: str | None = Form(None, description="gmail or outlook: only save it; you send it from that app"),
+    open_in: str | None = Form(None, description="outlook: only save it; you send it from your own Outlook"),
     lead_id: int | None = Form(None),
     opportunity_id: int | None = Form(None),
     contact_id: int | None = Form(None),
@@ -67,14 +80,15 @@ async def send_email(
     cc_list = address_list(cc, "Cc")
     if not any(x is not None for x in (lead_id, opportunity_id, contact_id, account_id)):
         raise HTTPException(status_code=400, detail="Link the email to a lead, opportunity, contact or account")
+    require("send_emails")
     sender = db.get(User, acting_user().id)
     reply = (address_list(reply_to, "Reply-To") or [sender.email])[0]
-    if open_in not in (None, "", "gmail", "outlook"):
-        raise HTTPException(status_code=422, detail="open_in must be gmail or outlook")
+    if open_in not in (None, "", "outlook"):
+        raise HTTPException(status_code=422, detail="open_in must be outlook")
     for model, record_id, label in ((Lead, lead_id, "Lead"), (Opportunity, opportunity_id, "Opportunity"),
                                     (Contact, contact_id, "Contact"), (Account, account_id, "Account")):
         if record_id is not None:
-            get_or_404(db, model, record_id, label)
+            require_view(get_or_404(db, model, record_id, label).owner_id, label.lower())
 
     files = [f for f in files if f.filename]
     if len(files) > MAX_FILES:
@@ -91,7 +105,7 @@ async def send_email(
         raise HTTPException(status_code=413, detail="Attachments are larger than 25 MB in total")
 
     if open_in:
-        error, state = None, "Gmail" if open_in == "gmail" else "Outlook"
+        error, state = None, "Outlook"
     else:
         error = mailer.send(
             to_list, subject.strip(), body, cc=cc_list, sender_name=f"{sender.full_name} via SalesTrack",
@@ -117,7 +131,7 @@ def resend_email(email_id: int, db: Session = Depends(get_db)):
     if email.status != "Failed":
         raise HTTPException(status_code=409, detail="This email was already sent")
     me = acting_user()
-    if not me.is_manager and email.sent_by_id != me.id:
+    if not me.can("edit_team_records") and email.sent_by_id != me.id:
         raise HTTPException(status_code=403, detail="Only the person who wrote it (or a Manager) can resend this email")
     sender = email.sent_by
     error = mailer.send(
@@ -153,16 +167,23 @@ def list_emails(
 ):
     """Emails for a record, newest first."""
     query = select(Email)
-    for column, value in ((Email.lead_id, lead_id), (Email.opportunity_id, opportunity_id),
-                          (Email.contact_id, contact_id), (Email.account_id, account_id)):
+    for column, value, model, label in ((Email.lead_id, lead_id, Lead, "Lead"),
+                                        (Email.opportunity_id, opportunity_id, Opportunity, "Opportunity"),
+                                        (Email.contact_id, contact_id, Contact, "Contact"),
+                                        (Email.account_id, account_id, Account, "Account")):
         if value is not None:
+            require_view(get_or_404(db, model, value, label).owner_id, label.lower())
             query = query.where(column == value)
+    if not any(v is not None for v in (lead_id, opportunity_id, contact_id, account_id)) and not acting_user().sees_team:
+        query = query.where(Email.sent_by_id == acting_user().id)
     return [email_out(e) for e in db.scalars(query.order_by(Email.id.desc())).all()]
 
 
 @router.get("/attachments/{attachment_id}")
 def download_attachment(attachment_id: int, db: Session = Depends(get_db)):
     item = get_or_404(db, EmailAttachment, attachment_id, "Attachment")
+    if not email_visible(db, item.email):
+        raise HTTPException(status_code=404, detail=f"Attachment {attachment_id} not found")
     return Response(
         content=item.data,
         media_type=item.content_type,
