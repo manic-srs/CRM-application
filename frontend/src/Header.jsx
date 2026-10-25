@@ -388,10 +388,6 @@ export function Sidebar({ section, data, user, collapsed }) {
   const openTasks = data.tasks.filter((t) => !t.completed && t.owner_id === user.id).length;
   return (
     <nav className={`sidebar ${collapsed ? "collapsed" : ""}`} aria-label="Main navigation">
-      <div className="sidebar-app">
-        <span className="app-dot">S</span>
-        {!collapsed && <span>Sales</span>}
-      </div>
       <ul>
         {[
           ...TABS,

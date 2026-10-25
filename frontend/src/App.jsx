@@ -107,7 +107,8 @@ function Workspace({ user, onLogout, onUserChanged }) {
       return "team";
     }
   });
-  const homeScope = teamDashboard ? savedScope : "mine"; // without the team dashboard: only your own records
+  const isAdmin = user.role === "Admin";
+  const homeScope = isAdmin ? "team" : teamDashboard ? savedScope : "mine";
   const setHomeScope = (value) => {
     setHomeScopeState(value);
     try {
@@ -187,7 +188,7 @@ function Workspace({ user, onLogout, onUserChanged }) {
         openTask={openTask}
         scope={homeScope}
         setScope={setHomeScope}
-        teamDashboard={teamDashboard}
+        teamDashboard={teamDashboard && !isAdmin}
       />
     );
   else if (["leads", "opportunities"].includes(section))

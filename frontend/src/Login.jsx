@@ -44,14 +44,14 @@ export default function Login({ onLogin, sessionExpired = false }) {
   return (
     <main className="signin-page">
       <section className="signin-story" aria-label="About SalesTrack">
-        <div className="signin-brand"><BrandMark size={66}/><span>SalesTrack</span></div>
+        <div className="signin-brand"><BrandMark size={44}/><span>SalesTrack</span></div>
         <div className="signin-overview">
           <p className="signin-eyebrow">YOUR SALES WORKSPACE, CONNECTED</p>
-          <h1>Smarter sales.<br/>Stronger relationships.</h1>
+          <h1>Smarter sales.{" "}<br/>Stronger relationships.</h1>
           <p className="signin-summary">Bring your team, customers, and opportunities together in one place.</p>
         </div>
         <div className="signin-pipeline" aria-label="Sales pipeline: Leads, Relationships, Opportunities, Closed deals">
-          <div className="signin-pipeline-hub"><BrandMark size={56}/></div>
+          <div className="signin-pipeline-hub"><BrandMark size={44}/></div>
           <div className="signin-pipeline-stages">
             {[['person', 'Leads'], ['people', 'Relationships'], ['chart', 'Opportunities'], ['check', 'Closed deals']].map(([icon, label], index) => (
               <div className={`signin-stage signin-stage-${index}`} key={label}><span><LoginIcon name={icon}/></span><p>{label}</p></div>
