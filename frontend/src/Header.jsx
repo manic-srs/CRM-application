@@ -287,7 +287,7 @@ function Bell({ data, open, setOpen, notify }) {
 }
 
 export default function Header({ section, user, data, onLogout, openNew, notify, openPassword, openProfile, toggleSidebar }) {
-  const [menu, setMenu] = useState(null); // "apps" | "new" | "bell" | "user"
+  const [menu, setMenu] = useState(null); // "apps" (App Launcher, hidden for now) | "bell" | "user"
   const toggle = (name) => setMenu((m) => (m === name ? null : name));
   const ref = useDismiss(!!menu, () => setMenu(null));
   useEffect(() => setMenu(null), [section]);
@@ -298,6 +298,7 @@ export default function Header({ section, user, data, onLogout, openNew, notify,
           <button className="plain-icon menu-toggle" aria-label="Show or hide the navigation" onClick={toggleSidebar}>
             <Icon name="list" size={20} />
           </button>
+          {/* App Launcher - hidden for now. Remove these comment marks to show it again.
           <div className="pop-wrap">
             <button
               className={`launcher-button ${menu === "apps" ? "on" : ""}`}
@@ -309,7 +310,8 @@ export default function Header({ section, user, data, onLogout, openNew, notify,
               <Icon name="apps" size={18} />
             </button>
             {menu === "apps" && <AppLauncher onClose={() => setMenu(null)} />}
-          </div>
+          </div> 
+          */}
           <a className="header-brand" href="#/" aria-label="SalesTrack home">
             <BrandMark size={34} />
             <span>SalesTrack</span>
@@ -317,27 +319,6 @@ export default function Header({ section, user, data, onLogout, openNew, notify,
         </div>
         <GlobalSearch />
         <div className="header-icons">
-          <div className="pop-wrap">
-            <button className="round-icon" aria-label="Global actions" title="New" onClick={() => toggle("new")}>
-              <Icon name="plus" size={18} />
-            </button>
-            {menu === "new" && (
-              <div className="menu-pop">
-                <button onClick={() => (setMenu(null), openNew("lead"))}>
-                  <ObjectIcon type="lead" size={20} /> New Lead
-                </button>
-                <button onClick={() => (setMenu(null), openNew("task"))}>
-                  <ObjectIcon type="task" size={20} /> New Task
-                </button>
-                <button onClick={() => (setMenu(null), openNew("account"))}>
-                  <ObjectIcon type="account" size={20} /> New Account
-                </button>
-                <button onClick={() => (setMenu(null), openNew("contact"))}>
-                  <ObjectIcon type="contact" size={20} /> New Contact
-                </button>
-              </div>
-            )}
-          </div>
           <div className="pop-wrap">
             <Bell data={data} open={menu === "bell"} setOpen={(v) => setMenu(v ? "bell" : null)} notify={notify} />
           </div>
