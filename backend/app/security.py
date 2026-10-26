@@ -39,6 +39,13 @@ log = logging.getLogger("crm.security")
 ROLES = ("Salesperson", "Manager", "Admin")
 
 # key: (label, description, default roles). The Admin always has every permission.
+# Shown as sections on the Permissions page
+PERMISSION_GROUPS = {
+    "Records": ("view_team_records", "view_team_dashboard", "edit_team_records", "reassign_owner"),
+    "Team": ("grant_team_access",),
+    "Email": ("send_emails",),
+    "Administration": ("manage_users", "manage_permissions"),
+}
 PERMISSIONS = {
     "view_team_records": ("View team records", "See leads, deals, accounts, contacts and tasks owned by others",
                           ("Manager",)),
@@ -47,7 +54,7 @@ PERMISSIONS = {
     "reassign_owner": ("Reassign owner", "Give a record to another user", ("Manager",)),
     "grant_team_access": ("Give team access", "Let a salesperson see the whole team's records", ("Manager",)),
     "send_emails": ("Send emails", "Send emails to leads and contacts", ("Manager", "Salesperson")),
-    "manage_users": ("Manage users", "Add users, change roles, reset passwords, deactivate, transfer records", ()),
+    "manage_users": ("Manage users", "Add users, reset passwords, deactivate, transfer records", ()),
     "manage_permissions": ("Manage roles & permissions", "Change this permission matrix", ()),
 }
 LOCKED_FOR_ADMIN = True  # the Admin keeps every permission, so nobody can lock themselves out
@@ -173,6 +180,15 @@ def require(permission: str) -> Acting:
     if not me.can(permission):
         label = PERMISSIONS[permission][0]
         raise HTTPException(status_code=403, detail=f"You don't have the \"{label}\" permission. Contact your Admin.")
+    return me
+
+
+def forbid_admin_create(what: str) -> Acting:
+    """Admins manage the CRM but don't sell: they can edit leads and opportunities, not create them."""
+    me = acting_user()
+    if me.role == "Admin":
+        raise HTTPException(status_code=403, detail=f"Admins can't create {what}. "
+                            "Leads and opportunities are created by Managers and Salespeople.")
     return me
 
 

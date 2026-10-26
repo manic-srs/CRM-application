@@ -220,6 +220,7 @@ export const api = {
   emailSettings: () => apiRequest("/emails/settings"),
   // Roles & Permissions (Admin) and team access (Manager)
   permissions: () => apiRequest("/permissions"),
+  activityLog: () => apiRequest("/activity-log"),
   setPermission: (role, permission, allowed) =>
     apiRequest("/permissions", { method: "PUT", body: { role, permission, allowed } }),
   setTeamAccess: (userId, team_access) =>

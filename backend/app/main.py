@@ -30,6 +30,9 @@ def upgrade_database() -> None:
             role VARCHAR(20) NOT NULL, permission VARCHAR(40) NOT NULL, allowed BOOLEAN NOT NULL,
             updated_by_id INT REFERENCES users(id), updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (role, permission))"""))
+        conn.execute(text("""CREATE TABLE IF NOT EXISTS activity_log (
+            id SERIAL PRIMARY KEY, actor_id INT REFERENCES users(id), action VARCHAR(60) NOT NULL,
+            target VARCHAR(200) NOT NULL, details TEXT, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"""))
         for column, default in (("email_stage_updates", "FALSE"), ("email_assignments", "TRUE"), ("email_reminders", "TRUE"),
                                 ("team_access", "FALSE")):
             conn.execute(text(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {column} BOOLEAN NOT NULL DEFAULT {default}"))

@@ -165,14 +165,15 @@ def test_only_admin_manages_users(client):
         assert client.put("/api/users/2/password", json={"password": "Reset2026"}).status_code == 403
         assert client.post("/api/users/2/transfer", json={"to_user_id": 1}).status_code == 403
     login_as(client, 3)
-    assert client.put("/api/users/2", json={"role": "Manager"}).json()["role"] == "Manager"
+    # the role is set when the user is created and can't be changed later; name and email can
+    assert client.put("/api/users/2", json={"role": "Manager"}).status_code == 400
+    assert client.put("/api/users/2", json={"role": "Salesperson", "full_name": "Ravi K"}).json()["full_name"] == "Ravi K"
     assert client.put("/api/users/2/password", json={"password": "Reset2026"}).status_code == 200
     assert client.post("/api/auth/login", json={"email": "ravi@crm.test", "password": "Reset2026"}).status_code == 200
     # the Admin can't lock themselves out, and there is always an active Admin
     assert client.put("/api/users/3", json={"role": "Manager"}).status_code == 400
     assert client.put("/api/users/3", json={"is_active": False}).status_code == 400
-    assert client.put("/api/users/1", json={"role": "Admin"}).json()["role"] == "Admin"
-    assert client.put("/api/users/1", json={"role": "Manager"}).status_code == 200
+    assert client.put("/api/users/1", json={"role": "Admin"}).status_code == 400
     assert len(client.get("/api/users", params={"include_inactive": True}).json()) == 3
 
 
@@ -428,3 +429,44 @@ def test_stages_cannot_be_skipped(client, outbox):
     # Lost is allowed from any stage
     other = lead(client, name="Other")
     assert client.post(f"/api/leads/{other['id']}/lost", json={"lost_reason": "Price"}).status_code == 200
+
+
+def test_admin_edits_but_does_not_create_sales_records(client, outbox):
+    ravis = lead(client, name="Ravi Lead")
+    login_as(client, 3)
+    assert client.post("/api/leads", json={"last_name": "Admin", "company": "X", "lead_source": "Other"}).status_code == 403
+    assert client.put(f"/api/leads/{ravis['id']}", json={"title": "CTO"}).json()["title"] == "CTO"
+    res = client.post(f"/api/leads/{ravis['id']}/convert", json={"completed_stages": ["Nurturing", "Demo"], "expected_value": 10})
+    assert res.status_code == 403 and "Admins can't create opportunities" in res.json()["detail"]
+
+
+def test_permission_matrix_has_groups_and_defaults(client):
+    matrix = login_as(client, 3).get("/api/permissions").json()
+    row = next(p for p in matrix["permissions"] if p["key"] == "send_emails")
+    assert row["group"] == "Email" and row["roles"]["Salesperson"]["default"] is True
+
+
+def test_bell_is_personal_managers_are_not_told_about_team_activity(client, outbox):
+    ravis = lead(client, name="Team Deal")
+    opp = client.post(f"/api/leads/{ravis['id']}/convert", json={"completed_stages": ["Nurturing", "Demo"],
+                                                                  "expected_value": 900}).json()["opportunity"]
+    client.post(f"/api/opportunities/{opp['id']}/won", json={"completed_stages": ["Proposal"], "final_value": 900})
+    assert login_as(client, 1).get("/api/notifications").json() == []  # Priya (Manager) owns none of it
+    # a lead given to the Manager is his, so he is told
+    other = lead(login_as(client, 2), name="Moved Lead")
+    login_as(client, 3).put(f"/api/leads/{other['id']}", json={"owner_id": 1})
+    titles = [n["title"] for n in login_as(client, 1).get("/api/notifications").json()]
+    assert titles == ["Lead assigned to you"]
+    assert login_as(client, 3).get("/api/activity-log").json()[0]["action"] == "Lead reassigned"
+
+
+def test_activity_log_records_admin_changes(client, outbox):
+    login_as(client, 3)
+    client.post("/api/users", json={"full_name": "New Seller", "email": "new@crm.test", "password": "Sales2026",
+                                    "role": "Salesperson"})
+    client.put("/api/users/2/team-access", json={"team_access": True})
+    client.put("/api/permissions", json={"role": "Salesperson", "permission": "send_emails", "allowed": False})
+    log = client.get("/api/activity-log").json()
+    assert [r["action"] for r in log[:3]] == ["Permission changed", "Team access given", "User added"]
+    assert log[2]["by"] == "Asha Rao" and log[2]["target"] == "New Seller"
+    assert login_as(client, 1).get("/api/activity-log").status_code == 403

@@ -1,3 +1,4 @@
+import { canCreateSales } from "./permissions";
 import React, { useMemo, useState } from "react";
 import { amount, compact, shortDate } from "./format";
 import { Icon, ObjectIcon, StageBadge } from "./ui";
@@ -187,7 +188,6 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
         <div className="list-title">
           <ObjectIcon type={collection} size={36} />
           <div>
-            <small>{LABEL[collection]}</small>
             <div className="view-picker">
               <button onClick={() => setPickerOpen((o) => !o)} aria-haspopup="listbox" aria-expanded={pickerOpen}>
                 <h1>{viewName}</h1>
@@ -215,7 +215,7 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
             </div>
           </div>
           <div className="list-buttons">
-            {NEW_TYPE[collection] ? (
+            {(collection === "leads" || collection === "opportunities") && !canCreateSales(user) ? null : NEW_TYPE[collection] ? (
               <button className="sf-button" onClick={() => openNew(NEW_TYPE[collection])}>
                 New
               </button>

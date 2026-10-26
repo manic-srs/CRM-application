@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { EmailList, useEmails } from "./Email";
-import { can } from "./permissions";
+import { can, canCreateSales } from "./permissions";
 import { amount, dateTime, shortDate } from "./format";
 import { Card, Icon, ObjectIcon, PathBar, StageBadge } from "./ui";
 
@@ -142,6 +142,7 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
   const closed = ["Won", "Lost", "Converted"].includes(item.stage);
   // Salespeople change only their own records; Managers and Admins can change any (the backend checks it too)
   const canEdit = item.owner_id === user?.id || can(user, "edit_team_records");
+  const canConvert = canEdit && canCreateSales(user); // Admins edit leads but don't create opportunities
   const tasks = data.tasks.filter((t) => t.relatedId === item.id && t.relatedType === collection);
   const edit = () => (lead ? openLead(item) : setModal({ type: "opportunity", record: item }));
   const convertedTo = lead && data.opportunities.find((o) => o.leadId === item.id);
@@ -158,7 +159,7 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
   const pathStages = item.stage === "Lost" ? [...path.slice(0, -1), "Lost"] : path;
   const nextStage = path[path.indexOf(item.stage) + 1];
   const selectStage = (stage) => {
-    if (stage === "Converted") return convert(item.id);
+    if (stage === "Converted") return canConvert ? convert(item.id) : undefined;
     if (stage === "Won") return setModal({ type: "won", record: item });
     if (stage !== item.stage) setModal({ type: "stage", collection, record: item, stage });
   };
@@ -201,7 +202,7 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
                 Edit
               </button>
             )}
-            {canEdit && lead && !closed && (
+            {canConvert && lead && !closed && (
               <button className="sf-button" onClick={() => convert(item.id)}>
                 Convert
               </button>
@@ -236,7 +237,7 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
             <Icon name="lock" size={14} /> Owned by {item.owner}. Only the owner or a Manager can change it.
           </span>
         )}
-        {canEdit && !closed && nextStage && (
+        {canEdit && !closed && nextStage && (nextStage !== "Converted" || canConvert) && (
           <button className="sf-button brand" onClick={() => selectStage(nextStage)}>
             <Icon name="check" size={14} />
             {nextStage === "Converted" ? "Convert" : nextStage === "Won" ? "Mark as Won" : `Mark ${lead ? "Status" : "Stage"} as Complete`}

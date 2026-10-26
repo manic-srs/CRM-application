@@ -44,7 +44,6 @@ export default function TasksPage({ data, user, toggleTask, openTask, setModal, 
         <div className="list-title">
           <ObjectIcon type="task" size={36} />
           <div>
-            <small>Tasks</small>
             <h1>{view}</h1>
           </div>
           <div className="list-buttons">

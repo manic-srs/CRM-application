@@ -28,6 +28,21 @@ class User(Base):
     updated_at: Mapped[datetime | None] = mapped_column(server_default=func.now(), onupdate=func.now())
 
 
+class ActivityLog(Base):
+    """Admin activity log: who changed users, permissions and record owners, and when."""
+
+    __tablename__ = "activity_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    action: Mapped[str] = mapped_column(String(60))
+    target: Mapped[str] = mapped_column(String(200))
+    details: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    actor: Mapped[User | None] = relationship()
+
+
 class RolePermission(Base):
     """What the Admin changed on the Roles & Permissions page (the defaults live in app/security.py)."""
 

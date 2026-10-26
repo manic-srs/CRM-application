@@ -178,8 +178,8 @@ def test_lost_steps_notify_owner(client, outbox):
 
 
 def test_assignment_notifies_new_owner(client, outbox):
-    login_as(client, 3)
-    lead = new_lead(client, owner_id=1)  # the Admin creates a lead for Priya
+    lead = new_lead(client)  # Ravi's lead
+    login_as(client, 3).put(f"/api/leads/{lead['id']}", json={"owner_id": 1})  # the Admin gives it to Priya
     titles = [n["title"] for n in login_as(client, 1).get("/api/notifications").json()]
     assert "Lead assigned to you" in titles
     outbox.clear()

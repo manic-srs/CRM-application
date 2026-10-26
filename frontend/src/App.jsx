@@ -9,8 +9,7 @@ import RecordPage from "./RecordPage";
 import { AccountPage, ContactPage } from "./RelatedPages";
 import SellerHome from "./SellerHome";
 import TasksPage from "./TasksPage";
-import UsersPage, { ChangePassword, MyProfile } from "./UsersPage";
-import PermissionsPage from "./PermissionsPage";
+import ManageAccess, { ChangePassword, MyProfile } from "./UsersPage";
 import { can } from "./permissions";
 import { Icon } from "./ui";
 import { useWorkspace } from "./useWorkspace";
@@ -154,7 +153,7 @@ function Workspace({ user, onLogout, onUserChanged }) {
     return () => clearTimeout(t);
   }, [toast]);
   useEffect(() => {
-    const titles = { home: "Home", leads: "Leads", opportunities: "Opportunities", tasks: "Tasks", accounts: "Accounts", contacts: "Contacts", users: "Users" };
+    const titles = { home: "Home", leads: "Leads", opportunities: "Opportunities", tasks: "Tasks", accounts: "Accounts", contacts: "Contacts", users: "Manage Access", permissions: "Manage Access", activity: "Manage Access" };
     document.title = `${titles[section] || "SalesTrack"} | SalesTrack`;
   }, [section]);
 
@@ -222,8 +221,8 @@ function Workspace({ user, onLogout, onUserChanged }) {
     ) : (
       <ListView key={route} collection="contacts" data={data} user={user} openNew={openNew} setModal={setModal} query={query} />
     );
-  else if (section === "permissions" && can(user, "manage_permissions")) page = <PermissionsPage notify={notify} />;
-  else if (section === "users" && (can(user, "manage_users") || can(user, "grant_team_access"))) page = <UsersPage user={user} data={data} reload={reload} notify={notify} onSelfChanged={onUserChanged} />;
+  else if (["users", "permissions", "activity"].includes(section) && (can(user, "manage_users") || can(user, "grant_team_access")))
+    page = <ManageAccess tab={section === "users" ? "people" : section} user={user} data={data} reload={reload} notify={notify} onSelfChanged={onUserChanged} />;
   else if (section === "tasks")
     page = <TasksPage key={route} data={data} user={user} toggleTask={toggleTask} openTask={openTask} setModal={setModal} query={query} />;
   else

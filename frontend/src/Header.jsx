@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { BrandMark } from "./Login";
-import { can } from "./permissions";
+import { can, canCreateSales } from "./permissions";
 import { Avatar, Icon, ObjectIcon } from "./ui";
 
 export const TABS = [
@@ -323,9 +323,11 @@ export default function Header({ section, user, data, onLogout, openNew, notify,
             </button>
             {menu === "new" && (
               <div className="menu-pop">
-                <button onClick={() => (setMenu(null), openNew("lead"))}>
-                  <ObjectIcon type="lead" size={20} /> New Lead
-                </button>
+                {canCreateSales(user) && (
+                  <button onClick={() => (setMenu(null), openNew("lead"))}>
+                    <ObjectIcon type="lead" size={20} /> New Lead
+                  </button>
+                )}
                 <button onClick={() => (setMenu(null), openNew("task"))}>
                   <ObjectIcon type="task" size={20} /> New Task
                 </button>
@@ -360,12 +362,7 @@ export default function Header({ section, user, data, onLogout, openNew, notify,
                 </button>
                 {(can(user, "manage_users") || can(user, "grant_team_access")) && (
                   <a href="#/users" onClick={() => setMenu(null)}>
-                    <Icon name="settings" size={16} /> Users
-                  </a>
-                )}
-                {can(user, "manage_permissions") && (
-                  <a href="#/permissions" onClick={() => setMenu(null)}>
-                    <Icon name="lock" size={16} /> Roles &amp; Permissions
+                    <Icon name="settings" size={16} /> Manage Access
                   </a>
                 )}
                 <button onClick={() => (setMenu(null), openPassword())}>
@@ -391,13 +388,12 @@ export function Sidebar({ section, data, user, collapsed }) {
       <ul>
         {[
           ...TABS,
-          ...(can(user, "manage_users") || can(user, "grant_team_access") ? [["users", "Users", "/users", "contact"]] : []),
-          ...(can(user, "manage_permissions") ? [["permissions", "Permissions", "/permissions", "contact"]] : []),
+          ...(can(user, "manage_users") || can(user, "grant_team_access") ? [["users", "Manage Access", "/users", "contact"]] : []),
         ].map(([key, label, path, icon]) => (
           <li key={key}>
             <a
               href={`#${path}`}
-              className={section === key ? "active" : ""}
+              className={section === key || (key === "users" && ["permissions", "activity"].includes(section)) ? "active" : ""}
               aria-current={section === key ? "page" : undefined}
               title={collapsed ? label : undefined}
             >

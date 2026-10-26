@@ -15,10 +15,10 @@ from app import mailer, schemas
 from app.constants import LEAD_OPEN_STAGES, OPPORTUNITY_OPEN_STAGES
 from app.database import get_db
 from app.models import Account, Contact, Lead, Opportunity, Task, User
-from app.models import RolePermission
-from app.security import (PERMISSIONS, ROLES, acting_user, authenticate, make_token, require, require_admin,
+from app.models import ActivityLog, RolePermission
+from app.security import (PERMISSION_GROUPS, PERMISSIONS, ROLES, acting_user, default_permissions, authenticate, make_token, require, require_admin,
                           role_permissions, user_permissions)
-from app.services import get_or_404, notify
+from app.services import get_or_404, log_activity, notify
 
 router = APIRouter(prefix="/api", tags=["Login and users"])
 protected = APIRouter(prefix="/api", tags=["Login and users"], dependencies=[Depends(authenticate)])
@@ -133,6 +133,7 @@ def create_user(data: schemas.UserCreate, db: Session = Depends(get_db)):
     db.add(user)
     db.flush()
     account_email(db, user, data.password, new=True)  # sent after the save succeeds
+    log_activity(db, acting_user().id, "User added", user.full_name, f"{user.role} • {user.email}")
     db.commit()
     db.refresh(user)
     return user
@@ -140,10 +141,14 @@ def create_user(data: schemas.UserCreate, db: Session = Depends(get_db)):
 
 @protected.put("/users/{user_id}", response_model=schemas.UserOut)
 def update_user(user_id: int, data: schemas.UserUpdate, db: Session = Depends(get_db)):
-    """Admin changes a user's name, email (their username), role, or activates / deactivates them."""
+    """Admin changes a user's name, email (their username), or activates / deactivates them.
+    The role is chosen when the user is created and can't be changed afterwards."""
     me = require_admin("change users")
     user = get_or_404(db, User, user_id, "User")
     changes = data.model_dump(exclude_unset=True, exclude_none=True)
+    if changes.get("role", user.role) != user.role:
+        raise HTTPException(status_code=400, detail="A user's role can't be changed after the user is created")
+    changes.pop("role", None)
     losing_admin = user.role == "Admin" and user.is_active and (
         changes.get("role", "Admin") != "Admin" or changes.get("is_active") is False)
     if losing_admin and user.id == me.id:
@@ -159,6 +164,12 @@ def update_user(user_id: int, data: schemas.UserUpdate, db: Session = Depends(ge
         if db.scalar(select(User.id).where(User.email == email, User.id != user.id)) is not None:
             raise HTTPException(status_code=409, detail="A user with this email already exists")
         changes["email"] = email
+    changed = [label for field, label in (("full_name", "name"), ("email", "email"))
+               if field in changes and changes[field] != getattr(user, field)]
+    if changed:
+        log_activity(db, me.id, "User details changed", user.full_name, "Changed " + " and ".join(changed))
+    if "is_active" in changes and changes["is_active"] != user.is_active:
+        log_activity(db, me.id, "User activated" if changes["is_active"] else "User deactivated", user.full_name)
     for field, value in changes.items():
         setattr(user, field, value)
     db.commit()
@@ -169,10 +180,11 @@ def update_user(user_id: int, data: schemas.UserUpdate, db: Session = Depends(ge
 @protected.put("/users/{user_id}/password")
 def reset_password(user_id: int, data: schemas.PasswordReset, db: Session = Depends(get_db)):
     """Admin sets a new password (e.g. the user forgot it)."""
-    require_admin("reset passwords")
+    me = require_admin("reset passwords")
     user = get_or_404(db, User, user_id, "User")
     user.password_hash = hash_password(strong_enough(data.password))
     account_email(db, user, data.password, new=False)
+    log_activity(db, me.id, "Password reset", user.full_name)
     db.commit()
     return {"message": f"Password reset for {user.full_name}. The new password was emailed to {user.email}."}
 
@@ -207,6 +219,9 @@ def transfer_records(user_id: int, data: schemas.TransferRecords, db: Session = 
             raise HTTPException(status_code=400, detail="There must be at least one active Admin")
         source.is_active = False
     total = sum(moved.values())
+    log_activity(db, me.id, "Records transferred", f"{source.full_name} → {target.full_name}",
+                 (", ".join(f"{n} {label}" for label, n in moved.items() if n) or "No open records")
+                 + ("; user deactivated" if data.deactivate else ""))
     if total:
         summary = ", ".join(f"{n} {label}" for label, n in moved.items() if n)
         notify(db, target.id, "Records assigned to you", category="assignment", message=
@@ -226,6 +241,7 @@ def set_team_access(user_id: int, data: schemas.TeamAccess, db: Session = Depend
         raise HTTPException(status_code=400, detail="Team access is only for Salespeople (Managers and Admins already have it)")
     if user.team_access != data.team_access:
         user.team_access = data.team_access
+        log_activity(db, me.id, "Team access given" if data.team_access else "Team access removed", user.full_name)
         notify(db, user.id, "Team access given" if data.team_access else "Team access removed",
                f"{me.full_name} {'gave you access to see' if data.team_access else 'removed your access to'} "
                "the whole team's records.", link="/", category="assignment")
@@ -243,6 +259,8 @@ def permission_matrix(db: Session = Depends(get_db)):
         require("manage_users")
     changes = {(r.role, r.permission): r for r in db.scalars(select(RolePermission)).all()}
     granted = {role: role_permissions(db, role) for role in ROLES}
+    defaults = {role: default_permissions(role) for role in ROLES}
+    group_of = {key: group for group, keys in PERMISSION_GROUPS.items() for key in keys}
     rows = []
     for key, (label, description, _) in PERMISSIONS.items():
         roles = {}
@@ -250,11 +268,13 @@ def permission_matrix(db: Session = Depends(get_db)):
             row = changes.get((role, key))
             roles[role] = {
                 "allowed": key in granted[role],
+                "default": key in defaults[role],
                 "locked": role == "Admin",
                 "changed_by": row.updated_by.full_name if row and row.updated_by else None,
                 "changed_at": row.updated_at if row else None,
             }
-        rows.append({"key": key, "label": label, "description": description, "roles": roles})
+        rows.append({"key": key, "label": label, "description": description, "group": group_of.get(key, "Other"),
+                     "roles": roles})
     return {"roles": list(ROLES), "permissions": rows}
 
 
@@ -272,6 +292,19 @@ def set_permission(data: schemas.PermissionChange, db: Session = Depends(get_db)
         db.add(row)
     row.allowed = data.allowed
     row.updated_by_id = me.id
-    db.commit()
     label = PERMISSIONS[data.permission][0]
+    log_activity(db, me.id, "Permission changed", f"{label} • {data.role}", "Allowed" if data.allowed else "Not allowed")
+    db.commit()
     return {"message": f"{label} {'given to' if data.allowed else 'removed from'} {data.role}s"}
+
+
+# ---------- activity log (Admin) ----------
+
+@protected.get("/activity-log")
+def activity_log(limit: int = 300, db: Session = Depends(get_db)):
+    """Manage Access > Activity Log: who added or changed users, permissions and record owners. Newest first."""
+    require("manage_users")
+    rows = db.scalars(select(ActivityLog).order_by(ActivityLog.created_at.desc(), ActivityLog.id.desc())
+                      .limit(min(max(limit, 1), 1000))).all()
+    return [{"id": r.id, "at": r.created_at, "by": r.actor.full_name if r.actor else "System", "action": r.action,
+             "target": r.target, "details": r.details} for r in rows]

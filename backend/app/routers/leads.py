@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app import schemas
 from app.constants import LEAD_FLOW, LEAD_OPEN_STAGES, LEAD_SOURCES, LEAD_STAGES, STAGE_PROBABILITY
 from app.database import get_db
-from app.security import acting_user, acting_user_id, check_owner_change, owner_for_new, require_edit, require_view, visible
+from app.security import acting_user, acting_user_id, check_owner_change, forbid_admin_create, owner_for_new, require_edit, require_view, visible
 from app.models import Account, Contact, Email, Lead, Opportunity, User
 from app.serializers import account_out, contact_out, history_out, lead_detail, lead_out, opportunity_out, task_out
 from app.services import (
@@ -119,6 +119,7 @@ def check_email_free(db: Session, email: str | None, *, confirmed: bool, exclude
 @router.post("", response_model=schemas.LeadDetail, status_code=status.HTTP_201_CREATED)
 def create_lead(data: schemas.LeadCreate, db: Session = Depends(get_db)):
     """Create a lead at stage New. The system adds a 'Make first contact' task for the owner."""
+    forbid_admin_create("leads")
     owner_id = resolve_user_id(db, owner_for_new(data.owner_id))
     actor_id = acting_user_id()
     previous = check_email_free(db, data.email, confirmed=data.confirm_duplicate)
@@ -273,6 +274,7 @@ def mark_lost(lead_id: int, data: schemas.MarkLost, db: Session = Depends(get_db
 def convert_lead(lead_id: int, data: schemas.ConvertLead | None = None, db: Session = Depends(get_db)):
     """Convert an open lead, like Salesforce: creates (or reuses) the Account, creates the Contact
     and the Opportunity. Lead tasks are auto-closed and a 'Send proposal' task is created on the deal."""
+    forbid_admin_create("opportunities")
     data = data or schemas.ConvertLead()
     lead = get_or_404(db, Lead, lead_id, "Lead")
     ensure_open(lead)

@@ -25,7 +25,7 @@ from app.constants import (
     WORKDAY_START_HOUR,
 )
 from app import mailer
-from app.models import Notification, StageHistory, Task, User
+from app.models import ActivityLog, Notification, StageHistory, Task, User
 
 
 def now() -> datetime:
@@ -372,14 +372,25 @@ def notify(db: Session, user_id: int, title: str, message: str, *, task_id: int 
         )
 
 
+def log_activity(db: Session, actor_id: int | None, action: str, target: str, details: str | None = None) -> None:
+    """Adds a line to the Admin's Activity Log (saved with the rest of the request)."""
+    db.add(ActivityLog(actor_id=actor_id, action=action, target=target[:200], details=details))
+
+
 def assignment_notice(db: Session, *, owner_id: int, actor_id: int | None, kind: str, name: str, link: str) -> None:
-    """Tells the new owner when someone else assigns a lead, opportunity or task to them."""
+    """Tells the new owner when someone else assigns a lead, opportunity or task to them.
+    Reassigned leads and opportunities also go in the Admin's Activity Log.
+    The bell is personal: only the owner is told, never the whole team."""
     if actor_id is None or actor_id == owner_id:
         return
     actor = db.get(User, actor_id)
+    owner = db.get(User, owner_id)
     by = f" by {actor.full_name}" if actor else ""
     notify(db, owner_id, f"{kind} assigned to you", f"{kind} \"{name}\" was assigned to you{by}.", link=link,
            category="assignment")
+    if kind in ("Lead", "Opportunity"):
+        to = owner.full_name if owner else "another user"
+        log_activity(db, actor_id, f"{kind} reassigned", name, f"New owner: {to}")
 
 
 def task_related(task: Task) -> tuple[str, str | None]:

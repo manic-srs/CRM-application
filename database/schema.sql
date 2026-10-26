@@ -17,6 +17,7 @@ DROP TABLE IF EXISTS opportunities CASCADE;
 DROP TABLE IF EXISTS leads CASCADE;
 DROP TABLE IF EXISTS contacts CASCADE;
 DROP TABLE IF EXISTS accounts CASCADE;
+DROP TABLE IF EXISTS activity_log CASCADE;
 DROP TABLE IF EXISTS role_permissions CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
 
@@ -56,6 +57,17 @@ CREATE TABLE role_permissions (
   updated_at    TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (role, permission)
 );
+
+-- 1c. ACTIVITY_LOG: who added or changed users, permissions and record owners (Manage Access > Activity Log)
+CREATE TABLE activity_log (
+  id         SERIAL PRIMARY KEY,
+  actor_id   INT REFERENCES users(id),
+  action     VARCHAR(60)  NOT NULL,
+  target     VARCHAR(200) NOT NULL,
+  details    TEXT,
+  created_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_activity_log_created ON activity_log (created_at DESC);
 
 -- 2. ACCOUNTS: customer companies
 CREATE TABLE accounts (
