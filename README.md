@@ -6,8 +6,16 @@ tasks, with role-based access, automated follow-ups, notifications and email.
 
 ![Seller Home](frontend/docs/seller-home.png)
 
+## Demo
+
+[Watch the SalesTrack demo video (17 min)](https://srsconsultinc-my.sharepoint.com/personal/nagamani_ch_srsconsultinginc_com/_layouts/15/stream.aspx?id=%2fpersonal%2fnagamani_ch_srsconsultinginc_com%2fDocuments%2fSalesTrack_CRM+application.mov&share=cQqXZCWENaJQT63KiSb3KpnnEgUBgmKLffuHpxHn7NkSH7kzgg) (SRS Consulting sign-in required)
+
+Walkthrough of the Admin, Salesperson and Manager roles: user management and permissions, lead creation, stage flow,
+email, tasks and reminders, notifications, lead conversion, closing a deal, and the manager's team view.
+
 ## Contents
 
+- [Demo](#demo)
 - [Features](#features)
 - [Tech stack](#tech-stack)
 - [Getting started](#getting-started)
