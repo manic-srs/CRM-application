@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { EmailList, useEmails } from "./Email";
-import { can, canCreateSales } from "./permissions";
+import { can, canCreateSales, canTransferLead } from "./permissions";
 import { amount, dateTime, shortDate } from "./format";
 import { Card, Icon, ObjectIcon, PathBar, StageBadge } from "./ui";
 
@@ -143,6 +143,8 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
   // Salespeople change only their own records; Managers and Admins can change any (the backend checks it too)
   const canEdit = item.owner_id === user?.id || can(user, "edit_team_records");
   const canConvert = canEdit && canCreateSales(user); // Admins edit leads but don't create opportunities
+  const canTransfer = lead && canTransferLead(user, item); // Admin: any lead; owner with "Transfer leads": their own
+  const transfers = (lead && item.transfers) || [];
   const tasks = data.tasks.filter((t) => t.relatedId === item.id && t.relatedType === collection);
   const edit = () => (lead ? openLead(item) : setModal({ type: "opportunity", record: item }));
   const convertedTo = lead && data.opportunities.find((o) => o.leadId === item.id);
@@ -200,6 +202,16 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
             {canEdit && (
               <button className="sf-button" onClick={edit}>
                 Edit
+              </button>
+            )}
+            {canTransfer && !closed && (
+              <button className="sf-button" onClick={() => setModal({ type: "transfer", record: item })}>
+                Transfer
+              </button>
+            )}
+            {canEdit && lead && item.stage === "Demo" && (
+              <button className="sf-button" onClick={() => setModal({ type: "cancelDemo", record: item })}>
+                Reschedule / Cancel Demo
               </button>
             )}
             {canConvert && lead && !closed && (
@@ -277,7 +289,7 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
           ) : lead ? (
             <>
               <Section title="Lead Information">
-                <Field label="Lead Owner" onEdit={edit}>{item.owner}</Field>
+                <Field label="Lead Owner">{item.owner}</Field>
                 <Field label="Lead Status"><StageBadge stage={item.stage} /></Field>
                 <Field label="Name" onEdit={edit}>
                   {[item.salutation, item.first_name, item.last_name].filter(Boolean).join(" ")}
@@ -299,6 +311,9 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
               <Section title="System Information">
                 <Field label="Created">{dateTime(item.created_at)}</Field>
                 <Field label="Last Modified">{dateTime(item.updated_at)}</Field>
+                <Field label="Last Transferred">
+                  {transfers[0] && `${dateTime(transfers[0].transferred_at)} (to ${transfers[0].to_user_name})`}
+                </Field>
                 <Field label="Converted Date">{dateTime(item.converted_at)}</Field>
                 <Field label="Closed Date">{dateTime(item.closed_at)}</Field>
               </Section>
@@ -317,7 +332,6 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
                 <Field label="Close Date" onEdit={edit}>{shortDate(item.expected_close_date)}</Field>
                 <Field label="Amount" onEdit={edit}>{amount(item.expected_value)}</Field>
                 <Field label="Stage"><StageBadge stage={item.stage} /></Field>
-                <Field label="Probability (%)" onEdit={edit}>{`${item.probability}%`}</Field>
                 {item.stage === "Won" && <Field label="Final Amount">{amount(item.final_value)}</Field>}
                 <Field label="Converted From">
                   {sourceLead && <a href={`#/leads/${sourceLead.id}`}>{sourceLead.name}</a>}
@@ -381,6 +395,27 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
               <p className="muted pad">No notes yet.</p>
             )}
           </Card>
+          {lead && (
+            <Card title={`Transfer History (${transfers.length})`} icon="contact">
+              {transfers.length ? (
+                <ul className="history-list">
+                  {transfers.map((t) => (
+                    <li key={t.id}>
+                      <b>
+                        {t.from_user_name || "Unassigned"} → {t.to_user_name}
+                      </b>
+                      {t.note && <p className="history-note">{t.note}</p>}
+                      <small>
+                        {t.transferred_by_name} • {dateTime(t.transferred_at)}
+                      </small>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="muted pad">Not transferred yet. Owned by {item.owner} since {dateTime(item.created_at)}.</p>
+              )}
+            </Card>
+          )}
           <Card title={`Stage History (${item.activity.length})`} icon="event">
             <ul className="history-list">
               {item.activity.map((a, i) => (

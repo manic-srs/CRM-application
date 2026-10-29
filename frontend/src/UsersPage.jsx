@@ -1,12 +1,13 @@
-// Manage Access: People (add users, reset passwords, transfer records, record access, deactivate)
-// and Permissions (what each role can do). A user's role is chosen once, when the user is added.
+// Manage Access: People (add users, reset passwords, transfer leads, record access, deactivate)
+// and Permissions (what each role can do). The Admin can change a user's role later; role and access changes
+// are saved with the date and time in the Activity Log.
 // Also the "Change password" and "My Profile" dialogs every user can open from their profile menu.
 import React, { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { can } from "./permissions";
 import PermissionsTab from "./PermissionsPage";
 import { dateTime } from "./format";
-import { Avatar, Icon } from "./ui";
+import { Avatar, Icon, Pagination, usePaged } from "./ui";
 
 const ROLES = ["Admin", "Manager", "Salesperson"];
 
@@ -228,7 +229,12 @@ function EditUser({ target, close, notify }) {
       submitLabel="Save"
       onSubmit={(form) =>
         save(
-          () => api.updateUser(target.id, { full_name: form.get("full_name").trim(), email: form.get("email").trim() }),
+          () =>
+            api.updateUser(target.id, {
+              full_name: form.get("full_name").trim(),
+              email: form.get("email").trim(),
+              role: form.get("role"),
+            }),
           (u) => `${u.full_name} was updated.`,
         )
       }
@@ -246,9 +252,18 @@ function EditUser({ target, close, notify }) {
         <input name="email" type="email" defaultValue={target.email} required autoComplete="off" />
       </label>
       <label className="field">
-        <span>Role</span>
-        <input value={target.role} readOnly />
-        <small className="field-hint">The role is set when the user is added and can't be changed.</small>
+        <span>
+          Role <i>*</i>
+        </span>
+        <select name="role" defaultValue={target.role} required>
+          {ROLES.map((r) => (
+            <option key={r}>{r}</option>
+          ))}
+        </select>
+        <small className="field-hint">
+          {target.role_changed_at ? `Role last changed ${dateTime(target.role_changed_at)}. ` : ""}
+          The user is notified, and the change is saved in the Activity Log.
+        </small>
       </label>
     </Dialog>
   );
@@ -281,7 +296,6 @@ function NewUser({ close, notify }) {
           Email <i>*</i>
         </span>
         <input name="email" type="email" required autoComplete="off" placeholder="name@srsconsultinginc.com" />
-        <small className="field-hint">This is the username they sign in with.</small>
       </label>
       <PasswordField label="Temporary Password" />
       <p className="field-hint">{PASSWORD_HINT} It's emailed to the user, who can change it after signing in.</p>
@@ -297,7 +311,7 @@ function NewUser({ close, notify }) {
             <option key={r}>{r}</option>
           ))}
         </select>
-        <small className="field-hint">The role can't be changed after the user is added.</small>
+        <small className="field-hint">The Admin can change the role later from Edit.</small>
       </label>
     </Dialog>
   );
@@ -326,8 +340,8 @@ function Transfer({ target, users, close, notify }) {
   const others = users.filter((u) => u.is_active && u.id !== target.id);
   return (
     <Dialog
-      title={`Transfer Records from ${target.full_name}`}
-      subtitle="Open leads, open opportunities, accounts, contacts and open tasks move to the new owner. Won, lost and converted records keep their history."
+      title={`Transfer Leads from ${target.full_name}`}
+      subtitle="Their open leads move to the new owner, together with their open opportunities, accounts, contacts and open tasks. Won, lost and converted leads keep their history."
       onClose={() => close()}
       busy={busy}
       error={error}
@@ -335,7 +349,7 @@ function Transfer({ target, users, close, notify }) {
       onSubmit={(form) =>
         save(
           () => api.transferRecords(target.id, form.get("to"), form.get("deactivate") === "on"),
-          (r) => `${r.total} record${r.total === 1 ? "" : "s"} moved${r.deactivated ? ` and ${target.full_name} was deactivated` : ""}.`,
+          (r) => `Leads transferred (${r.total} item${r.total === 1 ? "" : "s"} moved)${r.deactivated ? ` and ${target.full_name} was deactivated` : ""}.`,
         )
       }
     >
@@ -450,9 +464,8 @@ function PeopleTab({ user, data, reload, notify, onSelfChanged }) {
     load();
   }, []);
 
-  const owned = (id) =>
-    data.leads.filter((r) => r.owner_id === id && ["New", "Nurturing", "Demo"].includes(r.stage)).length +
-    data.opportunities.filter((r) => r.owner_id === id && ["Opportunity", "Proposal"].includes(r.stage)).length;
+  // Open Leads: leads this user owns that are still New, Nurturing or Demo
+  const owned = (id) => data.leads.filter((r) => r.owner_id === id && ["New", "Nurturing", "Demo"].includes(r.stage)).length;
 
   const run = async (work, message) => {
     try {
@@ -482,6 +495,7 @@ function PeopleTab({ user, data, reload, notify, onSelfChanged }) {
       (status === "any" || (status === "active") === u.is_active) &&
       (!q || u.full_name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)),
   );
+  const peoplePage = usePaged(shown, `${roleFilter}|${query}|${status}`);
 
   const actions = (u) => {
     const self = u.id === user.id;
@@ -490,7 +504,7 @@ function PeopleTab({ user, data, reload, notify, onSelfChanged }) {
       items.push(
         { label: "Edit details", onClick: () => setDialog({ type: "edit", target: u }) },
         { label: "Reset password", onClick: () => setDialog({ type: "reset", target: u }) },
-        { label: "Transfer records", onClick: () => setDialog({ type: "transfer", target: u }) },
+        { label: "Transfer leads", onClick: () => setDialog({ type: "transfer", target: u }) },
       );
     }
     if (u.role === "Salesperson" && u.is_active && can(user, "grant_team_access")) {
@@ -564,12 +578,12 @@ function PeopleTab({ user, data, reload, notify, onSelfChanged }) {
               <th>Role</th>
               <th>Record Access</th>
               <th>Status</th>
-              <th className="num">Open Records</th>
+              <th className="num">Open Leads</th>
               <th className="actions-col">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {shown.map((u) => {
+            {peoplePage.pageRows.map((u) => {
               const access = accessOf(u);
               return (
                 <tr key={u.id} className={u.is_active ? "" : "inactive"}>
@@ -603,6 +617,7 @@ function PeopleTab({ user, data, reload, notify, onSelfChanged }) {
         {users === null && !error && <p className="table-empty">Loading…</p>}
         {users && !shown.length && <p className="table-empty">No users match.</p>}
       </div>
+      <Pagination {...peoplePage.pager} />
       {dialog?.type === "new" && <NewUser close={closeDialog} notify={notify} />}
       {dialog?.type === "edit" && <EditUser target={dialog.target} close={closeDialog} notify={notify} />}
       {dialog?.type === "reset" && <ResetPassword target={dialog.target} close={closeDialog} notify={notify} />}
@@ -621,6 +636,7 @@ function ActivityTab() {
   }, []);
   const q = query.trim().toLowerCase();
   const shown = (rows || []).filter((r) => !q || [r.by, r.action, r.target, r.details].join(" ").toLowerCase().includes(q));
+  const { pageRows, pager } = usePaged(shown, q);
   return (
     <>
       <div className="people-toolbar">
@@ -647,7 +663,7 @@ function ActivityTab() {
             </tr>
           </thead>
           <tbody>
-            {shown.map((r) => (
+            {pageRows.map((r) => (
               <tr key={r.id}>
                 <td className="nowrap">{dateTime(r.at)}</td>
                 <td>{r.by}</td>
@@ -663,6 +679,7 @@ function ActivityTab() {
         {rows === null && !error && <p className="table-empty">Loading…</p>}
         {rows && !shown.length && <p className="table-empty">{rows.length ? "No activity matches." : "No activity yet."}</p>}
       </div>
+      <Pagination {...pager} />
     </>
   );
 }

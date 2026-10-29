@@ -1034,7 +1034,8 @@ input[type="checkbox"] {
   border-collapse: collapse;
 }
 .sf-table th {
-  padding: 0;
+  padding: 8px;
+  color: var(--text-weak);
   background: #f3f3f3;
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
@@ -1045,12 +1046,14 @@ input[type="checkbox"] {
 .sf-table th + th {
   border-left: 1px solid var(--border);
 }
+/* sortable headers: the button fills the whole cell, so its text lines up with the cells below */
 .sf-table th button {
   display: flex;
   align-items: center;
   gap: 4px;
-  width: 100%;
-  padding: 8px 10px;
+  width: calc(100% + 16px);
+  margin: -8px;
+  padding: 8px;
   color: var(--text-weak);
 }
 .sf-table th.num button {
@@ -1060,9 +1063,30 @@ input[type="checkbox"] {
   transform: rotate(180deg);
 }
 .sf-table td {
-  padding: 8px 10px;
+  max-width: 160px;
+  padding: 8px;
+  overflow: hidden;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
+  text-overflow: ellipsis;   /* long names / emails end in "…"; the full text shows on hover */
+  vertical-align: middle;
+}
+.sf-table th.date,
+.sf-table td.date {
+  width: 1%;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.sf-table th.date {
+  color: var(--text-weak);
+}
+.date-cell {
+  display: grid;
+  line-height: 1.25;
+}
+.date-cell small {
+  color: var(--text-weak);
+  font-size: 12px;
 }
 .sf-table tbody tr:hover td {
   background: #f3f9ff;
@@ -1097,6 +1121,58 @@ td.high {
   padding: 40px;
   text-align: center;
   color: var(--text-weak);
+}
+
+/* ---------- paging under tables ---------- */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  color: var(--text-weak);
+  font-size: 13px;
+}
+.pagination-count {
+  margin-right: auto;
+}
+.pagination-size {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pagination-size select {
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--white);
+}
+.pagination-buttons {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.pagination-buttons span {
+  padding: 0 8px;
+  color: var(--text);
+  white-space: nowrap;
+}
+.pagination-buttons button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--white);
+  color: var(--brand);
+}
+.pagination-buttons button:disabled {
+  color: var(--border-strong);
+  cursor: default;
 }
 
 /* ---------- Kanban ---------- */
@@ -1359,6 +1435,11 @@ td.high {
 .history-list b {
   font-weight: 400;
 }
+.history-note {
+  color: var(--text);
+  font-size: 13px;
+}
+
 .related-records li {
   padding: 10px 18px;
   border-bottom: 1px solid var(--border);
@@ -1857,6 +1938,22 @@ a.pill:hover {
   gap: 8px;
   margin-top: 12px;
 }
+.demo-choice {
+  margin: 8px 0 4px;
+  padding: 0;
+  border: 0;
+}
+.demo-choice legend {
+  font-size: 13px;
+  color: var(--text-weak);
+}
+.demo-choice .check-field {
+  align-items: flex-start;
+  margin-top: 8px;
+}
+.demo-choice input {
+  margin-top: 3px;
+}
 .welcome-check {
   grid-column: 1 / -1;
   align-items: flex-start;
@@ -2165,7 +2262,9 @@ a.pill:hover {
   text-align: center;
 }
 .perm-table td {
+  max-width: none;
   padding: 10px 12px;
+  overflow: visible;
   white-space: normal;
   vertical-align: middle;
 }
@@ -2550,4 +2649,9 @@ a.pill:hover {
 }
 .activity-table td {
   white-space: normal;
+}
+/* people and activity tables show their full text (no "…") */
+.users-table td {
+  max-width: none;
+  overflow: visible;
 }

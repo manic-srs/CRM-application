@@ -1,5 +1,5 @@
 // Small building blocks used by every screen: icons, object icons, ring charts, path bar, empty states.
-import React from "react";
+import React, { useEffect, useState } from "react";
 
 const paths = {
   search: "m21 21-4.4-4.4M19 10.5a8.5 8.5 0 1 1-17 0 8.5 8.5 0 0 1 17 0",
@@ -237,5 +237,63 @@ export function Avatar({ name, size = 32 }) {
     <span className="avatar" style={{ width: size, height: size, fontSize: size * 0.4 }}>
       {letters}
     </span>
+  );
+}
+
+// ---------- paging for long tables ----------
+// const { pageRows, pager } = usePaged(rows, resetKey);  ...  <Pagination {...pager} />
+// resetKey: anything that changes the list (view, search), so the table goes back to page 1.
+export const PAGE_SIZES = [10, 25, 50, 100];
+
+export function usePaged(rows, resetKey = "", initialSize = 25) {
+  const [page, setPage] = useState(1);
+  const [size, setSize] = useState(initialSize);
+  useEffect(() => setPage(1), [resetKey, size]);
+  const pages = Math.max(1, Math.ceil(rows.length / size));
+  const current = Math.min(page, pages);
+  const start = (current - 1) * size;
+  return {
+    pageRows: rows.slice(start, start + size),
+    start,
+    pager: { page: current, pages, size, total: rows.length, start, setPage, setSize },
+  };
+}
+
+export function Pagination({ page, pages, size, total, start, setPage, setSize }) {
+  if (total <= PAGE_SIZES[0]) return null; // short lists fit on one page: no paging bar
+  const go = (p) => setPage(Math.min(Math.max(1, p), pages));
+  return (
+    <nav className="pagination" aria-label="Pages">
+      <span className="pagination-count">
+        {start + 1}–{Math.min(start + size, total)} of {total}
+      </span>
+      <label className="pagination-size">
+        Rows per page
+        <select value={size} onChange={(e) => setSize(Number(e.target.value))}>
+          {PAGE_SIZES.map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="pagination-buttons">
+        <button type="button" onClick={() => go(1)} disabled={page === 1} aria-label="First page">
+          «
+        </button>
+        <button type="button" onClick={() => go(page - 1)} disabled={page === 1} aria-label="Previous page">
+          <Icon name="left" size={14} />
+        </button>
+        <span>
+          Page {page} of {pages}
+        </span>
+        <button type="button" onClick={() => go(page + 1)} disabled={page === pages} aria-label="Next page">
+          <Icon name="right" size={14} />
+        </button>
+        <button type="button" onClick={() => go(pages)} disabled={page === pages} aria-label="Last page">
+          »
+        </button>
+      </div>
+    </nav>
   );
 }

@@ -41,7 +41,7 @@ ROLES = ("Salesperson", "Manager", "Admin")
 # key: (label, description, default roles). The Admin always has every permission.
 # Shown as sections on the Permissions page
 PERMISSION_GROUPS = {
-    "Records": ("view_team_records", "view_team_dashboard", "edit_team_records", "reassign_owner"),
+    "Records": ("view_team_records", "view_team_dashboard", "edit_team_records", "reassign_owner", "transfer_leads"),
     "Team": ("grant_team_access",),
     "Email": ("send_emails",),
     "Administration": ("manage_users", "manage_permissions"),
@@ -51,10 +51,13 @@ PERMISSIONS = {
                           ("Manager",)),
     "view_team_dashboard": ("View team dashboard", "Use the Whole team view on Home", ("Manager",)),
     "edit_team_records": ("Edit team records", "Change stages and details of records owned by others", ("Manager",)),
-    "reassign_owner": ("Reassign owner", "Give a record to another user", ("Manager",)),
+    "reassign_owner": ("Reassign owner", "Give any record you can see to another user, including transferring leads",
+                       ("Manager",)),
+    "transfer_leads": ("Transfer own leads", "Give your own leads to another user (changes only the owner, no approval needed)",
+                       ("Salesperson",)),
     "grant_team_access": ("Give team access", "Let a salesperson see the whole team's records", ("Manager",)),
     "send_emails": ("Send emails", "Send emails to leads and contacts", ("Manager", "Salesperson")),
-    "manage_users": ("Manage users", "Add users, reset passwords, deactivate, transfer records", ()),
+    "manage_users": ("Manage users", "Add users, reset passwords, deactivate, transfer leads", ()),
     "manage_permissions": ("Manage roles & permissions", "Change this permission matrix", ()),
 }
 LOCKED_FOR_ADMIN = True  # the Admin keeps every permission, so nobody can lock themselves out
@@ -184,12 +187,25 @@ def require(permission: str) -> Acting:
 
 
 def forbid_admin_create(what: str) -> Acting:
-    """Admins manage the CRM but don't sell: they can edit leads and opportunities, not create them."""
+    """Admins can create leads, but opportunities still come from Managers and Salespeople converting a lead."""
     me = acting_user()
     if me.role == "Admin":
         raise HTTPException(status_code=403, detail=f"Admins can't create {what}. "
-                            "Leads and opportunities are created by Managers and Salespeople.")
+                            "Opportunities are created by Managers and Salespeople when they convert a lead.")
     return me
+
+
+def can_transfer_lead(owner_id: int) -> bool:
+    """Who can give a lead to someone else: the Admin and Managers (Reassign owner: any lead they can see),
+    or a user with Transfer own leads (Salespeople: their own leads)."""
+    me = acting_user()
+    return me.is_admin or me.can("reassign_owner") or (me.can("transfer_leads") and owner_id == me.id)
+
+
+def require_transfer(owner_id: int) -> Acting:
+    if not can_transfer_lead(owner_id):
+        raise HTTPException(status_code=403, detail="Only the Admin, a Manager, or the lead's owner can transfer this lead")
+    return acting_user()
 
 
 def require_admin(action: str = "manage users") -> Acting:

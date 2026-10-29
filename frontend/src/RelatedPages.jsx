@@ -223,6 +223,7 @@ export function ContactPage({ id, data, openEmail, emailVersion }) {
                 ["Email", contact.email],
                 ["Phone", contact.phone],
                 ["Created", dateTime(contact.created_at)],
+                ["Last Modified", dateTime(contact.updated_at)],
               ]}
             />
           </div>

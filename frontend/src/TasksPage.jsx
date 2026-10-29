@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { dateTime, shortDate } from "./format";
-import { Icon, ObjectIcon } from "./ui";
+import { shortDate, shortDateTime } from "./format";
+import { Icon, ObjectIcon, Pagination, usePaged } from "./ui";
 
 const todayKey = () => {
   const d = new Date();
@@ -37,6 +37,7 @@ export default function TasksPage({ data, user, toggleTask, openTask, setModal, 
     .filter(filter)
     .filter((t) => !search.trim() || `${t.title} ${t.related_to || ""}`.toLowerCase().includes(search.trim().toLowerCase()))
     .sort((a, b) => Number(a.completed) - Number(b.completed) || a.due_date.localeCompare(b.due_date));
+  const { pageRows, pager } = usePaged(rows, `${view}|${search}`);
 
   return (
     <div className="page">
@@ -73,16 +74,16 @@ export default function TasksPage({ data, user, toggleTask, openTask, setModal, 
               <tr>
                 <th className="rownum" aria-label="Complete" />
                 <th>Subject</th>
-                <th>Due Date</th>
+                <th className="date">Due Date</th>
                 <th>Related To</th>
                 <th>Priority</th>
                 <th>Status</th>
                 <th>Assigned To</th>
-                <th>Reminder</th>
+                <th className="date">Reminder</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((t) => (
+              {pageRows.map((t) => (
                 <tr key={t.id} className={t.completed ? "row-done" : ""}>
                   <td className="rownum">
                     <input
@@ -99,7 +100,7 @@ export default function TasksPage({ data, user, toggleTask, openTask, setModal, 
                     </button>
                     {t.is_auto && <span className="auto-tag">Automatic</span>}
                   </td>
-                  <td className={!t.completed && t.isOverdue ? "overdue" : ""}>{shortDate(t.due_date)}</td>
+                  <td className={`date ${!t.completed && t.isOverdue ? "overdue" : ""}`}>{shortDate(t.due_date)}</td>
                   <td>
                     {t.relatedType !== "general" ? (
                       <a href={`#/${t.relatedType}/${t.relatedId}`}>{t.related_to}</a>
@@ -110,13 +111,14 @@ export default function TasksPage({ data, user, toggleTask, openTask, setModal, 
                   <td className={t.priority === "High" ? "high" : ""}>{t.priority}</td>
                   <td>{t.status}</td>
                   <td>{t.owner}</td>
-                  <td>{dateTime(t.reminder_at)}</td>
+                  <td className="date">{shortDateTime(t.reminder_at)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
           {!rows.length && <p className="table-empty">No tasks in this view.</p>}
         </div>
+        <Pagination {...pager} />
       </section>
     </div>
   );

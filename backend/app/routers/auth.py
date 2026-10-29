@@ -4,7 +4,9 @@ There is no public sign up: a default Admin is created on the first start (see a
 and the Admin adds Managers and Salespeople from the Users page.
 Passwords are stored as bcrypt hashes. Login returns a token the app sends on every request.
 """
+import os
 import re
+from datetime import datetime
 
 import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -24,6 +26,24 @@ router = APIRouter(prefix="/api", tags=["Login and users"])
 protected = APIRouter(prefix="/api", tags=["Login and users"], dependencies=[Depends(authenticate)])
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def allowed_domains() -> list[str]:
+    """Email domains new users may have (ALLOWED_EMAIL_DOMAINS in .env, comma separated). Empty = any domain."""
+    raw = os.getenv("ALLOWED_EMAIL_DOMAINS", "srsconsultinginc.com")
+    return [d.strip().lower().lstrip("@") for d in raw.split(",") if d.strip()]
+
+
+def check_user_email(email: str) -> str:
+    """A valid company email: personal addresses (Gmail, Outlook.com...) are refused."""
+    email = email.strip().lower()
+    if not EMAIL_RE.match(email):
+        raise HTTPException(status_code=422, detail="Enter a valid email address")
+    domains = allowed_domains()
+    if domains and email.rsplit("@", 1)[1] not in domains:
+        raise HTTPException(status_code=422, detail="Use a company email address ending in "
+                            + " or ".join("@" + d for d in domains) + ". Personal emails aren't allowed.")
+    return email
 
 
 def hash_password(password: str) -> str:
@@ -123,9 +143,7 @@ def active_admins(db: Session) -> int:
 def create_user(data: schemas.UserCreate, db: Session = Depends(get_db)):
     """Admin adds a Manager, Salesperson or another Admin. They get a welcome email with their login details."""
     require_admin("add users")
-    email = data.email.strip().lower()
-    if not EMAIL_RE.match(email):
-        raise HTTPException(status_code=422, detail="Enter a valid email address")
+    email = check_user_email(data.email)
     if db.scalar(select(User.id).where(User.email == email)) is not None:
         raise HTTPException(status_code=409, detail="A user with this email already exists")
     user = User(full_name=" ".join(data.full_name.split()), email=email,
@@ -141,14 +159,13 @@ def create_user(data: schemas.UserCreate, db: Session = Depends(get_db)):
 
 @protected.put("/users/{user_id}", response_model=schemas.UserOut)
 def update_user(user_id: int, data: schemas.UserUpdate, db: Session = Depends(get_db)):
-    """Admin changes a user's name, email (their username), or activates / deactivates them.
-    The role is chosen when the user is created and can't be changed afterwards."""
+    """Admin changes a user's name, email (their username), role, or activates / deactivates them.
+    Role and access changes are saved with the date and time (role_changed_at / access_changed_at) and logged."""
     me = require_admin("change users")
     user = get_or_404(db, User, user_id, "User")
     changes = data.model_dump(exclude_unset=True, exclude_none=True)
-    if changes.get("role", user.role) != user.role:
-        raise HTTPException(status_code=400, detail="A user's role can't be changed after the user is created")
-    changes.pop("role", None)
+    if changes.get("role") == user.role:
+        changes.pop("role")
     losing_admin = user.role == "Admin" and user.is_active and (
         changes.get("role", "Admin") != "Admin" or changes.get("is_active") is False)
     if losing_admin and user.id == me.id:
@@ -157,10 +174,10 @@ def update_user(user_id: int, data: schemas.UserUpdate, db: Session = Depends(ge
         raise HTTPException(status_code=400, detail="There must be at least one active Admin")
     if "full_name" in changes:
         changes["full_name"] = " ".join(changes["full_name"].split())
+    if "email" in changes and changes["email"].strip().lower() == user.email:
+        changes.pop("email")
     if "email" in changes:
-        email = changes["email"].strip().lower()
-        if not EMAIL_RE.match(email):
-            raise HTTPException(status_code=422, detail="Enter a valid email address")
+        email = check_user_email(changes["email"])
         if db.scalar(select(User.id).where(User.email == email, User.id != user.id)) is not None:
             raise HTTPException(status_code=409, detail="A user with this email already exists")
         changes["email"] = email
@@ -168,8 +185,17 @@ def update_user(user_id: int, data: schemas.UserUpdate, db: Session = Depends(ge
                if field in changes and changes[field] != getattr(user, field)]
     if changed:
         log_activity(db, me.id, "User details changed", user.full_name, "Changed " + " and ".join(changed))
+    stamp = datetime.now().replace(microsecond=0)
     if "is_active" in changes and changes["is_active"] != user.is_active:
         log_activity(db, me.id, "User activated" if changes["is_active"] else "User deactivated", user.full_name)
+        user.access_changed_at = stamp
+    if "role" in changes:
+        log_activity(db, me.id, "Role changed", user.full_name, f"{user.role} → {changes['role']}")
+        notify(db, user.id, "Your role was changed", f"{me.full_name} changed your role from {user.role} to {changes['role']}.",
+               link="/", category="assignment")
+        user.role_changed_at = stamp
+        if changes["role"] != "Salesperson":
+            user.team_access = False  # team access is only for Salespeople (others already see the team)
     for field, value in changes.items():
         setattr(user, field, value)
     db.commit()
@@ -241,6 +267,7 @@ def set_team_access(user_id: int, data: schemas.TeamAccess, db: Session = Depend
         raise HTTPException(status_code=400, detail="Team access is only for Salespeople (Managers and Admins already have it)")
     if user.team_access != data.team_access:
         user.team_access = data.team_access
+        user.access_changed_at = datetime.now().replace(microsecond=0)
         log_activity(db, me.id, "Team access given" if data.team_access else "Team access removed", user.full_name)
         notify(db, user.id, "Team access given" if data.team_access else "Team access removed",
                f"{me.full_name} {'gave you access to see' if data.team_access else 'removed your access to'} "

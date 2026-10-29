@@ -36,6 +36,15 @@ def upgrade_database() -> None:
         for column, default in (("email_stage_updates", "FALSE"), ("email_assignments", "TRUE"), ("email_reminders", "TRUE"),
                                 ("team_access", "FALSE")):
             conn.execute(text(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {column} BOOLEAN NOT NULL DEFAULT {default}"))
+        # Phase 2: role / access change dates and the lead transfer history
+        for column in ("role_changed_at", "access_changed_at"):
+            conn.execute(text(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {column} TIMESTAMP"))
+        conn.execute(text("""CREATE TABLE IF NOT EXISTS lead_transfers (
+            id SERIAL PRIMARY KEY, lead_id INT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+            from_user_id INT REFERENCES users(id), to_user_id INT NOT NULL REFERENCES users(id),
+            transferred_by_id INT NOT NULL REFERENCES users(id), note VARCHAR(300),
+            transferred_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"""))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_lead_transfers_lead ON lead_transfers (lead_id)"))
         conn.execute(text("ALTER TABLE emails DROP CONSTRAINT IF EXISTS emails_status_check"))
         conn.execute(text("ALTER TABLE emails ADD CONSTRAINT emails_status_check "
                           "CHECK (status IN ('Sent','Failed','Gmail','Outlook'))"))

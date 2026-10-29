@@ -37,6 +37,9 @@ class UserOut(Out):
     email_assignments: bool = True
     email_reminders: bool = True
     team_access: bool = False
+    created_at: datetime | None = None
+    role_changed_at: datetime | None = None
+    access_changed_at: datetime | None = None
     permissions: list[str] = []  # filled for the logged-in user (login, /auth/me)
 
 
@@ -239,6 +242,19 @@ class LeadOut(Out):
     opportunity_id: int | None = None
     created_at: datetime | None
     updated_at: datetime | None
+    last_transferred_at: datetime | None = None  # when the lead last got a new owner (shown in the list)
+
+
+class LeadTransferOut(Out):
+    id: int
+    from_user_id: int | None
+    from_user_name: str | None = None
+    to_user_id: int
+    to_user_name: str | None = None
+    transferred_by_id: int
+    transferred_by_name: str | None = None
+    note: str | None
+    transferred_at: datetime | None
 
 
 class LeadDetail(LeadOut):
@@ -247,6 +263,20 @@ class LeadDetail(LeadOut):
     tasks: list[TaskOut] = []
     notes: list[NoteOut] = []
     history: list[StageHistoryOut] = []
+    transfers: list[LeadTransferOut] = []
+
+
+class LeadTransfer(BaseModel):
+    """Give the lead to another user. Only the owner changes: details and stage stay as they are."""
+    to_user_id: int
+    note: str | None = Field(None, max_length=300)
+
+
+class CancelDemo(BaseModel):
+    """reschedule_to set: the demo moves to that date and the lead stays at Demo.
+    Not set: the demo is cancelled and the lead goes back to Nurturing."""
+    reason: str | None = Field(None, max_length=300)
+    reschedule_to: datetime | None = None
 
 
 class LeadStageChange(BaseModel):
@@ -313,6 +343,7 @@ class ContactOut(Out):
     account_name: str | None = None
     owner_id: int
     created_at: datetime | None
+    updated_at: datetime | None = None
 
 
 class ContactCreate(BaseModel):
