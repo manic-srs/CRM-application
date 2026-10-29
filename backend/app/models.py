@@ -263,3 +263,27 @@ class EmailAttachment(Base):
     data: Mapped[bytes] = mapped_column(LargeBinary)
 
     email: Mapped[Email] = relationship(back_populates="attachments")
+
+
+class OpportunityAttachment(Base):
+    """A file kept on an opportunity (proposal, quote, signed order...), uploaded at the Opportunity or Proposal stage.
+    The bytes are deferred: lists and other queries never load them, only the download does.
+    Deleting only hides the file (deleted_at / deleted_by_id are set); the row and the bytes stay."""
+
+    __tablename__ = "opportunity_attachments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    opportunity_id: Mapped[int] = mapped_column(ForeignKey("opportunities.id"))
+    stage: Mapped[str] = mapped_column(String(20))           # stage of the deal when the file was uploaded
+    filename: Mapped[str] = mapped_column(String(255))       # cleaned name shown in the app
+    content_type: Mapped[str] = mapped_column(String(100))   # detected from the file content by the server
+    size_bytes: Mapped[int]
+    data: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    uploaded_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    uploaded_at: Mapped[datetime | None] = mapped_column(server_default=func.now())
+    deleted_at: Mapped[datetime | None]
+    deleted_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+
+    opportunity: Mapped[Opportunity] = relationship()
+    uploaded_by: Mapped[User] = relationship(foreign_keys=[uploaded_by_id])
+    deleted_by: Mapped[User | None] = relationship(foreign_keys=[deleted_by_id])

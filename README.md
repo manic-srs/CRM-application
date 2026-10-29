@@ -34,6 +34,8 @@ email, tasks and reminders, notifications, lead conversion, closing a deal, and 
 - One-step lead conversion into an Account, a Contact and an Opportunity.
 - Automatic follow-up tasks and reminders at each stage.
 - Duplicate email detection when creating a lead.
+- Opportunity attachments: PDF, Word (.docx), JPG and PNG files (20 MB each) added at the Opportunity and Proposal
+  stages, kept with their stage, and viewable after the deal closes.
 
 **Access control**
 - Role-based access (Salesperson, Manager, Admin) with a configurable **Roles & Permissions** matrix.

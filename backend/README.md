@@ -92,6 +92,21 @@ Only assignments show on the bell. Task alerts don't, because the Tasks page and
 and overdue. When a lead is converted, its emails also show on the new opportunity, contact and account.
 
 Reminders and overdue tasks are checked every minute in the background (`app/scheduler.py`).
+
+## Opportunity attachments
+
+The Attachments card on the opportunity page (`app/routers/attachments.py`, table `opportunity_attachments`):
+
+- PDF, Word (.docx), JPG and PNG, up to 20 MB each, one file per upload. Old .doc files are refused.
+- The server checks what the file really is (its content, not the name or the browser's file type) and saves the
+  detected type. A .docx must be a real Word package (it is never unpacked to disk).
+- Files can be added and deleted only at the Opportunity and Proposal stages. Each file keeps the stage it was
+  uploaded at. After Won / Lost the files can still be opened and downloaded.
+- Viewing needs access to the opportunity, uploading needs edit access, and deleting also needs to be the uploader
+  or a Manager / Admin. Delete only hides the file (who and when are saved) and adds a line to the Activity Log.
+- Files are sent only with the `Authorization` header (a `?token=` address is refused); the app shows them from a
+  temporary `blob:` address. Responses are not cached (`Cache-Control: private, no-store`, `nosniff`).
+- Older databases get the table automatically on startup (`upgrade_database()` in `app/main.py`).
 Notification emails are sent only after the change is saved.
 
 Mail settings (environment variables in `docker-compose.yml`; to use a real mail server, put them in a `.env` file,
@@ -141,6 +156,8 @@ All APIs start with `/api`.
 | Send email | POST /emails (form data with files) |
 | Emails of a record | GET /emails?lead_id= (or opportunity_id, contact_id, account_id) |
 | Download attachment | GET /emails/attachments/{id} |
+| Opportunity files (list, upload one file) | GET /opportunities/{id}/attachments, POST /opportunities/{id}/attachments (form field `file`) |
+| Open / download, delete an opportunity file | GET /opportunities/{id}/attachments/{attachment_id}/file (`?download=true` to save), DELETE /opportunities/{id}/attachments/{attachment_id} |
 | Search box | GET /search?q= |
 | DB check | GET /health/db |
 
@@ -168,7 +185,7 @@ backend/
     scheduler.py     reminder and overdue checks every minute
     schemas.py       request and response formats
     serializers.py   adds names to the responses
-    routers/         the APIs (auth, home, leads, opportunities, tasks, accounts, activity, emails)
+    routers/         the APIs (auth, home, leads, opportunities, attachments, tasks, accounts, activity, emails)
   tests/             tests
   Dockerfile
   requirements.txt

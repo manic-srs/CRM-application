@@ -8,6 +8,7 @@ import {
   opportunityPayload,
   normalizeTask,
   normalizeWorkspace,
+  setToken,
 } from "./api.js";
 import {
   LEAD_STAGES,
@@ -16,6 +17,8 @@ import {
   LOST_REASONS,
   salesOverview,
   money,
+  ATTACHMENT_MAX_BYTES,
+  attachmentProblem,
 } from "./domain.js";
 
 test("lead form uses backend fields and only requires last name and company", () => {
@@ -217,4 +220,92 @@ test("failed network requests never fall back to browser demo records", async (t
     throw new TypeError("network unavailable");
   });
   await assert.rejects(apiRequest("/leads"), /Cannot reach the backend/);
+});
+test("attachment files are checked before upload (the backend checks again)", () => {
+  const file = (name, size) => ({ name, size });
+  assert.equal(ATTACHMENT_MAX_BYTES, 20 * 1024 * 1024);
+  for (const name of ["a.pdf", "b.DOCX", "c.jpg", "d.JPEG", "e.png"]) assert.equal(attachmentProblem(file(name, 10)), "");
+  assert.equal(attachmentProblem(file("max.pdf", ATTACHMENT_MAX_BYTES)), "");
+  assert.match(attachmentProblem(file("big.pdf", ATTACHMENT_MAX_BYTES + 1)), /larger than 20 MB/);
+  assert.match(attachmentProblem(file("empty.png", 0)), /is empty/);
+  assert.match(attachmentProblem(file("old.doc", 10)), /\.doc.*save it as \.docx/i);
+  for (const name of ["notes.txt", "page.html", "archive.zip", "pdf", ".pdf", "macro.docm"])
+    assert.match(attachmentProblem(file(name, 10)), /only PDF, Word \(\.docx\), JPG and PNG/);
+});
+test("attachments use their own endpoints and send the login only in a header", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url, options = {}) => {
+    calls.push({ url, options });
+    return url.endsWith("/file") || url.endsWith("?download=true")
+      ? new Response(new Uint8Array([37, 80, 68, 70]), { status: 200, headers: { "Content-Type": "application/pdf" } })
+      : new Response(JSON.stringify([]), { status: 200 });
+  });
+  setToken("secret-token");
+  try {
+    await api.attachments("4");
+    const blob = await api.attachmentFile("4", "9");
+    await api.attachmentFile("4", "9", true);
+    await api.uploadAttachment("4", new File([new Uint8Array([1])], "quote.pdf", { type: "application/pdf" }));
+    await api.deleteAttachment("4", "9");
+    assert.equal(blob.type, "application/pdf");
+    assert.equal(blob.size, 4);
+  } finally {
+    setToken("");
+  }
+  assert.deepEqual(
+    calls.map((c) => [c.url, c.options.method || "GET"]),
+    [
+      ["/api/opportunities/4/attachments", "GET"],
+      ["/api/opportunities/4/attachments/9/file", "GET"],
+      ["/api/opportunities/4/attachments/9/file?download=true", "GET"],
+      ["/api/opportunities/4/attachments", "POST"],
+      ["/api/opportunities/4/attachments/9", "DELETE"],
+    ],
+  );
+  for (const call of calls) {
+    assert.ok(!call.url.includes("secret-token")); // never in the address
+    assert.equal(call.options.headers.Authorization, "Bearer secret-token");
+  }
+  const form = calls[3].options.body;
+  assert.equal(form.getAll("file").length, 1); // one file per request
+  assert.equal(form.get("file").name, "quote.pdf");
+  assert.equal(calls[3].options.headers["Content-Type"], undefined); // the browser sets the multipart boundary
+});
+test("attachment errors reach the card as readable messages", async (t) => {
+  let reply;
+  t.mock.method(globalThis, "fetch", async () => reply());
+  reply = () => new Response("<html>Request Entity Too Large</html>", { status: 413 });
+  await assert.rejects(api.uploadAttachment("4", new File(["x"], "big.pdf")), /larger than 20 MB/);
+  reply = () => new Response(JSON.stringify({ detail: "logo.png is named as a PNG image but is really a PDF." }), { status: 415 });
+  await assert.rejects(api.uploadAttachment("4", new File(["x"], "logo.png")), /really a PDF/);
+  reply = () => new Response(JSON.stringify({ detail: "Attachment 9 not found" }), { status: 404 });
+  await assert.rejects(api.attachmentFile("4", "9"), /Attachment 9 not found/);
+  reply = () => {
+    throw new TypeError("network unavailable");
+  };
+  await assert.rejects(api.attachmentFile("4", "9"), /Cannot reach the backend/);
+  await assert.rejects(api.uploadAttachment("4", new File(["x"], "a.pdf")), /Cannot reach the backend/);
+  // an expired login sends the app back to the login page
+  const events = new EventTarget();
+  let loggedOut = 0;
+  events.addEventListener("crm-logout", () => loggedOut++);
+  globalThis.window = events;
+  setToken("old-token");
+  try {
+    reply = () => new Response(JSON.stringify({ detail: "Please log in again" }), { status: 401 });
+    await assert.rejects(api.attachmentFile("4", "9"), /Please log in again/);
+    await assert.rejects(api.attachments("4"), /Please log in again/);
+  } finally {
+    setToken("");
+    delete globalThis.window;
+  }
+  assert.equal(loggedOut, 2);
+});
+test("email uploads keep their own messages", async (t) => {
+  let status;
+  t.mock.method(globalThis, "fetch", async () => new Response("", { status }));
+  status = 413;
+  await assert.rejects(api.sendEmail(new FormData()), /The attachments are too large\./);
+  status = 500;
+  await assert.rejects(api.sendEmail(new FormData()), /The email could not be sent\./);
 });
