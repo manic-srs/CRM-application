@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { shortDate, shortDateTime } from "./format";
 import { Icon, ObjectIcon, Pagination, usePaged } from "./ui";
+import { applyFilters, filterSummary, opts, ownerOptions, Th, useFilters } from "./Filters";
+import { can } from "./permissions";
+import { PRIORITIES } from "./domain";
 
 const todayKey = () => {
   const d = new Date();
@@ -33,11 +36,31 @@ export default function TasksPage({ data, user, toggleTask, openTask, setModal, 
   const [view, setView] = useState(initial);
   const [search, setSearch] = useState("");
   const filter = views.find(([name]) => name === view)[1];
-  const rows = data.tasks
-    .filter(filter)
+  // Filters: Due Date, Priority, Status, Type (automatic follow-up or added by someone), Related To, Assigned To
+  const defs = [
+    { key: "due", label: "Due Date", type: "date", future: true, get: (t) => t.due },
+    { key: "priority", label: "Priority", options: opts(PRIORITIES), get: (t) => t.priority },
+    ...(view.startsWith("All") || view === "Completed"
+      ? [{ key: "status", label: "Status", options: opts(view === "Completed" ? ["Done", "Auto-closed"] : view === "All Tasks" ? ["Open", "Done", "Auto-closed"] : []), get: (t) => t.status }]
+      : []
+    ).filter((f) => f.options.length),
+    { key: "kind", label: "Type", options: [["auto", "Automatic"], ["manual", "Manual"]], get: (t) => (t.is_auto ? "auto" : "manual") },
+    { key: "related", label: "Related To", options: [["leads", "Lead"], ["opportunities", "Opportunity"], ["general", "General"]], get: (t) => t.relatedType },
+    ...(can(user, "view_team_records") && view.startsWith("All")
+      ? [{ key: "owner", label: "Assigned To", options: ownerOptions(data.users || [], user), get: (t) => String(t.owner_id) }]
+      : []),
+  ];
+  const [stored, setStored] = useFilters("tasks");
+  const active = Object.fromEntries(
+    Object.entries(stored).filter(([k, v]) => {
+      const f = defs.find((d) => d.key === k.split("_")[0]);
+      return f && stored[f.key] && (!f.options || k !== f.key || f.options.some(([o]) => o === v));
+    }),
+  );
+  const rows = applyFilters(data.tasks.filter(filter), defs, active)
     .filter((t) => !search.trim() || `${t.title} ${t.related_to || ""}`.toLowerCase().includes(search.trim().toLowerCase()))
     .sort((a, b) => Number(a.completed) - Number(b.completed) || a.due_date.localeCompare(b.due_date));
-  const { pageRows, pager } = usePaged(rows, `${view}|${search}`);
+  const { pageRows, pager } = usePaged(rows, `${view}|${search}|${JSON.stringify(active)}`);
 
   return (
     <div className="page">
@@ -66,6 +89,14 @@ export default function TasksPage({ data, user, toggleTask, openTask, setModal, 
             <input placeholder="Search this list..." value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Search tasks" />
           </label>
         </div>
+        {filterSummary(defs, active) && (
+          <p className="filter-line">
+            Filtered by <b className="filter-note">{filterSummary(defs, active)}</b>{" "}
+            <button className="link filter-clear" onClick={() => setStored({})}>
+              Clear filters
+            </button>
+          </p>
+        )}
       </section>
       <section className="card table-card">
         <div className="table-scroll">
@@ -73,13 +104,18 @@ export default function TasksPage({ data, user, toggleTask, openTask, setModal, 
             <thead>
               <tr>
                 <th className="rownum" aria-label="Complete" />
-                <th>Subject</th>
-                <th className="date">Due Date</th>
-                <th>Related To</th>
-                <th>Priority</th>
-                <th>Status</th>
-                <th>Assigned To</th>
-                <th className="date">Reminder</th>
+                {[
+                  ["Subject"],
+                  ["Type", "kind"],
+                  ["Due Date", "due", "date"],
+                  ["Related To", "related"],
+                  ["Priority", "priority"],
+                  ["Status", "status"],
+                  ["Assigned To", "owner"],
+                  ["Reminder", null, "date"],
+                ].map(([label, key, className]) => (
+                  <Th key={label} label={label} className={className} filter={key && defs.find((f) => f.key === key)} values={active} onChange={setStored} />
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -98,8 +134,8 @@ export default function TasksPage({ data, user, toggleTask, openTask, setModal, 
                     <button className="link" onClick={() => setModal({ type: "task", record: t })}>
                       {t.title}
                     </button>
-                    {t.is_auto && <span className="auto-tag">Automatic</span>}
                   </td>
+                  <td className="muted">{t.is_auto ? "Automatic" : "Manual"}</td>
                   <td className={`date ${!t.completed && t.isOverdue ? "overdue" : ""}`}>{shortDate(t.due_date)}</td>
                   <td>
                     {t.relatedType !== "general" ? (

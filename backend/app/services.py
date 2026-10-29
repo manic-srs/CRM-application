@@ -25,7 +25,7 @@ from app.constants import (
     WORKDAY_START_HOUR,
 )
 from app import mailer
-from app.models import ActivityLog, Notification, StageHistory, Task, User
+from app.models import ActivityLog, Lead, Notification, StageHistory, Task, User
 
 
 def now() -> datetime:
@@ -370,6 +370,12 @@ def notify(db: Session, user_id: int, title: str, message: str, *, task_id: int 
             f"Hi {user.full_name.split()[0]},\n\n{message}\n\nOpen in SalesTrack: {mailer.app_link(link)}\n\n"
             "You get this email because you are the owner in SalesTrack CRM.",
         )
+
+
+def touch_lead(db: Session, lead_id: int | None) -> None:
+    """Someone worked on the lead (edit, stage, task, note, email...): it leaves the 'not worked yet' uploads."""
+    if lead_id is not None:
+        db.execute(update(Lead).where(Lead.id == lead_id, Lead.untouched.is_(True)).values(untouched=False))
 
 
 def log_activity(db: Session, actor_id: int | None, action: str, target: str, details: str | None = None) -> None:

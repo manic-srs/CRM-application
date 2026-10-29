@@ -6,9 +6,11 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
+import re
 
-LeadSource = Literal["Website", "Referral", "Phone", "Email", "Event", "Social Media", "Other"]
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
+
+LeadSource = Literal["Website", "Referral", "Phone", "Email", "Event", "Social Media", "Other", "Upload"]
 LostReason = Literal["Price", "Competitor", "No response", "No budget", "Not interested", "Other"]
 Priority = Literal["Low", "Normal", "High"]
 Salutation = Literal["Mr.", "Ms.", "Mrs.", "Dr.", "Prof."]
@@ -184,7 +186,48 @@ class NoteCreate(BaseModel):
 
 # ---------- Leads ----------
 
-class LeadCreate(BaseModel):
+def clean_url(value: str | None, *, linkedin: bool = False) -> str | None:
+    """'linkedin.com/in/x' -> 'https://linkedin.com/in/x'. Empty -> None. LinkedIn fields must point to linkedin.com."""
+    value = (value or "").strip()
+    if not value:
+        return None
+    if not re.match(r"^https?://", value, re.I):
+        value = "https://" + value
+    host = re.sub(r"^https?://", "", value, flags=re.I).split("/")[0].lower()
+    if "." not in host or " " in value:
+        raise ValueError("Enter a valid web address")
+    if linkedin and not (host == "linkedin.com" or host.endswith(".linkedin.com")):
+        raise ValueError("Enter a LinkedIn address (linkedin.com/...)")
+    return value
+
+
+class LeadLinks(BaseModel):
+    """Research links and company size on a lead (New Lead / Edit Lead / import)."""
+
+    linkedin_url: str | None = Field(None, max_length=300)
+    company_website: str | None = Field(None, max_length=255)
+    company_linkedin_url: str | None = Field(None, max_length=300)
+    annual_revenue: Decimal | None = Field(None, ge=0, le=Decimal("99999999999999"))  # turnover, USD
+    employees: int | None = Field(None, ge=0, le=10_000_000)  # headcount
+    location: str | None = Field(None, max_length=200)
+
+    @field_validator("linkedin_url", "company_linkedin_url")
+    @classmethod
+    def _linkedin(cls, v):
+        return clean_url(v, linkedin=True)
+
+    @field_validator("company_website")
+    @classmethod
+    def _website(cls, v):
+        return clean_url(v)
+
+    @field_validator("location")
+    @classmethod
+    def _location(cls, v):
+        return " ".join(v.split()) or None if v else None
+
+
+class LeadCreate(LeadLinks):
     """Like the Salesforce "New Lead" form: Last Name and Company are required."""
 
     salutation: Salutation | None = None
@@ -202,7 +245,7 @@ class LeadCreate(BaseModel):
     confirm_duplicate: bool = False  # the email already exists on a closed lead / contact: create a new lead anyway
 
 
-class LeadUpdate(BaseModel):
+class LeadUpdate(LeadLinks):
     """Send only the fields to change. Stage changes use /stage, /lost and /convert."""
 
     salutation: Salutation | None = None
@@ -230,6 +273,14 @@ class LeadOut(Out):
     industry: str | None
     email: str | None
     phone: str | None
+    linkedin_url: str | None = None
+    company_website: str | None = None
+    company_linkedin_url: str | None = None
+    annual_revenue: Decimal | None = None
+    employees: int | None = None
+    location: str | None = None
+    untouched: bool = False  # uploaded and not worked on yet
+    uploaded_from: str | None = None  # file name when the lead came from a bulk upload
     source: str
     stage: str
     demo_date: datetime | None
@@ -243,6 +294,10 @@ class LeadOut(Out):
     created_at: datetime | None
     updated_at: datetime | None
     last_transferred_at: datetime | None = None  # when the lead last got a new owner (shown in the list)
+
+    @field_serializer("annual_revenue")
+    def _revenue(self, value):
+        return money(value)
 
 
 class LeadTransferOut(Out):
@@ -316,9 +371,16 @@ class AccountOut(Out):
     phone: str | None
     website: str | None
     address: str | None
+    linkedin_url: str | None = None
+    annual_revenue: Decimal | None = None
+    employees: int | None = None
     owner_id: int
     owner_name: str | None = None
     created_at: datetime | None
+
+    @field_serializer("annual_revenue")
+    def _revenue(self, value):
+        return money(value)
 
 
 class AccountCreate(BaseModel):
@@ -339,6 +401,7 @@ class ContactOut(Out):
     job_title: str | None
     email: str | None
     phone: str | None
+    linkedin_url: str | None = None
     account_id: int
     account_name: str | None = None
     owner_id: int

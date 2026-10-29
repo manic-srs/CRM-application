@@ -5,6 +5,7 @@ psycopg[binary]
 python-dotenv
 bcrypt
 python-multipart  # file uploads (email attachments)
+openpyxl  # Excel upload and download of leads
 # tests
 pytest
 httpx

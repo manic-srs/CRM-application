@@ -9,6 +9,8 @@ export const LEAD_SOURCES = [
   "Social Media",
   "Other",
 ];
+// leads created by a bulk upload (not offered on the New Lead form)
+export const UPLOAD_SOURCE = "Upload";
 export const LOST_REASONS = [
   "Price",
   "Competitor",

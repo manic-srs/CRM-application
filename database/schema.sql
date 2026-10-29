@@ -81,6 +81,9 @@ CREATE TABLE accounts (
   phone      VARCHAR(30),
   website    VARCHAR(255),
   address    VARCHAR(500),
+  linkedin_url   VARCHAR(300),
+  annual_revenue NUMERIC(16,2),
+  employees      INT CHECK (employees >= 0),
   owner_id   INT NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -99,6 +102,7 @@ CREATE TABLE contacts (
   job_title  VARCHAR(100),
   email      VARCHAR(255),
   phone      VARCHAR(30),
+  linkedin_url VARCHAR(300),
   account_id INT NOT NULL,
   owner_id   INT NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -121,8 +125,16 @@ CREATE TABLE leads (
   industry     VARCHAR(100),
   email        VARCHAR(255),
   phone        VARCHAR(30),
+  linkedin_url         VARCHAR(300),   -- the lead's LinkedIn profile
+  company_website      VARCHAR(255),
+  company_linkedin_url VARCHAR(300),
+  annual_revenue       NUMERIC(16,2),  -- turnover (USD)
+  employees            INT CHECK (employees >= 0),  -- headcount
+  location             VARCHAR(200),
+  untouched            BOOLEAN NOT NULL DEFAULT FALSE,  -- uploaded and not worked on yet
+  uploaded_from        VARCHAR(255),  -- file name when the lead came from a bulk upload
   source       VARCHAR(20) NOT NULL DEFAULT 'Other'
-               CHECK (source IN ('Website','Referral','Phone','Email','Event','Social Media','Other')),
+               CHECK (source IN ('Website','Referral','Phone','Email','Event','Social Media','Other','Upload')),
   stage        VARCHAR(20) NOT NULL DEFAULT 'New'
                CHECK (stage IN ('New','Nurturing','Demo','Converted','Lost')),
   demo_date    TIMESTAMP,
@@ -140,6 +152,7 @@ CREATE TABLE leads (
 );
 CREATE INDEX idx_leads_stage   ON leads (stage);
 CREATE INDEX idx_leads_name    ON leads (name);
+CREATE INDEX idx_leads_untouched ON leads (owner_id, created_at DESC) WHERE untouched;
 CREATE INDEX idx_leads_company ON leads (company);
 CREATE INDEX idx_leads_email   ON leads (email);
 

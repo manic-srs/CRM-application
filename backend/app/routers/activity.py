@@ -10,7 +10,7 @@ from app.database import get_db
 from app.models import Account, Contact, Lead, Note, Notification, Opportunity, Task
 from app.serializers import note_out
 from app.security import acting_user, acting_user_id, require_view, visible
-from app.services import get_or_404
+from app.services import get_or_404, touch_lead
 
 router = APIRouter(prefix="/api", tags=["Notes, notifications and search"])
 
@@ -49,6 +49,7 @@ def add_note(data: schemas.NoteCreate, db: Session = Depends(get_db)):
         opportunity_id=data.opportunity_id,
     )
     db.add(note)
+    touch_lead(db, note.lead_id)
     db.commit()
     db.refresh(note)
     return note_out(note)

@@ -17,7 +17,8 @@ from sqlalchemy.orm import Session
 from app.database import Base, SessionLocal, engine, get_db
 from app import mailer, scheduler, schemas
 from app.security import authenticate, ensure_default_admin, require_admin
-from app.routers import accounts, activity, attachments, auth, emails, home, leads, opportunities, tasks
+from app.routers import (accounts, activity, attachments, auth, emails, home, lead_files, leads, opportunities,
+                         opportunity_files, tasks)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(name)s - %(message)s")
 
@@ -45,6 +46,24 @@ def upgrade_database() -> None:
             transferred_by_id INT NOT NULL REFERENCES users(id), note VARCHAR(300),
             transferred_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"""))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_lead_transfers_lead ON lead_transfers (lead_id)"))
+        for table, column, kind in (
+            ("leads", "linkedin_url", "VARCHAR(300)"), ("leads", "company_website", "VARCHAR(255)"),
+            ("leads", "company_linkedin_url", "VARCHAR(300)"), ("leads", "annual_revenue", "NUMERIC(16,2)"),
+            ("leads", "employees", "INT"), ("leads", "location", "VARCHAR(200)"),
+            ("accounts", "linkedin_url", "VARCHAR(300)"), ("accounts", "annual_revenue", "NUMERIC(16,2)"),
+            ("accounts", "employees", "INT"), ("contacts", "linkedin_url", "VARCHAR(300)"),
+            ("leads", "untouched", "BOOLEAN NOT NULL DEFAULT FALSE"), ("leads", "uploaded_from", "VARCHAR(255)"),
+        ):
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {kind}"))
+        # 'Upload' lead source for leads created by a bulk upload
+        conn.execute(text("ALTER TABLE leads DROP CONSTRAINT IF EXISTS leads_source_check"))
+        conn.execute(text("ALTER TABLE leads ADD CONSTRAINT leads_source_check CHECK (source IN "
+                          "('Website','Referral','Phone','Email','Event','Social Media','Other','Upload'))"))
+        # leads uploaded before 'uploaded_from' existed: take the file name from their first stage history note
+        conn.execute(text("""UPDATE leads l SET uploaded_from = SUBSTRING(h.note FROM 15) FROM stage_history h
+            WHERE h.lead_id = l.id AND h.from_stage IS NULL AND h.note LIKE 'Uploaded from %' AND l.uploaded_from IS NULL"""))
+        conn.execute(text("UPDATE leads SET source = 'Upload' WHERE uploaded_from IS NOT NULL AND source = 'Other'"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_leads_untouched ON leads (owner_id, created_at DESC) WHERE untouched"))
         conn.execute(text("ALTER TABLE emails DROP CONSTRAINT IF EXISTS emails_status_check"))
         conn.execute(text("ALTER TABLE emails ADD CONSTRAINT emails_status_check "
                           "CHECK (status IN ('Sent','Failed','Gmail','Outlook'))"))
@@ -101,8 +120,9 @@ app.add_middleware(
 # Login is open; every other API needs the token from login (see app/security.py)
 app.include_router(auth.router)
 app.include_router(auth.protected)
-for router in (emails.router, home.router, leads.router, opportunities.router, attachments.router, tasks.router,
-               accounts.router, activity.router):
+# lead_files and opportunity_files first: their fixed paths (/leads/page, /leads/import...) come before /leads/{id}
+for router in (emails.router, home.router, lead_files.router, leads.router, opportunity_files.router, opportunities.router,
+               attachments.router, tasks.router, accounts.router, activity.router):
     app.include_router(router, dependencies=[Depends(authenticate)])
 
 

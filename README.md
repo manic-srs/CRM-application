@@ -36,6 +36,25 @@ email, tasks and reminders, notifications, lead conversion, closing a deal, and 
 - Duplicate email detection when creating a lead.
 - Opportunity attachments: PDF, Word (.docx), JPG and PNG files (20 MB each) added at the Opportunity and Proposal
   stages, kept with their stage, and viewable after the deal closes.
+- Lead research fields: LinkedIn profile, company website, company LinkedIn page (clickable, required with email),
+  turnover, headcount and location.
+- Delete a lead (owner, Manager or Admin); the Admin and Managers are notified and it is logged.
+- While typing the company on a lead, existing leads and accounts for that company are shown (only owner and stage
+  for records the user can't open), so two people don't work the same company.
+
+**Bulk upload and download**
+- Upload up to 100,000 leads at a time from Excel (.xlsx) or CSV, for example an Apollo export. The file is checked
+  first (rows ready, duplicates of open leads, invalid rows), then uploaded. No emails are sent to uploaded leads.
+- Uploaded leads appear in the normal lead lists with Lead Source **Upload**, and in the **Uploaded Leads** list view.
+  Only Last Name and Company are required; a wrong email, link or number is left blank (and listed) instead of
+  skipping the row, so the salesperson can fill it in later.
+- The Leads list loads page by page (100 rows) with server-side search and sorting, so it stays fast with 100,000s of leads.
+- Column filters (the arrow in a column header) on Leads, Opportunities, Accounts, Contacts and Tasks: status/stage,
+  source, owner, priority, type and date ranges (created, close date, due date).
+- Upload opportunities (deals) the same way; the company becomes an account and a contact is added when given.
+- Download leads or opportunities to Excel or CSV with a filter (e.g. Won, Lost, Open) and a required reason.
+- **History** on the Leads and Opportunities lists shows who uploaded or downloaded, when, what and why.
+- Every upload and download is recorded in the Activity Log (who, when, what, how many, reason); the Admin is notified of downloads.
 
 **Access control**
 - Role-based access (Salesperson, Manager, Admin) with a configurable **Roles & Permissions** matrix.
@@ -151,6 +170,11 @@ Lost:         available from any open stage (reason required)
 completed, with an optional note recorded in the stage history. Moving back and marking Lost are always allowed.
 Implemented in `backend/app/services.py` (`confirm_skipped`).
 
+**Bulk upload.** Leads > Upload accepts .xlsx or .csv files with up to 100,000 rows (50 MB). Apollo column names
+are recognised (First Name, Last Name, Title, Company, Email, Person Linkedin Url, Website, Company Linkedin Url,
+Annual Revenue, # Employees, City, State, Country). Last Name and Company are required. Rows whose email or LinkedIn
+profile already belongs to an open lead are skipped. Implemented in `backend/app/routers/lead_files.py`.
+
 **Duplicate email.** A lead cannot be created with an email that belongs to an open lead. If the email belongs to a
 closed lead or a contact, the user can create a new lead for the returning customer or use a different email.
 
@@ -200,7 +224,7 @@ See [backend/README.md](backend/README.md) and [frontend/README.md](frontend/REA
 - Self-service password reset is not available; passwords are reset by an Admin.
 
 **Roadmap**
-- Lead enrichment (Apollo.io)
-- Bulk lead import
+- Lead enrichment from a LinkedIn URL (Apollo.io or an alternative)
+- AI assistant to draft follow-up emails from a previous conversation
 - Email templates
 - Inbound email sync
