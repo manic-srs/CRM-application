@@ -159,7 +159,7 @@ async def draft_email(data: ai_email.DraftRequest, db: Session = Depends(get_db)
         if contact is not None and (contact.owner_id == me.id or me.sees_team):
             context.update(first_name=contact.first_name, last_name=contact.last_name)
     draft = await ai_email.generate_draft(data, context, me.full_name, me.email)
-    return ai_email.DraftResponse(**draft.model_dump(), stage=context["current_stage"], mode=ai_email.mode())
+    return ai_email.DraftResponse(**draft.model_dump(), stage=data.email_stage or context["current_stage"], record_stage=context["current_stage"], mode=ai_email.mode())
 
 
 @router.post("/{email_id}/resend", response_model=schemas.EmailOut)

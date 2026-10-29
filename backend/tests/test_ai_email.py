@@ -311,3 +311,92 @@ def test_draft_menu_requires_record_access_and_email_permission(client, record):
     client.headers.pop('Authorization')
     assert client.get(url).status_code == 401
     db.close()
+
+
+@pytest.mark.parametrize('stage', ['New','Nurturing','Demo','Converted','Lost'])
+def test_free_text_drafts_receive_actual_stage_and_preserve_user_intent(client, record, provider, stage):
+    db=next(app.dependency_overrides[get_db]())
+    db.get(Lead,record['id']).stage=stage
+    db.commit()
+    text='Ask about their priorities and offer a short conversation. Keep it under 100 words.'
+    response=client.post('/api/emails/draft',json=request(record,action='custom',instructions=text))
+    assert response.status_code == 200
+    sent=json.loads(provider[0][0].content)
+    payload=json.loads(sent['input'])
+    assert payload['user_request'] == text
+    assert payload['crm_context']['current_stage'] == stage
+    assert payload['stage_guidance'] == ai_email.STAGE_GUIDANCE[stage]
+    assert payload['email_action'] == 'custom'
+    assert response.json()['body'].count('Best regards,') == 1
+    db.close()
+
+
+@pytest.mark.parametrize('closing', [
+    'Best regards,',
+    'Best regards,\nRavi Kumar\nravi@crm.test',
+    'Best regards,\n[Your Name]\n[Your Title]\n[Your Company]',
+    'Kind regards,\n[Your Name]',
+    'Best regards, Ravi Kumar',
+    'BEST REGARDS,\nRavi Kumar',
+    '**Best regards**,\n[Your Name]',
+    'Best regards,\nRavi Kumar\nravi@crm.test\n\nBest regards,\nRavi Kumar\nravi@crm.test',
+])
+def test_model_signature_is_not_added_twice(client, record, provider, closing):
+    body='Hi Jack,\n\nWould a short conversation about your priorities be helpful?'
+    provider[1]['json']=completed(json.dumps({'subject':'Discussing your priorities','body':body+'\n\n'+closing}))
+    response=client.post('/api/emails/draft',json=request(record,action='custom'))
+    assert response.status_code == 200, response.text
+    expected=body+'\n\nBest regards,\nRavi Kumar\nravi@crm.test'
+    assert response.json()['body'] == expected
+    assert response.json()['body'].count('Best regards,') == 1
+
+
+def test_signature_normalization_is_idempotent():
+    once=ai_email.with_sender_signature('Hi Jack,\n\nPlease let me know your availability.', 'Ravi Kumar', 'ravi@crm.test')
+    assert ai_email.with_sender_signature(once,'Ravi Kumar','ravi@crm.test') == once
+
+
+def test_signature_normalization_preserves_body_text_that_mentions_a_closing():
+    body='Hi Jack,\n\nPlease use the closing phrase below in the document:\nBest regards\nis the phrase our team uses.\n\nThank you for your help.'
+    assert ai_email.with_sender_signature(body,'Ravi Kumar','ravi@crm.test').startswith(body+'\n\n')
+
+
+@pytest.mark.parametrize('email_stage', ['New','Nurturing','Demo','Converted','Opportunity','Proposal','Won','Lost'])
+def test_email_stage_selection_changes_draft_context_not_crm_record(client, record, provider, monkeypatch, email_stage):
+    monkeypatch.setattr(mailer,'send',lambda *a,**kw: pytest.fail('Drafting must not send email'))
+    response=client.post('/api/emails/draft',json=request(record,action='custom',email_stage=email_stage))
+    assert response.status_code == 200, response.text
+    assert response.json()['stage'] == email_stage
+    assert response.json()['record_stage'] == 'New'
+    content=json.loads(json.loads(provider[0][0].content)['input'])
+    assert content['email_stage'] == email_stage
+    assert content['stage_guidance'] == ai_email.STAGE_GUIDANCE[email_stage]
+    assert content['crm_context']['current_stage'] == 'New'
+    assert client.get(f"/api/leads/{record['id']}").json()['stage'] == 'New'
+
+
+def test_invalid_email_stage_is_rejected_before_model_call(client, record, provider):
+    response=client.post('/api/emails/draft',json=request(record,email_stage='Invalid'))
+    assert response.status_code == 422
+    assert not provider[0]
+
+
+def test_stage_alone_can_generate_a_draft(client, record, provider):
+    response=client.post('/api/emails/draft',json=request(record,action='custom',email_stage='Nurturing',instructions=''))
+    assert response.status_code == 200
+    content=json.loads(json.loads(provider[0][0].content)['input'])
+    assert content['email_stage']=='Nurturing'
+    assert content['stage_guidance']==ai_email.STAGE_GUIDANCE['Nurturing']
+
+
+def test_default_email_stage_tracks_current_record(client, record, provider):
+    db=next(app.dependency_overrides[get_db]())
+    db.get(Lead,record['id']).stage='Demo'
+    db.commit()
+    response=client.post('/api/emails/draft',json=request(record,email_stage=None,action='custom'))
+    assert response.status_code == 200
+    assert response.json()['stage']=='Demo'
+    assert response.json()['record_stage']=='Demo'
+    content=json.loads(json.loads(provider[0][0].content)['input'])
+    assert content['email_stage']=='Demo'
+    db.close()
