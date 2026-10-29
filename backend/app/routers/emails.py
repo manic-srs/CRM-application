@@ -20,7 +20,7 @@ from app import ai_email, email_options, mailer, schemas
 from app.database import get_db
 from app.models import Account, Contact, Email, EmailAttachment, Lead, Opportunity, User
 from app.security import acting_user, require, require_view
-from app.services import get_or_404
+from app.services import get_or_404, touch_lead
 
 router = APIRouter(prefix="/api/emails", tags=["Emails"])
 
@@ -119,6 +119,7 @@ async def send_email(
         attachments=[EmailAttachment(filename=n, content_type=t, size_bytes=len(d), data=d) for n, t, d in attachments],
     )
     db.add(email)
+    touch_lead(db, email.lead_id)
     db.commit()
     db.refresh(email)
     return email_out(email)

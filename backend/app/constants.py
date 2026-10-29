@@ -7,7 +7,7 @@ LEAD_OPEN_STAGES = ["New", "Nurturing", "Demo"]
 # Lost is allowed from any open stage.
 LEAD_FLOW = ["New", "Nurturing", "Demo"]          # then Convert
 OPPORTUNITY_FLOW = ["Opportunity", "Proposal"]     # then Won
-LEAD_SOURCES = ["Website", "Referral", "Phone", "Email", "Event", "Social Media", "Other"]
+LEAD_SOURCES = ["Website", "Referral", "Phone", "Email", "Event", "Social Media", "Other", "Upload"]  # Upload: bulk upload
 
 OPPORTUNITY_STAGES = ["Opportunity", "Proposal", "Won", "Lost"]
 OPPORTUNITY_OPEN_STAGES = ["Opportunity", "Proposal"]

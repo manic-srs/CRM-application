@@ -15,7 +15,7 @@ from app.database import get_db
 from app.security import acting_user_id, check_owner_change, owner_for_new, require_edit, require_view, visible
 from app.models import Lead, Opportunity, Task
 from app.serializers import task_out
-from app.services import assignment_notice, get_or_404, now, record_link, resolve_user_id, start_of_today
+from app.services import assignment_notice, get_or_404, now, record_link, resolve_user_id, start_of_today, touch_lead
 
 router = APIRouter(prefix="/api/tasks", tags=["Tasks"])
 
@@ -68,6 +68,7 @@ def create_task(data: schemas.TaskCreate, db: Session = Depends(get_db)):
     owner_id = resolve_user_id(db, owner_for_new(data.owner_id if data.owner_id is not None else fallback))
     task = Task(**data.model_dump(exclude={"owner_id", "created_by_id"}), owner_id=owner_id, status="Open", is_auto=False)
     db.add(task)
+    touch_lead(db, task.lead_id)
     db.flush()
     assignment_notice(db, owner_id=owner_id, actor_id=acting_user_id(), kind="Task", name=task.title,
                       link=record_link(lead_id=task.lead_id, opportunity_id=task.opportunity_id))

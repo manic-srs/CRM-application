@@ -24,6 +24,8 @@ class User(Base):
     email_assignments: Mapped[bool] = mapped_column(default=True)      # a record was assigned to me
     email_reminders: Mapped[bool] = mapped_column(default=True)        # task, demo, close-date, overdue reminders
     team_access: Mapped[bool] = mapped_column(default=False)           # a Manager let this user see the team's records
+    role_changed_at: Mapped[datetime | None]    # last time the Admin changed the role
+    access_changed_at: Mapped[datetime | None]  # last activate / deactivate / team access change
     created_at: Mapped[datetime | None] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(server_default=func.now(), onupdate=func.now())
 
@@ -66,6 +68,9 @@ class Account(Base):
     phone: Mapped[str | None] = mapped_column(String(30))
     website: Mapped[str | None] = mapped_column(String(255))
     address: Mapped[str | None] = mapped_column(String(500))
+    linkedin_url: Mapped[str | None] = mapped_column(String(300))
+    annual_revenue: Mapped[Decimal | None]
+    employees: Mapped[int | None]
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime | None] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(server_default=func.now(), onupdate=func.now())
@@ -87,6 +92,7 @@ class Contact(Base):
     job_title: Mapped[str | None] = mapped_column(String(100))
     email: Mapped[str | None] = mapped_column(String(255))
     phone: Mapped[str | None] = mapped_column(String(30))
+    linkedin_url: Mapped[str | None] = mapped_column(String(300))
     account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"))
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime | None] = mapped_column(server_default=func.now())
@@ -110,6 +116,16 @@ class Lead(Base):
     industry: Mapped[str | None] = mapped_column(String(100))
     email: Mapped[str | None] = mapped_column(String(255))
     phone: Mapped[str | None] = mapped_column(String(30))
+    # research links and company size (shown as clickable links on the lead)
+    linkedin_url: Mapped[str | None] = mapped_column(String(300))
+    company_website: Mapped[str | None] = mapped_column(String(255))
+    company_linkedin_url: Mapped[str | None] = mapped_column(String(300))
+    annual_revenue: Mapped[Decimal | None]  # turnover, USD
+    employees: Mapped[int | None]  # headcount
+    location: Mapped[str | None] = mapped_column(String(200))
+    # uploaded from a file and nobody has worked on it yet (kept out of the normal lists until someone does)
+    untouched: Mapped[bool] = mapped_column(default=False, server_default="false")
+    uploaded_from: Mapped[str | None] = mapped_column(String(255))  # file name, for leads created by an upload
     source: Mapped[str] = mapped_column(String(20), default="Other")
     stage: Mapped[str] = mapped_column(String(20), default="New")   # New/Nurturing/Demo/Converted/Lost
     demo_date: Mapped[datetime | None]
@@ -126,6 +142,26 @@ class Lead(Base):
     tasks: Mapped[list["Task"]] = relationship(back_populates="lead")
     history: Mapped[list["StageHistory"]] = relationship(back_populates="lead")
     notes: Mapped[list["Note"]] = relationship(back_populates="lead")
+    transfers: Mapped[list["LeadTransfer"]] = relationship(back_populates="lead", order_by="LeadTransfer.id")
+
+
+class LeadTransfer(Base):
+    """Every time a lead gets a new owner: from whom, to whom, who did it and when."""
+
+    __tablename__ = "lead_transfers"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    lead_id: Mapped[int] = mapped_column(ForeignKey("leads.id", ondelete="CASCADE"))
+    from_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    to_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    transferred_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    note: Mapped[str | None] = mapped_column(String(300))
+    transferred_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    lead: Mapped[Lead] = relationship(back_populates="transfers")
+    from_user: Mapped[User | None] = relationship(foreign_keys=[from_user_id])
+    to_user: Mapped[User] = relationship(foreign_keys=[to_user_id])
+    transferred_by: Mapped[User] = relationship(foreign_keys=[transferred_by_id])
 
 
 class Opportunity(Base):
@@ -263,3 +299,27 @@ class EmailAttachment(Base):
     data: Mapped[bytes] = mapped_column(LargeBinary)
 
     email: Mapped[Email] = relationship(back_populates="attachments")
+
+
+class OpportunityAttachment(Base):
+    """A file kept on an opportunity (proposal, quote, signed order...), uploaded at the Opportunity or Proposal stage.
+    The bytes are deferred: lists and other queries never load them, only the download does.
+    Deleting only hides the file (deleted_at / deleted_by_id are set); the row and the bytes stay."""
+
+    __tablename__ = "opportunity_attachments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    opportunity_id: Mapped[int] = mapped_column(ForeignKey("opportunities.id"))
+    stage: Mapped[str] = mapped_column(String(20))           # stage of the deal when the file was uploaded
+    filename: Mapped[str] = mapped_column(String(255))       # cleaned name shown in the app
+    content_type: Mapped[str] = mapped_column(String(100))   # detected from the file content by the server
+    size_bytes: Mapped[int]
+    data: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    uploaded_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    uploaded_at: Mapped[datetime | None] = mapped_column(server_default=func.now())
+    deleted_at: Mapped[datetime | None]
+    deleted_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+
+    opportunity: Mapped[Opportunity] = relationship()
+    uploaded_by: Mapped[User] = relationship(foreign_keys=[uploaded_by_id])
+    deleted_by: Mapped[User | None] = relationship(foreign_keys=[deleted_by_id])

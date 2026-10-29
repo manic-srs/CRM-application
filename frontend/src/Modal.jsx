@@ -20,7 +20,79 @@ export default function Modal({ modal, close, data, run, notify, user }) {
   const type = modal.type;
   // duplicate email on a new lead: { email, matches, has_open_lead } from the backend
   const [duplicate, setDuplicate] = useState(null);
+  // other leads / accounts with the same company, looked up while the company is typed (lead form only)
+  const [companyMatches, setCompanyMatches] = useState(null);
+  const companyTimer = useRef(null);
+  const lookUpCompany = (value) => {
+    clearTimeout(companyTimer.current);
+    const name = value.trim();
+    if (name.length < 2) return setCompanyMatches(null);
+    companyTimer.current = setTimeout(() => {
+      api
+        .companyMatches(name, record?.id)
+        .then((res) => setCompanyMatches(res.total ? res : null))
+        .catch(() => setCompanyMatches(null));
+    }, 400);
+  };
+  useEffect(() => {
+    if (type === "lead" && record?.company) lookUpCompany(record.company);
+    return () => clearTimeout(companyTimer.current);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const companyBox = () =>
+    companyMatches && (
+      <div className="company-box" role="status">
+        <b>
+          <Icon name="warn" size={14} /> {companyMatches.total} existing record{companyMatches.total === 1 ? "" : "s"} for this company
+        </b>
+        {companyMatches.owners?.length > 0 && (
+          <div className="company-owners">
+            Owned by: {companyMatches.owners.map((o) => `${o.owner} (${o.count})`).join(", ")}
+          </div>
+        )}
+        <ul>
+          {companyMatches.matches.filter((m) => m.can_open).map((m, i) => (
+            <li key={i}>
+              <a href={`#/${m.type === "Lead" ? "leads" : "accounts"}/${m.id}`} target="_blank" rel="noreferrer">
+                {m.type === "Lead" ? m.name : m.company}
+              </a>
+              <small>
+                {" "}
+                {m.type} • {m.stage} • Owner: {m.mine ? "You" : m.owner}
+              </small>
+            </li>
+          ))}
+          {Object.entries(
+            // records this user can't open: one line per owner and type, without names
+            companyMatches.matches
+              .filter((m) => !m.can_open)
+              .reduce((groups, m) => {
+                const k = `${m.type}|${m.owner}`;
+                groups[k] = (groups[k] || 0) + 1;
+                return groups;
+              }, {}),
+          ).map(([k, count]) => {
+            const [kind, owner] = k.split("|");
+            return (
+              <li key={k}>
+                <span>{companyMatches.matches.find((m) => !m.can_open && `${m.type}|${m.owner}` === k)?.company}</span>
+                <small>
+                  {" "}
+                  {count} {kind === "Lead" ? (count === 1 ? "lead" : "leads") : count === 1 ? "account" : "accounts"} • Owner: {owner} (contact
+                  the owner or their team for details)
+                </small>
+              </li>
+            );
+          })}
+          {companyMatches.total > companyMatches.matches.length && (
+            <li className="muted">and {companyMatches.total - companyMatches.matches.length} more</li>
+          )}
+        </ul>
+        <small className="field-hint">You can still save. Check with the owner so two people don't work the same company.</small>
+      </div>
+    );
   const confirmDuplicate = useRef(false);
+  // Cancel Demo: "reschedule" (pick a new date, stay at Demo) or "nurturing" (cancel, back to Nurturing)
+  const [demoChoice, setDemoChoice] = useState("reschedule");
   const [relatedType, setRelatedType] = useState(
     record?.relatedType || modal.relatedType || "general",
   );
@@ -35,6 +107,9 @@ export default function Modal({ modal, close, data, run, notify, user }) {
     convert: `Convert Lead: ${record?.name}`,
     stage: `Change Stage to ${modal.stage}`,
     note: "New Note",
+    transfer: `Transfer Lead: ${record?.name}`,
+    cancelDemo: `Cancel or Reschedule Demo: ${record?.name}`,
+    delete: `Delete Lead: ${record?.name}`,
   };
   useEffect(() => {
     const first = ref.current.querySelector("input,select,textarea,button");
@@ -83,7 +158,7 @@ export default function Modal({ modal, close, data, run, notify, user }) {
         min={inputType === "number" ? 0 : undefined}
         max={name === "probability" ? 100 : undefined}
         step={
-          name === "probability"
+          name === "probability" || name === "employees"
             ? 1
             : inputType === "number"
               ? "any"
@@ -180,14 +255,16 @@ export default function Modal({ modal, close, data, run, notify, user }) {
       </select>
     </label>
   );
-  // Only Managers and Admins can give a record to someone else; a Salesperson sees the owner read-only
-  const canAssign = can(user, "reassign_owner");
+  // Only Managers and Admins can give a record to someone else; a Salesperson sees the owner read-only.
+  // An existing lead's owner is changed with the Transfer button (it keeps a dated transfer history).
+  const canAssign = can(user, "reassign_owner") && !(type === "lead" && record);
   const owner = () =>
     !canAssign ? (
       <label className="field">
         <span>Owner</span>
         <input readOnly value={record?.owner || user?.full_name || ""} aria-readonly="true" />
         <input type="hidden" name="owner_id" value={record?.owner_id ?? user?.id ?? ""} />
+        {type === "lead" && record && <small className="field-hint">Use Transfer on the lead page to change the owner.</small>}
       </label>
     ) : select("Owner", "owner_id", [
       ...data.users.map((user) => [user.id, user.full_name]),
@@ -208,6 +285,11 @@ export default function Modal({ modal, close, data, run, notify, user }) {
     if (type === "lost") return `"${name}" was marked as Lost.${mailed}`;
     if (type === "task") return record ? "Task updated." : "Task created.";
     if (type === "note") return "Note added.";
+    if (type === "transfer") return `"${name}" was transferred to ${saved?.owner_name || "the new owner"}.`;
+    if (type === "cancelDemo")
+      return demoChoice === "reschedule"
+        ? `The demo with "${name}" was rescheduled to ${new Date(v.reschedule_to).toLocaleString()}. Its reminders moved too.`
+        : `The demo with "${name}" was cancelled. The lead is back in Nurturing with a follow-up call.`;
     if (type === "account") return `Account "${saved.name}" was created.`;
     if (type === "contact") return `Contact "${saved.full_name || v.last_name}" was created.`;
     return "Your changes were saved.";
@@ -278,6 +360,13 @@ export default function Modal({ modal, close, data, run, notify, user }) {
       if (type === "lead") {
         if (!v.last_name.trim() || !v.company.trim())
           throw new Error("Last name and company are required.");
+        const missing = [
+          ["email", "Email"],
+          ["linkedin_url", "Lead LinkedIn URL"],
+          ["company_website", "Company Website"],
+          ["company_linkedin_url", "Company LinkedIn URL"],
+        ].filter(([name]) => !(v[name] || "").trim());
+        if (missing.length) throw new Error(`Please fill in: ${missing.map(([, label]) => label).join(", ")}.`);
         const email = (v.email || "").trim().toLowerCase();
         if (!record && email && !(confirmDuplicate.current && duplicate?.email === email)) {
           const check = await api.leadDuplicates(email);
@@ -333,10 +422,25 @@ export default function Modal({ modal, close, data, run, notify, user }) {
             ? { demo_date: v.demo_date || null }
             : {}),
         });
+      if (type === "delete") {
+        // not through run(): the page of a deleted lead can't be reloaded, so go to the Leads list instead
+        const res = await api.deleteLead(record.id);
+        close();
+        notify(res.message);
+        go("/leads");
+        return;
+      }
       if (type === "note") {
         if (!v.body.trim()) throw new Error("Note cannot be blank.");
         await run("note", modal.collection, record.id, v.body.trim());
       }
+      if (type === "transfer")
+        saved = await run("transferLead", record.id, { to_user_id: Number(v.to_user_id), note: v.note || null });
+      if (type === "cancelDemo")
+        await run("cancelDemo", record.id, {
+          reason: v.reason || null,
+          reschedule_to: demoChoice === "reschedule" ? v.reschedule_to : null,
+        });
       close();
       notify(doneMessage(v, saved));
       if (type === "lead") go(`/leads/${saved.id}`);
@@ -375,14 +479,16 @@ export default function Modal({ modal, close, data, run, notify, user }) {
         <header className="modal-header">
           <h2 id="modal-title">{titles[type]}</h2>
         </header>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} onInput={(e) => type === "lead" && e.target.name === "company" && lookUpCompany(e.target.value)}>
           <div className="modal-body">
           <p className="modal-subtitle">
             {type === "convert"
               ? "Creates an account (or uses an existing one), a contact and an opportunity. Open lead tasks are closed automatically."
               : type === "stage"
                 ? "Open follow-up tasks are closed automatically and the next follow-up task is created."
-                : <><i className="req">*</i> = Required Information</>}
+                : type === "delete"
+                  ? null
+                  : <><i className="req">*</i> = Required Information</>}
           </p>
           {type === "account" && (
             <div className="form-grid">
@@ -419,18 +525,26 @@ export default function Modal({ modal, close, data, run, notify, user }) {
               {field("First Name", "first_name")}
               {field("Last Name", "last_name", "text", true)}
               {field("Company", "company", "text", true)}
+              {companyBox()}
               {field("Title", "title")}
               {field("Industry", "industry")}
-              {field("Email", "email", "email")}
+              {field("Email", "email", "email", true)}
               {field("Phone", "phone", "tel")}
+              {field("Lead LinkedIn URL", "linkedin_url", "text", true)}
+              {field("Location", "location")}
               {select(
                 "Lead Source",
                 "source",
-                LEAD_SOURCES,
+                record?.source && !LEAD_SOURCES.includes(record.source) ? [...LEAD_SOURCES, record.source] : LEAD_SOURCES,
                 record?.source || "Other",
                 true,
               )}
               {owner()}
+              <h3 className="form-section">Company Details</h3>
+              {field("Company Website", "company_website", "text", true)}
+              {field("Company LinkedIn URL", "company_linkedin_url", "text", true)}
+              {field("Turnover (USD)", "annual_revenue", "number")}
+              {field("Headcount", "employees", "number")}
               {!record && (
                 <label className="check-field welcome-check">
                   <input type="checkbox" name="welcome_email" defaultChecked />
@@ -455,7 +569,6 @@ export default function Modal({ modal, close, data, run, notify, user }) {
               {field("Opportunity Name", "name", "text", true)}
               {field("Amount", "expected_value", "number")}
               {field("Close Date", "expected_close_date", "date")}
-              {field("Probability (%)", "probability", "number", true)}
               {select(
                 "Primary Contact",
                 "primary_contact_id",
@@ -548,6 +661,18 @@ export default function Modal({ modal, close, data, run, notify, user }) {
               )}
             </>
           )}
+          {type === "delete" && (
+            <div className="delete-box" role="alert">
+              <Icon name="warn" size={18} />
+              <div>
+                <b>This lead will be deleted permanently.</b>
+                <p>
+                  Its tasks, notes, emails and stage history are deleted too. The Admin and Managers are notified, and
+                  the deletion is recorded in the Activity Log.
+                </p>
+              </div>
+            </div>
+          )}
           {type === "lost" && (
             <>
               {select("Lost Reason", "lost_reason", LOST_REASONS, "", true)}
@@ -610,6 +735,54 @@ export default function Modal({ modal, close, data, run, notify, user }) {
               {textArea("Note", "note")}
             </>
           )}
+          {type === "transfer" && (
+            <>
+              <p className="field-hint">
+                Only the owner changes. Details, stage, tasks and emails stay with the lead, and the transfer is saved with the date and
+                time. No approval is needed.
+              </p>
+              {select(
+                "Transfer to",
+                "to_user_id",
+                data.users.filter((u) => u.id !== record.owner_id).map((u) => [u.id, `${u.full_name} (${u.role})`]),
+                "",
+                true,
+              )}
+              {textArea("Note", "note")}
+            </>
+          )}
+          {type === "cancelDemo" && (
+            <>
+              <p className="field-hint">
+                Current demo: {record.demo_date ? new Date(record.demo_date).toLocaleString() : "no date set"}
+              </p>
+              <fieldset className="demo-choice">
+                <legend>What should happen?</legend>
+                <label className="check-field">
+                  <input
+                    type="radio"
+                    name="demo_choice"
+                    value="reschedule"
+                    checked={demoChoice === "reschedule"}
+                    onChange={() => setDemoChoice("reschedule")}
+                  />
+                  <span>Reschedule to a new date (the lead stays at Demo and the reminders move)</span>
+                </label>
+                <label className="check-field">
+                  <input
+                    type="radio"
+                    name="demo_choice"
+                    value="nurturing"
+                    checked={demoChoice === "nurturing"}
+                    onChange={() => setDemoChoice("nurturing")}
+                  />
+                  <span>Cancel the demo and move the lead back to Nurturing (a follow-up call is created)</span>
+                </label>
+              </fieldset>
+              {demoChoice === "reschedule" && field("New Demo Date", "reschedule_to", "datetime-local", true, "")}
+              {textArea("Reason", "reason")}
+            </>
+          )}
           {type === "note" && (
             <label className="field">
               <span>
@@ -635,7 +808,7 @@ export default function Modal({ modal, close, data, run, notify, user }) {
             </button>
             <button
               type="submit"
-              className="sf-button brand"
+              className={`sf-button ${type === "delete" ? "danger" : "brand"}`}
               disabled={submitting}
               aria-busy={submitting}
             >
@@ -647,7 +820,15 @@ export default function Modal({ modal, close, data, run, notify, user }) {
                     ? "Mark as won"
                     : type === "lost"
                       ? "Mark as lost"
-                      : "Save"}
+                      : type === "transfer"
+                        ? "Transfer"
+                        : type === "cancelDemo"
+                          ? demoChoice === "reschedule"
+                            ? "Reschedule demo"
+                            : "Cancel demo"
+                          : type === "delete"
+                            ? "Delete lead"
+                            : "Save"}
             </button>
           </div>
         </form>

@@ -39,6 +39,18 @@ export function dateTime(value) {
   });
 }
 
+// Tables: 10/28/26, 7:11 PM (keeps date columns narrow)
+export function shortDateTime(value) {
+  if (!value) return "";
+  return asDate(value).toLocaleString("en-US", {
+    month: "numeric",
+    day: "numeric",
+    year: "2-digit",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 export function time(value) {
   if (!value) return "";
   return asDate(value).toLocaleTimeString("en-US", {

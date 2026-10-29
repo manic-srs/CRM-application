@@ -63,6 +63,12 @@ export function leadPayload(values, editing = false) {
     industry: optional(values.industry),
     email: optional(values.email),
     phone: optional(values.phone),
+    linkedin_url: optional(values.linkedin_url?.trim()),
+    company_website: optional(values.company_website?.trim()),
+    company_linkedin_url: optional(values.company_linkedin_url?.trim()),
+    annual_revenue: numeric(values.annual_revenue),
+    employees: numeric(values.employees),
+    location: optional(values.location?.trim()),
     source: values.source || "Other",
     owner_id: numeric(values.owner_id),
   };
@@ -93,7 +99,6 @@ export function opportunityPayload(values) {
     name: values.name.trim(),
     expected_value: numeric(values.expected_value),
     expected_close_date: optional(values.expected_close_date),
-    probability: Number(values.probability),
     primary_contact_id: numeric(values.primary_contact_id),
     owner_id: numeric(values.owner_id),
   };
@@ -101,18 +106,32 @@ export function opportunityPayload(values) {
 const actor = (editing, actorId) =>
   actorId ? { [editing ? "changed_by_id" : "created_by_id"]: Number(actorId) } : {};
 
-// Multipart upload (email with attachments); JSON errors are read like apiRequest does
-async function upload(path, formData) {
+// Multipart upload (email with attachments, opportunity files); JSON errors are read like apiRequest does.
+// The messages default to the email ones.
+async function upload(
+  path,
+  formData,
+  {
+    failed = "The email could not be sent.",
+    tooLarge = "The attachments are too large.",
+    timedOut,
+    timeout = 60000,
+  } = {},
+) {
   let response;
   try {
     response = await fetch(`${BASE}${path}`, {
       method: "POST",
       body: formData,
       headers: authHeaders(),
-      signal: AbortSignal.timeout(60000),
+      signal: AbortSignal.timeout(timeout),
     });
-  } catch {
-    throw new Error("Cannot reach the backend. Check that it is running and try again.");
+  } catch (error) {
+    throw new Error(
+      error.name === "TimeoutError" && timedOut
+        ? timedOut
+        : "Cannot reach the backend. Check that it is running and try again.",
+    );
   }
   checkLogin(response);
   const result = await response.json().catch(() => null);
@@ -124,11 +143,35 @@ async function upload(path, formData) {
         : Array.isArray(detail)
           ? detail.map((d) => `${d.loc.at(-1)}: ${d.msg}`).join("; ")
           : response.status === 413
-            ? "The attachments are too large."
-            : "The email could not be sent.",
+            ? tooLarge
+            : failed,
     );
   }
   return result;
+}
+
+// A stored file as a Blob, fetched with the login header (the token is never put in the address)
+async function fileRequest(path) {
+  let response;
+  try {
+    response = await fetch(`${BASE}${path}`, {
+      headers: authHeaders(),
+      cache: "no-store",
+      signal: AbortSignal.timeout(120000),
+    });
+  } catch (error) {
+    throw new Error(
+      error.name === "TimeoutError"
+        ? "The file took too long to download. Try again."
+        : "Cannot reach the backend. Check that it is running and try again.",
+    );
+  }
+  checkLogin(response);
+  if (!response.ok) {
+    const detail = (await response.json().catch(() => null))?.detail;
+    throw new Error(typeof detail === "string" ? detail : "The file could not be opened.");
+  }
+  return response.blob();
 }
 
 export const api = {
@@ -157,6 +200,10 @@ export const api = {
     apiRequest(`/opportunities/${id}/won`, { method: "POST", body: values }),
   convert: (id, values) =>
     apiRequest(`/leads/${id}/convert`, { method: "POST", body: values }),
+  transferLead: (id, values) =>
+    apiRequest(`/leads/${id}/transfer`, { method: "POST", body: values }),
+  cancelDemo: (id, values) =>
+    apiRequest(`/leads/${id}/cancel-demo`, { method: "POST", body: values }),
   note: (collection, id, body) =>
     apiRequest("/notes", {
       method: "POST",
@@ -223,6 +270,7 @@ export const api = {
   // Roles & Permissions (Admin) and team access (Manager)
   permissions: () => apiRequest("/permissions"),
   activityLog: () => apiRequest("/activity-log"),
+  transferHistory: (object) => apiRequest(`/leads/transfers?object=${object}`),
   setPermission: (role, permission, allowed) =>
     apiRequest("/permissions", { method: "PUT", body: { role, permission, allowed } }),
   setTeamAccess: (userId, team_access) =>
@@ -230,10 +278,65 @@ export const api = {
   // duplicate email check before creating a lead
   leadDuplicates: (email) => apiRequest(`/leads/duplicates?email=${encodeURIComponent(email)}`),
   sendEmail: (formData) => upload("/emails", formData),
+  deleteLead: (id) => apiRequest(`/leads/${id}`, { method: "DELETE" }),
+  companyMatches: (company, excludeId) =>
+    apiRequest(`/leads/company-matches?${new URLSearchParams({ company, ...(excludeId ? { exclude_id: excludeId } : {}) })}`),
+  // Bulk upload: dryRun=true only checks the file and returns what would happen
+  importLeads: (file, options) => api.importData("leads", file, options),
+  importData: (object, file, { ownerId, dryRun }) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("dry_run", dryRun ? "true" : "false");
+    if (ownerId) form.append("owner_id", ownerId);
+    return upload(`/${object}/import`, form, { timeout: 10 * 60 * 1000, failed: "The file could not be uploaded.", tooLarge: "The file is too large." });
+  },
+  // Download leads to Excel / CSV; the reason is recorded in the Activity Log
+  exportLeads: (params) => api.exportData("leads", params),
+  exportData: async (object, params) => {
+    let response;
+    try {
+      response = await fetch(`${BASE}/${object}/export?${new URLSearchParams(params)}`, {
+        headers: authHeaders(),
+        signal: AbortSignal.timeout(5 * 60 * 1000),
+      });
+    } catch {
+      throw new Error("Cannot reach the backend. Check that it is running and try again.");
+    }
+    checkLogin(response);
+    if (!response.ok) {
+      const result = await response.json().catch(() => null);
+      const detail = result?.detail;
+      throw new Error(typeof detail === "string" ? detail : Array.isArray(detail) ? detail[0]?.msg : "The download failed.");
+    }
+    const name = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") || "")?.[1] || `SalesTrack-${object}.xlsx`;
+    const url = URL.createObjectURL(await response.blob());
+    const link = Object.assign(document.createElement("a"), { href: url, download: name });
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return name;
+  },
   resendEmail: (id) => apiRequest(`/emails/${id}/resend`, { method: "POST", signal: AbortSignal.timeout(60000) }),
   emails: (field, id) => apiRequest(`/emails?${field}=${encodeURIComponent(id)}`),
   // plain links can't send headers, so the download passes the login token in the address
   attachmentUrl: (id) => `${BASE}/emails/attachments/${id}?token=${encodeURIComponent(token)}`,
+  // Opportunity attachments: one file per upload. Files are fetched with the login header (see fileRequest).
+  attachments: (opportunityId) => apiRequest(`/opportunities/${opportunityId}/attachments`),
+  uploadAttachment: (opportunityId, file) => {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    return upload(`/opportunities/${opportunityId}/attachments`, form, {
+      failed: "The file could not be uploaded.",
+      tooLarge: "The file is larger than 20 MB.",
+      timedOut: "The upload took too long. Try again.",
+      timeout: 180000,
+    });
+  },
+  attachmentFile: (opportunityId, id, download = false) =>
+    fileRequest(`/opportunities/${opportunityId}/attachments/${id}/file${download ? "?download=true" : ""}`),
+  deleteAttachment: (opportunityId, id) =>
+    apiRequest(`/opportunities/${opportunityId}/attachments/${id}`, { method: "DELETE" }),
 };
 
 const idText = (value) => (value == null ? "" : String(value));
@@ -276,7 +379,10 @@ function normalizeRecord(record, collection, contacts) {
     notes: record.notes || [],
     activity: (record.history || [])
       .map((event) => ({
-        text: `${event.from_stage ? `${event.from_stage} → ` : "Created at "}${event.to_stage}${event.note ? `: ${event.note}` : ""}`,
+        text:
+          event.from_stage && event.from_stage === event.to_stage && event.note
+            ? event.note
+            : `${event.from_stage ? `${event.from_stage} → ` : "Created at "}${event.to_stage}${event.note ? `: ${event.note}` : ""}`,
         date: event.changed_at,
         by: event.changed_by_name,
       }))
@@ -297,11 +403,12 @@ export function normalizeWorkspace(raw, detail) {
     tasks: raw.tasks.map(normalizeTask),
   };
   if (detail) {
-    data[detail.collection] = data[detail.collection].map((record) =>
-      record.id === idText(detail.record.id)
-        ? normalizeRecord(detail.record, detail.collection, contacts)
-        : record,
-    );
+    const open = normalizeRecord(detail.record, detail.collection, contacts);
+    const list = data[detail.collection];
+    // an uploaded lead nobody has worked on yet isn't in the list: add the one being viewed
+    data[detail.collection] = list.some((record) => record.id === open.id)
+      ? list.map((record) => (record.id === open.id ? open : record))
+      : [...list, open];
   }
   return data;
 }

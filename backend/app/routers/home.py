@@ -104,7 +104,13 @@ def home_page(owner_id: int | None = Query(None, description="Only this salesper
     opps_by_contact: dict[int, list[Task]] = {}
     for opp in db.scalars(select(Opportunity).where(Opportunity.primary_contact_id.is_not(None))).all():
         opps_by_contact.setdefault(opp.primary_contact_id, []).extend(opp.tasks)
-    recent_leads = db.scalars(leads_q.where(Lead.created_at >= now() - timedelta(days=30))).all()
+    # Build Pipeline: counted in the database (there can be 100,000s of uploaded leads)
+    recent_q = leads_q.where(Lead.created_at >= now() - timedelta(days=30))
+    has_task = select(Task.id).where(Task.lead_id == Lead.id).exists()
+    has_upcoming = select(Task.id).where(Task.lead_id == Lead.id, Task.status == "Open", Task.due_date >= now()).exists()
+    recent_total = count(recent_q)
+    recent_upcoming = count(recent_q.where(has_upcoming))
+    recent_with_tasks = count(recent_q.where(has_task))
 
     # Today's Events: demos booked for today
     today_start = datetime.combine(date.today(), datetime.min.time())
@@ -165,8 +171,10 @@ def home_page(owner_id: int | None = Query(None, description="Only this salesper
             "accounts": {"total": len(accounts), **activity_split([[t for o in a.opportunities for t in o.tasks] for a in accounts])},
             "contacts": {"total": len(contacts), **activity_split([opps_by_contact.get(c.id, []) for c in contacts])},
             "build_pipeline": {
-                "leads_last_30_days": len(recent_leads),
-                **activity_split([lead.tasks for lead in recent_leads]),
+                "leads_last_30_days": recent_total,
+                "upcoming_activity": recent_upcoming,
+                "past_activity": recent_with_tasks - recent_upcoming,
+                "no_activity": recent_total - recent_with_tasks,
             },
             "recent_records": recent[:8],
         },

@@ -108,7 +108,10 @@ export function AccountPage({ id, data, openNew, openEmail, emailVersion }) {
                 ["Industry", account.industry],
                 ["Phone", account.phone],
                 ["Website", site(account.website)],
+                ["LinkedIn", site(account.linkedin_url)],
                 ["Address", account.address],
+                ["Headcount", account.employees != null ? Number(account.employees).toLocaleString() : ""],
+                ["Turnover", account.annual_revenue != null ? `$${Number(account.annual_revenue).toLocaleString()}` : ""],
                 ["Created", dateTime(account.created_at)],
               ]}
             />
@@ -222,7 +225,9 @@ export function ContactPage({ id, data, openEmail, emailVersion }) {
                 ["Title", contact.job_title],
                 ["Email", contact.email],
                 ["Phone", contact.phone],
+                ["LinkedIn", site(contact.linkedin_url)],
                 ["Created", dateTime(contact.created_at)],
+                ["Last Modified", dateTime(contact.updated_at)],
               ]}
             />
           </div>

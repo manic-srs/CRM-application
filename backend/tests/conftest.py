@@ -13,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["MAIL_ASYNC"] = "false"  # send notification emails before the request returns, so tests can check them
+os.environ.setdefault("ALLOWED_EMAIL_DOMAINS", "")  # tests use example addresses; the SRS-only rule has its own test
 
 from app.database import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402

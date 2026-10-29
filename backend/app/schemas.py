@@ -6,9 +6,11 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
+import re
 
-LeadSource = Literal["Website", "Referral", "Phone", "Email", "Event", "Social Media", "Other"]
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
+
+LeadSource = Literal["Website", "Referral", "Phone", "Email", "Event", "Social Media", "Other", "Upload"]
 LostReason = Literal["Price", "Competitor", "No response", "No budget", "Not interested", "Other"]
 Priority = Literal["Low", "Normal", "High"]
 Salutation = Literal["Mr.", "Ms.", "Mrs.", "Dr.", "Prof."]
@@ -37,6 +39,9 @@ class UserOut(Out):
     email_assignments: bool = True
     email_reminders: bool = True
     team_access: bool = False
+    created_at: datetime | None = None
+    role_changed_at: datetime | None = None
+    access_changed_at: datetime | None = None
     permissions: list[str] = []  # filled for the logged-in user (login, /auth/me)
 
 
@@ -181,7 +186,48 @@ class NoteCreate(BaseModel):
 
 # ---------- Leads ----------
 
-class LeadCreate(BaseModel):
+def clean_url(value: str | None, *, linkedin: bool = False) -> str | None:
+    """'linkedin.com/in/x' -> 'https://linkedin.com/in/x'. Empty -> None. LinkedIn fields must point to linkedin.com."""
+    value = (value or "").strip()
+    if not value:
+        return None
+    if not re.match(r"^https?://", value, re.I):
+        value = "https://" + value
+    host = re.sub(r"^https?://", "", value, flags=re.I).split("/")[0].lower()
+    if "." not in host or " " in value:
+        raise ValueError("Enter a valid web address")
+    if linkedin and not (host == "linkedin.com" or host.endswith(".linkedin.com")):
+        raise ValueError("Enter a LinkedIn address (linkedin.com/...)")
+    return value
+
+
+class LeadLinks(BaseModel):
+    """Research links and company size on a lead (New Lead / Edit Lead / import)."""
+
+    linkedin_url: str | None = Field(None, max_length=300)
+    company_website: str | None = Field(None, max_length=255)
+    company_linkedin_url: str | None = Field(None, max_length=300)
+    annual_revenue: Decimal | None = Field(None, ge=0, le=Decimal("99999999999999"))  # turnover, USD
+    employees: int | None = Field(None, ge=0, le=10_000_000)  # headcount
+    location: str | None = Field(None, max_length=200)
+
+    @field_validator("linkedin_url", "company_linkedin_url")
+    @classmethod
+    def _linkedin(cls, v):
+        return clean_url(v, linkedin=True)
+
+    @field_validator("company_website")
+    @classmethod
+    def _website(cls, v):
+        return clean_url(v)
+
+    @field_validator("location")
+    @classmethod
+    def _location(cls, v):
+        return " ".join(v.split()) or None if v else None
+
+
+class LeadCreate(LeadLinks):
     """Like the Salesforce "New Lead" form: Last Name and Company are required."""
 
     salutation: Salutation | None = None
@@ -199,7 +245,7 @@ class LeadCreate(BaseModel):
     confirm_duplicate: bool = False  # the email already exists on a closed lead / contact: create a new lead anyway
 
 
-class LeadUpdate(BaseModel):
+class LeadUpdate(LeadLinks):
     """Send only the fields to change. Stage changes use /stage, /lost and /convert."""
 
     salutation: Salutation | None = None
@@ -227,6 +273,14 @@ class LeadOut(Out):
     industry: str | None
     email: str | None
     phone: str | None
+    linkedin_url: str | None = None
+    company_website: str | None = None
+    company_linkedin_url: str | None = None
+    annual_revenue: Decimal | None = None
+    employees: int | None = None
+    location: str | None = None
+    untouched: bool = False  # uploaded and not worked on yet
+    uploaded_from: str | None = None  # file name when the lead came from a bulk upload
     source: str
     stage: str
     demo_date: datetime | None
@@ -239,6 +293,23 @@ class LeadOut(Out):
     opportunity_id: int | None = None
     created_at: datetime | None
     updated_at: datetime | None
+    last_transferred_at: datetime | None = None  # when the lead last got a new owner (shown in the list)
+
+    @field_serializer("annual_revenue")
+    def _revenue(self, value):
+        return money(value)
+
+
+class LeadTransferOut(Out):
+    id: int
+    from_user_id: int | None
+    from_user_name: str | None = None
+    to_user_id: int
+    to_user_name: str | None = None
+    transferred_by_id: int
+    transferred_by_name: str | None = None
+    note: str | None
+    transferred_at: datetime | None
 
 
 class LeadDetail(LeadOut):
@@ -247,6 +318,20 @@ class LeadDetail(LeadOut):
     tasks: list[TaskOut] = []
     notes: list[NoteOut] = []
     history: list[StageHistoryOut] = []
+    transfers: list[LeadTransferOut] = []
+
+
+class LeadTransfer(BaseModel):
+    """Give the lead to another user. Only the owner changes: details and stage stay as they are."""
+    to_user_id: int
+    note: str | None = Field(None, max_length=300)
+
+
+class CancelDemo(BaseModel):
+    """reschedule_to set: the demo moves to that date and the lead stays at Demo.
+    Not set: the demo is cancelled and the lead goes back to Nurturing."""
+    reason: str | None = Field(None, max_length=300)
+    reschedule_to: datetime | None = None
 
 
 class LeadStageChange(BaseModel):
@@ -286,9 +371,16 @@ class AccountOut(Out):
     phone: str | None
     website: str | None
     address: str | None
+    linkedin_url: str | None = None
+    annual_revenue: Decimal | None = None
+    employees: int | None = None
     owner_id: int
     owner_name: str | None = None
     created_at: datetime | None
+
+    @field_serializer("annual_revenue")
+    def _revenue(self, value):
+        return money(value)
 
 
 class AccountCreate(BaseModel):
@@ -309,10 +401,12 @@ class ContactOut(Out):
     job_title: str | None
     email: str | None
     phone: str | None
+    linkedin_url: str | None = None
     account_id: int
     account_name: str | None = None
     owner_id: int
     created_at: datetime | None
+    updated_at: datetime | None = None
 
 
 class ContactCreate(BaseModel):
@@ -438,6 +532,19 @@ class EmailOut(Out):
     account_id: int | None
     sent_at: datetime | None
     attachments: list[AttachmentOut] = []
+
+
+class OpportunityAttachmentOut(Out):
+    """A file on an opportunity (never the bytes: those come from the download only)."""
+    id: int
+    opportunity_id: int
+    filename: str
+    content_type: str  # detected from the file content by the server
+    size_bytes: int
+    stage: str  # stage of the deal when the file was uploaded
+    uploaded_by_id: int
+    uploaded_by_name: str | None = None
+    uploaded_at: datetime | None
 
 
 class SearchResult(BaseModel):

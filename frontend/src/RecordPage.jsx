@@ -1,11 +1,26 @@
 import React, { useState } from "react";
+import OpportunityAttachments from "./Attachments";
 import { EmailList, useEmails } from "./Email";
-import { can, canCreateSales } from "./permissions";
+import { can, canCreateSales, canTransferLead } from "./permissions";
 import { amount, dateTime, shortDate } from "./format";
-import { Card, Icon, ObjectIcon, PathBar, StageBadge } from "./ui";
+import { ActionMenu, Card, Icon, ObjectIcon, PathBar, StageBadge } from "./ui";
 
 const LEAD_PATH = ["New", "Nurturing", "Demo", "Converted"];
 const OPP_PATH = ["Opportunity", "Proposal", "Won"];
+
+// A research link (LinkedIn, website) that opens in a new tab
+export function ExternalLink({ href, children }) {
+  if (!href) return null;
+  const url = /^https?:\/\//i.test(href) ? href : `https://${href}`;
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer" className="external-link">
+      {children || url.replace(/^https?:\/\/(www\.)?/i, "").replace(/\/$/, "")}
+      <span aria-hidden="true"> ↗</span>
+    </a>
+  );
+}
+
+const headcount = (n) => (n == null ? "" : Number(n).toLocaleString());
 
 function Field({ label, children, onEdit }) {
   return (
@@ -143,6 +158,8 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
   // Salespeople change only their own records; Managers and Admins can change any (the backend checks it too)
   const canEdit = item.owner_id === user?.id || can(user, "edit_team_records");
   const canConvert = canEdit && canCreateSales(user); // Admins edit leads but don't create opportunities
+  const canTransfer = lead && canTransferLead(user, item); // Admin: any lead; owner with "Transfer leads": their own
+  const transfers = (lead && item.transfers) || [];
   const tasks = data.tasks.filter((t) => t.relatedId === item.id && t.relatedType === collection);
   const edit = () => (lead ? openLead(item) : setModal({ type: "opportunity", record: item }));
   const convertedTo = lead && data.opportunities.find((o) => o.leadId === item.id);
@@ -170,6 +187,13 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
         ["Company", item.company],
         ["Phone", item.phone],
         ["Email", item.email && <a href={`mailto:${item.email}`}>{item.email}</a>],
+        ["LinkedIn", <ExternalLink key="li" href={item.linkedin_url}>Profile</ExternalLink>],
+        ["Company Links", (item.company_website || item.company_linkedin_url) && (
+          <span key="co" className="link-pair">
+            <ExternalLink href={item.company_website}>Website</ExternalLink>
+            <ExternalLink href={item.company_linkedin_url}>LinkedIn</ExternalLink>
+          </span>
+        )],
       ]
     : [
         ["Account Name", item.account_id && <a href={`#/accounts/${item.account_id}`}>{item.account_name}</a>],
@@ -197,11 +221,6 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
             <button className="sf-button" onClick={() => openTask(item.id, collection)}>
               New Task
             </button>
-            {canEdit && (
-              <button className="sf-button" onClick={edit}>
-                Edit
-              </button>
-            )}
             {canConvert && lead && !closed && (
               <button className="sf-button" onClick={() => convert(item.id)}>
                 Convert
@@ -212,6 +231,26 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
                 Mark as Lost
               </button>
             )}
+            {/* Edit, Transfer, Reschedule demo and Delete sit under one "Actions ▾" menu */}
+            <ActionMenu
+              items={[
+                canEdit && { label: "Edit", onClick: edit },
+                canTransfer && !closed && {
+                  label: "Transfer",
+                  onClick: () => setModal({ type: "transfer", record: item }),
+                },
+                canEdit && lead && item.stage === "Demo" && {
+                  label: "Reschedule / Cancel Demo",
+                  onClick: () => setModal({ type: "cancelDemo", record: item }),
+                },
+                "-",
+                canEdit && lead && item.stage !== "Converted" && {
+                  label: "Delete",
+                  danger: true,
+                  onClick: () => setModal({ type: "delete", collection, record: item }),
+                },
+              ]}
+            />
           </div>
         </div>
         <dl className="highlights-fields">
@@ -277,7 +316,7 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
           ) : lead ? (
             <>
               <Section title="Lead Information">
-                <Field label="Lead Owner" onEdit={edit}>{item.owner}</Field>
+                <Field label="Lead Owner">{item.owner}</Field>
                 <Field label="Lead Status"><StageBadge stage={item.stage} /></Field>
                 <Field label="Name" onEdit={edit}>
                   {[item.salutation, item.first_name, item.last_name].filter(Boolean).join(" ")}
@@ -287,8 +326,16 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
                 <Field label="Industry" onEdit={edit}>{item.industry}</Field>
                 <Field label="Email" onEdit={edit}>{item.email && <a href={`mailto:${item.email}`}>{item.email}</a>}</Field>
                 <Field label="Phone" onEdit={edit}>{item.phone}</Field>
+                <Field label="Lead LinkedIn URL" onEdit={edit}><ExternalLink href={item.linkedin_url} /></Field>
+                <Field label="Location" onEdit={edit}>{item.location}</Field>
                 <Field label="Lead Source" onEdit={edit}>{item.source}</Field>
                 <Field label="Demo Date">{dateTime(item.demo_date)}</Field>
+              </Section>
+              <Section title="Company Details">
+                <Field label="Company Website" onEdit={edit}><ExternalLink href={item.company_website} /></Field>
+                <Field label="Company LinkedIn URL" onEdit={edit}><ExternalLink href={item.company_linkedin_url} /></Field>
+                <Field label="Turnover" onEdit={edit}>{item.annual_revenue != null ? `$${amount(item.annual_revenue)}` : ""}</Field>
+                <Field label="Headcount" onEdit={edit}>{headcount(item.employees)}</Field>
               </Section>
               {item.stage === "Lost" && (
                 <Section title="Lost Details">
@@ -299,6 +346,9 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
               <Section title="System Information">
                 <Field label="Created">{dateTime(item.created_at)}</Field>
                 <Field label="Last Modified">{dateTime(item.updated_at)}</Field>
+                <Field label="Last Transferred">
+                  {transfers[0] && `${dateTime(transfers[0].transferred_at)} (to ${transfers[0].to_user_name})`}
+                </Field>
                 <Field label="Converted Date">{dateTime(item.converted_at)}</Field>
                 <Field label="Closed Date">{dateTime(item.closed_at)}</Field>
               </Section>
@@ -317,7 +367,6 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
                 <Field label="Close Date" onEdit={edit}>{shortDate(item.expected_close_date)}</Field>
                 <Field label="Amount" onEdit={edit}>{amount(item.expected_value)}</Field>
                 <Field label="Stage"><StageBadge stage={item.stage} /></Field>
-                <Field label="Probability (%)" onEdit={edit}>{`${item.probability}%`}</Field>
                 {item.stage === "Won" && <Field label="Final Amount">{amount(item.final_value)}</Field>}
                 <Field label="Converted From">
                   {sourceLead && <a href={`#/leads/${sourceLead.id}`}>{sourceLead.name}</a>}
@@ -381,6 +430,27 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
               <p className="muted pad">No notes yet.</p>
             )}
           </Card>
+          {lead && (
+            <Card title={`Transfer History (${transfers.length})`} icon="contact">
+              {transfers.length ? (
+                <ul className="history-list">
+                  {transfers.map((t) => (
+                    <li key={t.id}>
+                      <b>
+                        {t.from_user_name || "Unassigned"} → {t.to_user_name}
+                      </b>
+                      {t.note && <p className="history-note">{t.note}</p>}
+                      <small>
+                        {t.transferred_by_name} • {dateTime(t.transferred_at)}
+                      </small>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="muted pad">Not transferred yet. Owned by {item.owner} since {dateTime(item.created_at)}.</p>
+              )}
+            </Card>
+          )}
           <Card title={`Stage History (${item.activity.length})`} icon="event">
             <ul className="history-list">
               {item.activity.map((a, i) => (
@@ -393,6 +463,7 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
               ))}
             </ul>
           </Card>
+          {!lead && <OpportunityAttachments key={item.id} opportunity={item} user={user} canEdit={canEdit} />}
         </aside>
       </div>
     </div>
