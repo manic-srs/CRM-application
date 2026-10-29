@@ -276,7 +276,7 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
 
   const rows = useMemo(() => {
     const term = search.trim().toLowerCase();
-    const list = applyFilters(data[collection].filter(filter), defs, active).filter((r) => !term || cols.some(([, get]) => String(get(r)).toLowerCase().includes(term)));
+    const list = (collection === "leads" ? data.leads : applyFilters(data[collection].filter(filter), defs, active)).filter((r) => !term || cols.some(([, get]) => String(get(r)).toLowerCase().includes(term)));
     const get = cols[sort.col][1];
     return [...list].sort((a, b) => {
       const x = get(a), y = get(b);

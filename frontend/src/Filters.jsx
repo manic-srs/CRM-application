@@ -65,7 +65,7 @@ const toDate = (value) => (!value ? null : String(value).length === 10 ? new Dat
 
 // Client-side filtering for lists that are fully loaded (Opportunities, Accounts, Contacts, Tasks)
 export function applyFilters(rows, defs, values) {
-  const active = defs.filter((f) => values[f.key]);
+  const active = defs.filter((f) => values[f.key] && f.get); // filters without get() run on the server (Leads)
   if (!active.length) return rows;
   const tests = active.map((f) => {
     if (f.type === "date") {
