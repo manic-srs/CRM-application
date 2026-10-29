@@ -93,7 +93,6 @@ export function opportunityPayload(values) {
     name: values.name.trim(),
     expected_value: numeric(values.expected_value),
     expected_close_date: optional(values.expected_close_date),
-    probability: Number(values.probability),
     primary_contact_id: numeric(values.primary_contact_id),
     owner_id: numeric(values.owner_id),
   };
@@ -195,6 +194,10 @@ export const api = {
     apiRequest(`/opportunities/${id}/won`, { method: "POST", body: values }),
   convert: (id, values) =>
     apiRequest(`/leads/${id}/convert`, { method: "POST", body: values }),
+  transferLead: (id, values) =>
+    apiRequest(`/leads/${id}/transfer`, { method: "POST", body: values }),
+  cancelDemo: (id, values) =>
+    apiRequest(`/leads/${id}/cancel-demo`, { method: "POST", body: values }),
   note: (collection, id, body) =>
     apiRequest("/notes", {
       method: "POST",
@@ -328,7 +331,10 @@ function normalizeRecord(record, collection, contacts) {
     notes: record.notes || [],
     activity: (record.history || [])
       .map((event) => ({
-        text: `${event.from_stage ? `${event.from_stage} → ` : "Created at "}${event.to_stage}${event.note ? `: ${event.note}` : ""}`,
+        text:
+          event.from_stage && event.from_stage === event.to_stage && event.note
+            ? event.note
+            : `${event.from_stage ? `${event.from_stage} → ` : "Created at "}${event.to_stage}${event.note ? `: ${event.note}` : ""}`,
         date: event.changed_at,
         by: event.changed_by_name,
       }))

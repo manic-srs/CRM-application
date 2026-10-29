@@ -103,9 +103,10 @@ def test_salesperson_sees_and_changes_only_own_records(client):
         assert res.status_code == 404, (url, res.text)
     assert client.put(f"/api/tasks/{priyas['tasks'][0]['id']}/complete").status_code == 404
     assert client.get("/api/emails", params={"lead_id": lid}).status_code == 404
-    # own records work as before; a salesperson can't hand a record to someone else
+    # own records work as before; a salesperson can transfer their own lead (Transfer leads) but can't
+    # create records for someone else
     assert client.put(f"/api/leads/{mine['id']}/stage", json={"stage": "Nurturing"}).status_code == 200
-    assert client.put(f"/api/leads/{mine['id']}", json={"owner_id": 1}).status_code == 403
+    assert client.put(f"/api/leads/{mine['id']}", json={"owner_id": 1}).status_code == 200
     assert client.post("/api/leads", json={"last_name": "X", "company": "Y", "owner_id": 1}).status_code == 403
     assert client.post("/api/tasks", json={"title": "T", "due_date": "2026-12-01T10:00:00", "owner_id": 1}).status_code == 403
 
@@ -149,11 +150,17 @@ def test_roles_and_permissions_matrix(client):
     assert login_as(client, 1).post("/api/leads", json={"last_name": "X", "company": "Y", "owner_id": 2}).status_code == 403
 
 
-def test_manager_edits_and_reassigns_any_record(client):
+def test_manager_edits_and_transfers_any_lead(client):
     ravis = lead(client)
     login_as(client, 1)
     assert client.put(f"/api/leads/{ravis['id']}/stage", json={"stage": "Nurturing"}).status_code == 200
-    assert client.put(f"/api/leads/{ravis['id']}", json={"owner_id": 1}).json()["owner_id"] == 1
+    # a Manager can transfer any lead they can see (Reassign owner)
+    moved = client.post(f"/api/leads/{ravis['id']}/transfer", json={"to_user_id": 1})
+    assert moved.status_code == 200 and moved.json()["owner_id"] == 1
+    assert client.put(f"/api/leads/{ravis['id']}", json={"owner_id": 2}).json()["owner_id"] == 2
+    # the Admin can take it away from Managers on the Permissions page
+    login_as(client, 3).put("/api/permissions", json={"role": "Manager", "permission": "reassign_owner", "allowed": False})
+    assert login_as(client, 1).post(f"/api/leads/{ravis['id']}/transfer", json={"to_user_id": 1}).status_code == 403
     history = client.get(f"/api/leads/{ravis['id']}/history").json()
     assert history[-1]["changed_by_name"] == "Priya Sharma"  # the real user is recorded, not what the app sends
 
@@ -165,15 +172,16 @@ def test_only_admin_manages_users(client):
         assert client.put("/api/users/2/password", json={"password": "Reset2026"}).status_code == 403
         assert client.post("/api/users/2/transfer", json={"to_user_id": 1}).status_code == 403
     login_as(client, 3)
-    # the role is set when the user is created and can't be changed later; name and email can
-    assert client.put("/api/users/2", json={"role": "Manager"}).status_code == 400
+    # the Admin can change name, email and role
     assert client.put("/api/users/2", json={"role": "Salesperson", "full_name": "Ravi K"}).json()["full_name"] == "Ravi K"
     assert client.put("/api/users/2/password", json={"password": "Reset2026"}).status_code == 200
     assert client.post("/api/auth/login", json={"email": "ravi@crm.test", "password": "Reset2026"}).status_code == 200
     # the Admin can't lock themselves out, and there is always an active Admin
     assert client.put("/api/users/3", json={"role": "Manager"}).status_code == 400
     assert client.put("/api/users/3", json={"is_active": False}).status_code == 400
-    assert client.put("/api/users/1", json={"role": "Admin"}).status_code == 400
+    # roles can change after creation (item 6); the date and time are saved
+    promoted = client.put("/api/users/1", json={"role": "Admin"}).json()
+    assert promoted["role"] == "Admin" and promoted["role_changed_at"]
     assert len(client.get("/api/users", params={"include_inactive": True}).json()) == 3
 
 
@@ -431,10 +439,11 @@ def test_stages_cannot_be_skipped(client, outbox):
     assert client.post(f"/api/leads/{other['id']}/lost", json={"lost_reason": "Price"}).status_code == 200
 
 
-def test_admin_edits_but_does_not_create_sales_records(client, outbox):
+def test_admin_creates_leads_but_not_opportunities(client, outbox):
     ravis = lead(client, name="Ravi Lead")
     login_as(client, 3)
-    assert client.post("/api/leads", json={"last_name": "Admin", "company": "X", "lead_source": "Other"}).status_code == 403
+    made = client.post("/api/leads", json={"last_name": "Admin", "company": "X", "owner_id": 2})
+    assert made.status_code == 201 and made.json()["owner_id"] == 2  # the Admin picks the owner
     assert client.put(f"/api/leads/{ravis['id']}", json={"title": "CTO"}).json()["title"] == "CTO"
     res = client.post(f"/api/leads/{ravis['id']}/convert", json={"completed_stages": ["Nurturing", "Demo"], "expected_value": 10})
     assert res.status_code == 403 and "Admins can't create opportunities" in res.json()["detail"]

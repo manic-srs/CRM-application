@@ -183,11 +183,11 @@ def test_assignment_notifies_new_owner(client, outbox):
     titles = [n["title"] for n in login_as(client, 1).get("/api/notifications").json()]
     assert "Lead assigned to you" in titles
     outbox.clear()
-    client.put(f"/api/leads/{lead['id']}", json={"owner_id": 2})  # Priya gives it to Ravi
+    login_as(client, 3).put(f"/api/leads/{lead['id']}", json={"owner_id": 2})  # the Admin gives it back to Ravi
     bell = login_as(client, 2).get("/api/notifications").json()
-    assert bell[0]["title"] == "Lead assigned to you" and "by Priya Sharma" in bell[0]["message"]
-    assert outbox[-1]["to"] == ["ravi@crm.test"]
-    # assigning to yourself sends nothing
+    assert bell[0]["title"] == "Lead assigned to you" and "by Asha Rao" in bell[0]["message"]
+    assert any(m["to"] == ["ravi@crm.test"] for m in outbox)
+    # setting the owner it already has sends nothing
     before = len(client.get("/api/notifications", params={"user_id": 2, "unread_only": False}).json())
     client.put(f"/api/leads/{lead['id']}", json={"owner_id": 2, "title": "CEO"})
     assert len(client.get("/api/notifications", params={"user_id": 2, "unread_only": False}).json()) == before

@@ -1,7 +1,7 @@
 import { canCreateSales } from "./permissions";
 import React, { useMemo, useState } from "react";
-import { amount, compact, shortDate } from "./format";
-import { Icon, ObjectIcon, StageBadge } from "./ui";
+import { amount, compact, shortDate, time } from "./format";
+import { Icon, ObjectIcon, Pagination, StageBadge, usePaged } from "./ui";
 
 const OPEN_LEAD = ["New", "Nurturing", "Demo"];
 const OPEN_OPP = ["Opportunity", "Proposal"];
@@ -41,6 +41,17 @@ function views(collection, user) {
   }[collection];
 }
 
+// Date on the first line, time underneath (keeps the list narrow enough to fit the screen)
+function DateCell({ value }) {
+  if (!value) return null;
+  return (
+    <span className="date-cell">
+      {shortDate(value)}
+      <small>{time(value)}</small>
+    </span>
+  );
+}
+
 function columns(collection, data) {
   const link = (r, text) => <a href={`#/${collection}/${r.id}`}>{text}</a>;
   const account = (r) => (r.account_id ? <a href={`#/accounts/${r.account_id}`}>{r.account_name}</a> : "");
@@ -51,9 +62,11 @@ function columns(collection, data) {
       ["Company", (r) => r.company || ""],
       ["Phone", (r) => r.phone || ""],
       ["Email", (r) => r.email || "", (r) => (r.email ? <a href={`mailto:${r.email}`}>{r.email}</a> : "")],
-      ["Lead Status", (r) => r.stage, (r) => <StageBadge stage={r.stage} />],
-      ["Lead Source", (r) => r.source || ""],
+      ["Status", (r) => r.stage, (r) => <StageBadge stage={r.stage} />],
+      ["Source", (r) => r.source || ""],
       ["Owner", (r) => r.owner || ""],
+      ["Created", (r) => r.created_at || "", (r) => <DateCell value={r.created_at} />, "date"],
+      ["Transferred", (r) => r.last_transferred_at || "", (r) => <DateCell value={r.last_transferred_at} />, "date"],
     ],
     opportunities: [
       ["Opportunity Name", (r) => r.name, (r) => link(r, r.name)],
@@ -61,15 +74,18 @@ function columns(collection, data) {
       ["Amount", (r) => Number(r.value ?? -1), (r) => amount(r.value), "num"],
       ["Close Date", (r) => r.expected_close_date || "", (r) => shortDate(r.expected_close_date)],
       ["Stage", (r) => r.stage, (r) => <StageBadge stage={r.stage} />],
-      ["Probability (%)", (r) => r.probability, (r) => r.probability, "num"],
       ["Owner", (r) => r.owner || ""],
+      ["Created", (r) => r.created_at || "", (r) => <DateCell value={r.created_at} />, "date"],
+      ["Last Modified", (r) => r.updated_at || "", (r) => <DateCell value={r.updated_at} />, "date"],
     ],
     accounts: [
       ["Account Name", (r) => r.name, (r) => link(r, r.name)],
       ["Industry", (r) => r.industry || ""],
       ["Phone", (r) => r.phone || ""],
       ["Website", (r) => r.website || ""],
-      ["Account Owner", (r) => r.owner_name || ""],
+      ["Owner", (r) => r.owner_name || ""],
+      ["Created", (r) => r.created_at || "", (r) => <DateCell value={r.created_at} />, "date"],
+      ["Last Modified", (r) => r.updated_at || "", (r) => <DateCell value={r.updated_at} />, "date"],
     ],
     contacts: [
       ["Name", (r) => r.full_name, (r) => link(r, r.full_name)],
@@ -77,7 +93,9 @@ function columns(collection, data) {
       ["Title", (r) => r.job_title || ""],
       ["Phone", (r) => r.phone || ""],
       ["Email", (r) => r.email || "", (r) => (r.email ? <a href={`mailto:${r.email}`}>{r.email}</a> : "")],
-      ["Contact Owner", (r) => ownerName(data, r.owner_id)],
+      ["Owner", (r) => ownerName(data, r.owner_id)],
+      ["Created", (r) => r.created_at || "", (r) => <DateCell value={r.created_at} />, "date"],
+      ["Last Modified", (r) => r.updated_at || "", (r) => <DateCell value={r.updated_at} />, "date"],
     ],
   }[collection];
 }
@@ -179,6 +197,7 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
       return (typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y))) * sort.dir;
     });
   }, [data, collection, search, sort, viewName]); // eslint-disable-line react-hooks/exhaustive-deps
+  const { pageRows, start, pager } = usePaged(rows, `${collection}|${viewName}|${search}`);
 
   const pickerViews = stageFilter ? [[`${stageFilter} ${LABEL[collection]}`], ...allViews] : allViews;
 
@@ -215,7 +234,7 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
             </div>
           </div>
           <div className="list-buttons">
-            {(collection === "leads" || collection === "opportunities") && !canCreateSales(user) ? null : NEW_TYPE[collection] ? (
+            {collection === "opportunities" && !canCreateSales(user) ? null : NEW_TYPE[collection] ? (
               <button className="sf-button" onClick={() => openNew(NEW_TYPE[collection])}>
                 New
               </button>
@@ -260,7 +279,7 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
                 <tr>
                   <th className="rownum" aria-label="Row number" />
                   {cols.map(([label, , , kind], i) => (
-                    <th key={label} className={kind === "num" ? "num" : ""}>
+                    <th key={label} className={kind || ""}>
                       <button onClick={() => setSort((s) => ({ col: i, dir: s.col === i ? -s.dir : 1 }))}>
                         {label}
                         {sort.col === i && <Icon name="down" size={12} className={sort.dir < 0 ? "flip" : ""} />}
@@ -270,20 +289,24 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r, i) => (
+                {pageRows.map((r, i) => (
                   <tr key={r.id}>
-                    <td className="rownum">{i + 1}</td>
-                    {cols.map(([label, get, render, kind]) => (
-                      <td key={label} className={kind === "num" ? "num" : ""}>
-                        {render ? render(r) : get(r)}
-                      </td>
-                    ))}
+                    <td className="rownum">{start + i + 1}</td>
+                    {cols.map(([label, get, render, kind]) => {
+                      const text = get(r);
+                      return (
+                        <td key={label} className={kind || ""} title={typeof text === "string" && text.length > 24 ? text : undefined}>
+                          {render ? render(r) : text}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>
             </table>
             {!rows.length && <p className="table-empty">No items to display.</p>}
           </div>
+          <Pagination {...pager} />
         </section>
       )}
     </div>

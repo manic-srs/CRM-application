@@ -24,6 +24,8 @@ class User(Base):
     email_assignments: Mapped[bool] = mapped_column(default=True)      # a record was assigned to me
     email_reminders: Mapped[bool] = mapped_column(default=True)        # task, demo, close-date, overdue reminders
     team_access: Mapped[bool] = mapped_column(default=False)           # a Manager let this user see the team's records
+    role_changed_at: Mapped[datetime | None]    # last time the Admin changed the role
+    access_changed_at: Mapped[datetime | None]  # last activate / deactivate / team access change
     created_at: Mapped[datetime | None] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(server_default=func.now(), onupdate=func.now())
 
@@ -126,6 +128,26 @@ class Lead(Base):
     tasks: Mapped[list["Task"]] = relationship(back_populates="lead")
     history: Mapped[list["StageHistory"]] = relationship(back_populates="lead")
     notes: Mapped[list["Note"]] = relationship(back_populates="lead")
+    transfers: Mapped[list["LeadTransfer"]] = relationship(back_populates="lead", order_by="LeadTransfer.id")
+
+
+class LeadTransfer(Base):
+    """Every time a lead gets a new owner: from whom, to whom, who did it and when."""
+
+    __tablename__ = "lead_transfers"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    lead_id: Mapped[int] = mapped_column(ForeignKey("leads.id", ondelete="CASCADE"))
+    from_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    to_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    transferred_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    note: Mapped[str | None] = mapped_column(String(300))
+    transferred_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    lead: Mapped[Lead] = relationship(back_populates="transfers")
+    from_user: Mapped[User | None] = relationship(foreign_keys=[from_user_id])
+    to_user: Mapped[User] = relationship(foreign_keys=[to_user_id])
+    transferred_by: Mapped[User] = relationship(foreign_keys=[transferred_by_id])
 
 
 class Opportunity(Base):

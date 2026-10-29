@@ -317,6 +317,6 @@ def test_close_date_reminder(client):
 def test_new_owner_gets_the_reminders(client):
     lead = new_lead(client)
     client.put(f"/api/leads/{lead['id']}/stage", json={"completed_stages": ["Nurturing"], "stage": "Demo", "demo_date": "2026-12-01T11:00:00"})
-    login_as(client, 1).put(f"/api/leads/{lead['id']}", json={"owner_id": 1})  # a Manager reassigns it
+    login_as(client, 3).put(f"/api/leads/{lead['id']}", json={"owner_id": 1})  # the Admin transfers it to Priya
     assert {t["owner_id"] for t in open_tasks(client.get(f"/api/leads/{lead['id']}").json())} == {1}
 

@@ -111,7 +111,7 @@ def change_stage(opportunity_id: int, data: schemas.OpportunityStageChange, db: 
     record_stage_change(db, opportunity_id=opp.id, from_stage=old, to_stage=data.stage, changed_by_id=by, note=data.note)
     auto_close_open_tasks(db, opportunity_id=opp.id, keep=(CLOSE_DATE_TASK,))  # the close-date reminder stays
     task = create_auto_task(db, stage=data.stage, owner_id=opp.owner_id, record_name=opp.name, opportunity_id=opp.id)
-    details = [f"Probability: {opp.probability}%"]
+    details = []
     if data.note:
         details.append(f"Note: {data.note}")
     stage_notice(

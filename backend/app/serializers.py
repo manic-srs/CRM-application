@@ -33,6 +33,7 @@ def lead_out(lead: Lead) -> schemas.LeadOut:
         update={
             "owner_name": lead.owner.full_name if lead.owner else None,
             "opportunity_id": lead.opportunity.id if lead.opportunity else None,
+            "last_transferred_at": lead.transfers[-1].transferred_at if lead.transfers else None,
         }
     )
 
@@ -44,7 +45,16 @@ def lead_detail(lead: Lead) -> schemas.LeadDetail:
         tasks=[task_out(t) for t in sorted(lead.tasks, key=lambda t: (t.status != "Open", t.due_date))],
         notes=[note_out(n) for n in sorted(lead.notes, key=lambda n: n.id, reverse=True)],
         history=[history_out(h) for h in sorted(lead.history, key=lambda h: h.id)],
+        transfers=[transfer_out(t) for t in sorted(lead.transfers, key=lambda t: t.id, reverse=True)],
     )
+
+
+def transfer_out(t) -> schemas.LeadTransferOut:
+    return schemas.LeadTransferOut.model_validate(t).model_copy(update={
+        "from_user_name": t.from_user.full_name if t.from_user else None,
+        "to_user_name": t.to_user.full_name if t.to_user else None,
+        "transferred_by_name": t.transferred_by.full_name if t.transferred_by else None,
+    })
 
 
 def account_out(a: Account) -> schemas.AccountOut:
