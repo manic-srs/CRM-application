@@ -202,3 +202,55 @@ See [backend/README.md](backend/README.md) and [frontend/README.md](frontend/REA
 - Bulk lead import
 - Email templates
 - Inbound email sync
+
+## AI email drafting
+
+In **New Email → Message**, click the **Describe your message** bar inside the message
+box. It opens an email assistant with four numbered choices for the record’s **current stage**.
+Click an option or type its number (1–4). In AI mode, you can also type a custom email description.
+The menu is loaded from the backend whenever the assistant opens or you choose **Start over**.
+The stage is read from the database, and choices that no longer match it are rejected.
+
+| Lead stage | Four email choices |
+| --- | --- |
+| New | Introduce our company; Ask about requirements; Offer helpful information; Schedule an introductory call |
+| Nurturing | Check in on interest; Offer helpful information; Offer to answer questions; Arrange a follow-up |
+| Demo | Invite to a demo; Confirm demo arrangements; Follow up on the demo; Ask for demo questions |
+| Converted | Thank them for moving forward; Introduce the account team; Confirm next steps; Arrange a follow-up |
+| Lost | Thank them for their time; Ask for feedback; Leave the door open; Send a polite closing email |
+
+Opportunities also get four choices for their Opportunity, Proposal, Won, or Lost stage.
+Accounts and contacts, which have no sales stage, use a general customer email menu.
+
+Review the draft inside the assistant, then choose **Use draft** to replace the subject
+and message. Both remain editable. **Discard**, **Start over**, or closing the assistant
+leaves your existing email untouched. Drafting never changes a CRM stage or sends an email.
+Sending remains the separate **Send** / **Open in Outlook** action.
+
+For local testing without an API key, put `EMAIL_DRAFT_MODE=sample` in the root `.env`
+and run `docker compose up -d --build`. The composer shows **Local sample mode** and
+the four email options. This mode uses fixed stage-specific examples and does not
+interpret the instructions box or call an AI model. It verifies the menu/stage/preview/apply workflow,
+not AI quality. The sample stays editable and sending remains a separate action.
+
+To enable real AI generation, create a local `.env` beside `docker-compose.yml` (or add to your existing one):
+
+```dotenv
+EMAIL_DRAFT_MODE=openai
+OPENAI_API_KEY=your-openai-api-key
+OPENAI_EMAIL_MODEL=gpt-4.1-mini
+```
+
+Then run `docker compose up -d --build`. Docker mounts the same root `.env` file as a
+read-only secret at `/run/secrets/ai_settings`; the key is not copied into the image or
+Docker environment configuration. It is read into backend memory and sent only to OpenAI
+as the authorization header for drafting requests. Keep the key on the backend; never put it in a
+`VITE_` variable or commit `.env`. For a backend started directly with Uvicorn, export these
+environment variables in its terminal or put them in `backend/.env` before starting it.
+
+The backend calls the OpenAI Responses API with structured subject/body output and
+`store: false`. It shares the drafting request and minimal customer context (name,
+company when available, and current stage). The existing composer text is not included in requests from the assistant menu. Attachments, internal notes, lost reasons, and email history
+are not included. The sender signature is added locally after generation.
+Only signed-in users with email permission and access to the related record can generate drafts.
+Without a configured key, manual email composition still works.

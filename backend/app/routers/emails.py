@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Respon
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import mailer, schemas
+from app import ai_email, email_options, mailer, schemas
 from app.database import get_db
 from app.models import Account, Contact, Email, EmailAttachment, Lead, Opportunity, User
 from app.security import acting_user, require, require_view
@@ -124,6 +124,43 @@ async def send_email(
     return email_out(email)
 
 
+def draft_record(db: Session, record_field: str, record_id: int):
+    require("send_emails")
+    model, label = {
+        "lead_id": (Lead, "Lead"), "opportunity_id": (Opportunity, "Opportunity"),
+        "contact_id": (Contact, "Contact"), "account_id": (Account, "Account"),
+    }[record_field]
+    record = get_or_404(db, model, record_id, label)
+    require_view(record.owner_id, label.lower())
+    return record, label
+
+
+@router.get("/draft-options")
+def draft_options(record_field: ai_email.RecordField, record_id: int = Query(gt=0), db: Session = Depends(get_db)):
+    """Exactly four writing choices for the visible record's current database stage."""
+    record, _ = draft_record(db, record_field, record_id)
+    return email_options.menu(getattr(record, "stage", None))
+
+
+@router.post("/draft", response_model=ai_email.DraftResponse)
+async def draft_email(data: ai_email.DraftRequest, db: Session = Depends(get_db)):
+    """Generate an editable draft for a visible record. Does not send or save an email."""
+    me = require("send_emails")
+    record, label = draft_record(db, data.record_field, data.record_id)
+    # Minimum customer-facing context; no notes, lost reasons, amounts, or email history.
+    context = {"record_type": label, "name": getattr(record, "name", None), "current_stage": getattr(record, "stage", None)}
+    if isinstance(record, Lead):
+        context.update(first_name=record.first_name, last_name=record.last_name, company=record.company)
+    elif isinstance(record, Contact):
+        context.update(first_name=record.first_name, last_name=record.last_name)
+    elif isinstance(record, Opportunity) and record.primary_contact_id:
+        contact = db.get(Contact, record.primary_contact_id)
+        if contact is not None and (contact.owner_id == me.id or me.sees_team):
+            context.update(first_name=contact.first_name, last_name=contact.last_name)
+    draft = await ai_email.generate_draft(data, context, me.full_name, me.email)
+    return ai_email.DraftResponse(**draft.model_dump(), stage=context["current_stage"], mode=ai_email.mode())
+
+
 @router.post("/{email_id}/resend", response_model=schemas.EmailOut)
 def resend_email(email_id: int, db: Session = Depends(get_db)):
     """Send a failed email again (same recipients, text and attachments). The saved email gets the new status."""
@@ -154,7 +191,8 @@ def email_settings():
     info = mailer.mode()
     sender = mailer.settings()["sender"]
     return {"from_address": sender, "from_display": f"{me.full_name} via SalesTrack <{sender}>",
-            "reply_to": me.email, "mode": info.get("mode"), "detail": info.get("detail")}
+            "reply_to": me.email, "mode": info.get("mode"), "detail": info.get("detail"),
+            "ai_drafting_enabled": ai_email.configured(), "draft_mode": ai_email.mode()}
 
 
 @router.get("", response_model=list[schemas.EmailOut])
