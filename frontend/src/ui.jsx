@@ -1,4 +1,5 @@
 // Small building blocks used by every screen: icons, object icons, ring charts, path bar, empty states.
+import { shortDate, time } from "./format";
 import React, { useEffect, useState } from "react";
 
 const paths = {
@@ -374,5 +375,16 @@ export function ActionMenu({ items, label = "Actions" }) {
         </div>
       )}
     </div>
+  );
+}
+
+// Date on the first line, time underneath (lists: Created, Last Modified)
+export function DateCell({ value }) {
+  if (!value) return null;
+  return (
+    <span className="date-cell">
+      {shortDate(value)}
+      <small>{time(value)}</small>
+    </span>
   );
 }

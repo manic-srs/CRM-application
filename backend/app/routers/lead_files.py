@@ -8,7 +8,7 @@ Uploaded leads start at New. They get no welcome email, no notification each and
 import csv
 import io
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -304,12 +304,14 @@ LIST_VIEWS = {
     "my_uploaded": lambda q, me: q.where(Lead.uploaded_from.is_not(None), Lead.owner_id == me.id),
 }
 SORTS = {"name": Lead.name, "title": Lead.title, "company": Lead.company, "phone": Lead.phone, "email": Lead.email,
-         "stage": Lead.stage, "source": Lead.source, "owner": User.full_name, "created": Lead.created_at}
+         "stage": Lead.stage, "source": Lead.source, "owner": User.full_name, "created": Lead.created_at,
+         "modified": Lead.updated_at}
 
 
-def as_utc(value: datetime) -> datetime:
-    """Dates from the browser come with their time zone; lead times are stored in UTC without one."""
-    return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
+def as_local(value: datetime) -> datetime:
+    """Dates from the browser come with their time zone; lead times are stored in the server's local time
+    (TZ in docker-compose.yml) without one, so compare in that time."""
+    return value.astimezone().replace(tzinfo=None) if value.tzinfo else value
 
 
 @router.get("/page")
@@ -320,6 +322,8 @@ def leads_page(
     owner: str | None = Query(None, description="Owner user id, or 'me'"),
     created_from: datetime | None = Query(None, description="Created on or after (ISO date/time)"),
     created_to: datetime | None = Query(None, description="Created before (ISO date/time)"),
+    modified_from: datetime | None = Query(None, description="Last modified on or after (ISO date/time)"),
+    modified_to: datetime | None = Query(None, description="Last modified before (ISO date/time)"),
     search: str | None = Query(None, description="Name, company, title, email, phone or location"),
     sort: str = Query("created", description=", ".join(SORTS)),
     direction: str = Query("desc", pattern="^(asc|desc)$"),
@@ -346,10 +350,11 @@ def leads_page(
             query = query.where(Lead.owner_id == int(owner))
         else:
             raise HTTPException(status_code=400, detail="Unknown owner")
-    if created_from:
-        query = query.where(Lead.created_at >= as_utc(created_from))
-    if created_to:
-        query = query.where(Lead.created_at < as_utc(created_to))
+    for column, start, end in ((Lead.created_at, created_from, created_to), (Lead.updated_at, modified_from, modified_to)):
+        if start:
+            query = query.where(column >= as_local(start))
+        if end:
+            query = query.where(column < as_local(end))
     if search and search.strip():
         like = f"%{search.strip()}%"
         query = query.where(or_(Lead.name.ilike(like), Lead.company.ilike(like), Lead.email.ilike(like),

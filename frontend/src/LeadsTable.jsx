@@ -2,21 +2,23 @@
 // page by page with search and sorting, so it stays fast with 100,000s of leads. Uploaded leads have Lead Source "Upload".
 import React, { useEffect, useState } from "react";
 import { apiRequest } from "./api";
-import { Icon, StageBadge } from "./ui";
+import { DateCell, Icon, StageBadge } from "./ui";
+import { dateTime } from "./format";
 import { filterSummary, rangeBounds, Th } from "./Filters";
 
 const PAGE = 100;
 // [heading, sort key, column width]
 const COLUMNS = [
-  ["Name", "name", 130],
-  ["Company", "company", 140],
-  ["Title", "title", 110],
-  ["Email", "email", 140],
-  ["Phone", "phone", 160],
-  ["Lead Status", "stage", 115],
-  ["Lead Source", "source", 118],
-  ["Owner", "owner", 125],
+  ["Name", "name", 115],
+  ["Company", "company", 125],
+  ["Title", "title", 95],
+  ["Email", "email", 130],
+  ["Phone", "phone", 134],
+  ["Status", "stage", 100],
+  ["Source", "source", 90],
+  ["Owner", "owner", 115],
   ["Created", "created", 100],
+  ["Last Modified", "modified", 125],
 ];
 
 // "+91 98200 00110", "+1 416-555-0114", "4165550114" -> one consistent style with single spaces
@@ -57,10 +59,11 @@ export default function LeadsTable({ view, stage, filters = {}, defs = [], onFil
     if (stage || filters.stage) params.set("stage", stage || filters.stage);
     if (filters.source) params.set("source", filters.source);
     if (filters.owner) params.set("owner", filters.owner);
-    if (filters.created) {
-      const [from, to] = rangeBounds(filters.created, filters.created_from, filters.created_to);
-      if (from) params.set("created_from", from.toISOString());
-      if (to) params.set("created_to", to.toISOString());
+    for (const key of ["created", "modified"]) {
+      if (!filters[key]) continue;
+      const [from, to] = rangeBounds(filters[key], filters[`${key}_from`], filters[`${key}_to`]);
+      if (from) params.set(`${key}_from`, from.toISOString());
+      if (to) params.set(`${key}_to`, to.toISOString());
     }
     if (term) params.set("search", term);
     let current = true;
@@ -113,7 +116,7 @@ export default function LeadsTable({ view, stage, filters = {}, defs = [], onFil
         <div className="table-scroll">
           <table className="sf-table leads-table">
             <colgroup>
-              <col style={{ width: 40 }} />
+              <col style={{ width: 52 }} />
               {COLUMNS.map(([, col, width]) => (
                 <col key={col} style={{ width }} />
               ))}
@@ -151,7 +154,12 @@ export default function LeadsTable({ view, stage, filters = {}, defs = [], onFil
                   </td>
                   <Cell title={l.uploaded_from ? `Uploaded from ${l.uploaded_from}` : l.source}>{l.source}</Cell>
                   <Cell>{l.owner_name || ""}</Cell>
-                  <Cell className="date">{l.created_at ? new Date(l.created_at).toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "2-digit" }) : ""}</Cell>
+                  <Cell className="date" title={dateTime(l.created_at)}>
+                    <DateCell value={l.created_at} />
+                  </Cell>
+                  <Cell className="date" title={dateTime(l.updated_at)}>
+                    <DateCell value={l.updated_at} />
+                  </Cell>
                 </tr>
               ))}
             </tbody>

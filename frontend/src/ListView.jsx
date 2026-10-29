@@ -4,8 +4,8 @@ import LeadsTable from "./LeadsTable";
 import { applyFilters, filterSummary, opts, ownerOptions, Th, useFilters } from "./Filters";
 import { LEAD_SOURCES, LEAD_STAGES, OPPORTUNITY_STAGES, UPLOAD_SOURCE } from "./domain";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { amount, compact, shortDate, time } from "./format";
-import { Icon, ObjectIcon, Pagination, StageBadge, usePaged } from "./ui";
+import { amount, compact, shortDate } from "./format";
+import { DateCell, Icon, ObjectIcon, Pagination, StageBadge, usePaged } from "./ui";
 
 const OPEN_LEAD = ["New", "Nurturing", "Demo"];
 const OPEN_OPP = ["Opportunity", "Proposal"];
@@ -56,17 +56,6 @@ function views(collection, user) {
       ["My Contacts", mine],
     ],
   }[collection];
-}
-
-// Date on the first line, time underneath (keeps the list narrow enough to fit the screen)
-function DateCell({ value }) {
-  if (!value) return null;
-  return (
-    <span className="date-cell">
-      {shortDate(value)}
-      <small>{time(value)}</small>
-    </span>
-  );
 }
 
 function columns(collection, data) {
@@ -123,6 +112,7 @@ function filterDefs(collection, data, user, viewName, fixedStage) {
   const team = can(user, "view_team_records") && !viewName.startsWith("My ");
   const owner = team ? [{ key: "owner", column: "Owner", label: "Owner", options: ownerOptions(data.users || [], user), get: (r) => String(r.owner_id) }] : [];
   const created = { key: "created", column: "Created", label: "Created", type: "date", get: (r) => r.created_at };
+  const modified = { key: "modified", column: "Last Modified", label: "Last Modified", type: "date", get: (r) => r.updated_at };
   const stages = (all, open) => {
     if (fixedStage) return null;
     if (/Open/.test(viewName)) return open;
@@ -137,6 +127,7 @@ function filterDefs(collection, data, user, viewName, fixedStage) {
       { key: "source", label: "Lead Source", options: opts([...LEAD_SOURCES, UPLOAD_SOURCE]) },
       ...owner,
       created,
+      modified,
     ];
   }
   if (collection === "opportunities") {
@@ -146,11 +137,12 @@ function filterDefs(collection, data, user, viewName, fixedStage) {
       ...owner,
       { key: "close", column: "Close Date", label: "Close Date", type: "date", future: true, get: (r) => r.expected_close_date },
       created,
+      modified,
     ];
   }
   if (collection === "accounts")
-    return [{ key: "industry", column: "Industry", label: "Industry", options: opts(distinct(data.accounts.map((a) => a.industry))), get: (r) => r.industry }, ...owner, created];
-  return [{ key: "account", column: "Account Name", label: "Account", options: opts(distinct(data.contacts.map((c) => c.account_name))), get: (r) => r.account_name }, ...owner, created];
+    return [{ key: "industry", column: "Industry", label: "Industry", options: opts(distinct(data.accounts.map((a) => a.industry))), get: (r) => r.industry }, ...owner, created, modified];
+  return [{ key: "account", column: "Account Name", label: "Account", options: opts(distinct(data.contacts.map((c) => c.account_name))), get: (r) => r.account_name }, ...owner, created, modified];
 }
 
 // keep only filter values the current view offers (e.g. a "Lost" status left over from All Leads)

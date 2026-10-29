@@ -2939,8 +2939,23 @@ a.pill:hover {
 }
 
 .upload-intro {
-  margin: 0 0 4px;
+  margin: 0 0 8px;
+  color: var(--text);
+}
+.upload-rules {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+}
+.upload-rules li {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #f3f6fb;
   color: var(--text-weak);
+  font-size: 12px;
 }
 
 .history-table td {
@@ -3011,8 +3026,10 @@ a.pill:hover {
   font-variant-numeric: tabular-nums;
 }
 .leads-table td.rownum {
+  padding: 10px 8px 10px 4px;
   color: var(--text-weak);
   text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 .leads-table tbody tr {
   height: 44px;
@@ -3024,25 +3041,33 @@ a.pill:hover {
   align-items: center;
   min-height: 36px;
 }
+/* headers with a sort/filter row: no cell padding, the buttons carry it (same 8px as the cells below) */
+.sf-table th:has(> .th-cell) {
+  padding: 0;
+}
+.sf-table th .th-cell > button {
+  margin: 0;
+}
 .sf-table th .th-sort,
 .sf-table th button.th-sort {
   display: flex;
   flex: 1;
   align-items: center;
   gap: 4px;
+  width: auto;
   min-width: 0;
-  padding: 8px 10px;
+  padding: 8px;
   color: var(--text-weak);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.leads-table th .th-sort {
+.sf-table.leads-table th .th-sort {
   padding: 10px 12px;
 }
 .sf-table th.filtered .th-sort,
 .sf-table th .th-sort:has(+ .th-filter) {
-  padding-right: 4px;
+  padding-right: 4px !important;
 }
 .sf-table th.num .th-sort {
   justify-content: flex-end;

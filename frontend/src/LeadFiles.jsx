@@ -20,8 +20,8 @@ const OBJECTS = {
     label: "Leads",
     one: "lead",
     sample: SAMPLE_LEADS,
-    intro:
-      "Upload an Excel (.xlsx) or CSV file, for example an Apollo export. Last Name and Company are required. Uploaded leads start at New; no emails are sent to them. Leads that are already open are skipped.",
+    intro: "Import leads from an Excel (.xlsx) or CSV file, such as an Apollo export.",
+    rules: ["Required: Last Name, Company", "Duplicates of open leads are skipped", "Leads start at New", "No emails are sent"],
     columns: [
       ["Name", (l) => [l.first_name, l.last_name].filter(Boolean).join(" ")],
       ["Title", (l) => l.title],
@@ -36,8 +36,8 @@ const OBJECTS = {
     label: "Opportunities",
     one: "opportunity",
     sample: SAMPLE_OPPS,
-    intro:
-      "Upload an Excel (.xlsx) or CSV file of deals. Each row needs an Opportunity Name or a Company. Stage can be Opportunity, Proposal, Won or Lost (Won needs an amount). The company becomes an account; a contact is added when the row has one. Deals that already exist are skipped.",
+    intro: "Import opportunities from an Excel (.xlsx) or CSV file.",
+    rules: ["Required: Opportunity Name or Company", "Stage: Opportunity, Proposal, Won or Lost", "Won requires an Amount", "Existing deals are skipped"],
     columns: [
       ["Opportunity", (o) => o.name],
       ["Company", (o) => o.company],
@@ -149,6 +149,11 @@ export function UploadLeads({ object = "leads", user, data, onClose, onDone, not
       }
     >
       <p className="upload-intro">{info.intro}</p>
+      <ul className="upload-rules">
+        {info.rules.map((rule) => (
+          <li key={rule}>{rule}</li>
+        ))}
+      </ul>
       <div
         className={`dropzone upload-zone ${file ? "has-file" : ""}`}
         onDragOver={(e) => e.preventDefault()}
@@ -160,11 +165,11 @@ export function UploadLeads({ object = "leads", user, data, onClose, onDone, not
         <button type="button" className="sf-button small" onClick={() => input.current.click()} disabled={!!busy}>
           {file ? "Change file" : "Choose file"}
         </button>
-        <span className={file ? "" : "muted"}>{file ? `${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)` : "or drop it here (up to 100,000 rows, 50 MB)"}</span>
+        <span className={file ? "" : "muted"}>{file ? `${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)` : "or drag it here · .xlsx or .csv, up to 100,000 rows (50 MB)"}</span>
         <input ref={input} type="file" hidden accept=".xlsx,.csv" onChange={(e) => (pick(e.target.files[0]), (e.target.value = ""))} />
       </div>
       <button type="button" className="link sample-link" onClick={() => saveText(`SalesTrack-${object}-upload-sample.csv`, info.sample)}>
-        Download a sample file
+        Download sample file
       </button>
       {canAssign && (
         <label className="field">
@@ -191,20 +196,20 @@ export function UploadLeads({ object = "leads", user, data, onClose, onDone, not
               <b>{n(check.ready)}</b> ready to upload
             </span>
             <span className="warn">
-              <b>{n(check.duplicates)}</b> duplicates skipped
+              <b>{n(check.duplicates)}</b> duplicates
             </span>
             <span className="bad">
-              <b>{n(check.invalid)}</b> invalid rows
+              <b>{n(check.invalid)}</b> invalid
             </span>
             {check.with_blanks > 0 && (
               <span className="warn">
-                <b>{n(check.with_blanks)}</b> with a field left blank
+                <b>{n(check.with_blanks)}</b> with blank fields
               </span>
             )}
           </div>
           <p className="field-hint">
-            Owner: <b>{check.owner}</b> • Columns used: {check.columns_used.join(", ")}
-            {check.columns_ignored.length > 0 && <> • Not used: {check.columns_ignored.join(", ")}</>}
+            Owner: <b>{check.owner}</b> • Matched columns: {check.columns_used.join(", ")}
+            {check.columns_ignored.length > 0 && <> • Ignored: {check.columns_ignored.join(", ")}</>}
           </p>
           {check.preview.length > 0 && (
             <div className="table-scroll">
@@ -231,7 +236,7 @@ export function UploadLeads({ object = "leads", user, data, onClose, onDone, not
           {check.errors.length > 0 && (
             <details className="upload-errors">
               <summary>
-                {n(check.duplicates + check.invalid)} row{check.duplicates + check.invalid === 1 ? "" : "s"} will be skipped
+                {n(check.duplicates + check.invalid)} row{check.duplicates + check.invalid === 1 ? "" : "s"} skipped
               </summary>
               <ul>
                 {check.errors.slice(0, 20).map((e) => (
@@ -241,14 +246,14 @@ export function UploadLeads({ object = "leads", user, data, onClose, onDone, not
                 ))}
               </ul>
               <button type="button" className="link" onClick={errorFile}>
-                Download the list of skipped rows
+                Download skipped rows
               </button>
             </details>
           )}
           {check.warnings?.length > 0 && (
             <details className="upload-errors">
               <summary>
-                {n(check.with_blanks)} row{check.with_blanks === 1 ? "" : "s"} will be uploaded with a wrong value left blank (fill it in later)
+                {n(check.with_blanks)} row{check.with_blanks === 1 ? "" : "s"} with invalid values (imported with those fields blank)
               </summary>
               <ul>
                 {check.warnings.slice(0, 20).map((w) => (
@@ -259,7 +264,7 @@ export function UploadLeads({ object = "leads", user, data, onClose, onDone, not
               </ul>
             </details>
           )}
-          {check.ready === 0 && <p className="form-error">Nothing new to upload in this file.</p>}
+          {check.ready === 0 && <p className="form-error">No new records to import.</p>}
         </div>
       )}
       {error && (
@@ -278,7 +283,7 @@ export function DownloadLeads({ object = "leads", onClose, notify }) {
   const submit = async (e) => {
     e.preventDefault();
     const form = Object.fromEntries(new FormData(e.currentTarget));
-    if ((form.reason || "").trim().length < 5) return setError("Give a reason for the download (at least 5 characters).");
+    if ((form.reason || "").trim().length < 5) return setError("Enter a reason (at least 5 characters).");
     setBusy(true);
     setError("");
     try {
@@ -333,15 +338,15 @@ export function DownloadLeads({ object = "leads", onClose, notify }) {
           </label>
         </div>
         <label className="check-field">
-          <input type="checkbox" name="mine" /> Only {info.label.toLowerCase()} I own
+          <input type="checkbox" name="mine" /> Only my {info.label.toLowerCase()}
         </label>
         <label className="field">
           <span>
             Reason <i>*</i>
           </span>
-          <textarea name="reason" rows={3} maxLength={300} required placeholder="e.g. Monthly follow-up list for the team review" />
+          <textarea name="reason" rows={3} maxLength={300} required placeholder="e.g. Monthly pipeline review" />
         </label>
-        <p className="field-hint">Downloads are recorded with your name, the date and time, the filter and this reason.</p>
+        <p className="field-hint">Every download is logged with your name, time, filter and reason.</p>
         {error && (
           <p className="form-error" role="alert">
             {error}

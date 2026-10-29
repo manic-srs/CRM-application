@@ -1,3 +1,4 @@
+import srsLogo from "./assets/srs-logo.png";
 import React, { useState } from "react";
 import { api } from "./api";
 import "./login.css";
@@ -70,14 +71,7 @@ export default function Login({ onLogin, sessionExpired = false }) {
       </section>
       <section className="signin-panel" aria-labelledby="signin-title">
         <div className="signin-corner-logo">
-          <svg className="signin-srs-logo" viewBox="0 0 64 64" role="img" aria-label="SRS logo">
-            <circle cx="32" cy="32" r="29" fill="#eb681b"/>
-            <circle cx="32" cy="12" r="5" fill="#fff"/>
-            <g fill="none" stroke="#fff" strokeWidth="5.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="m18 12 14 20 14-20M32 32v29"/>
-              <path d="M15 24c-12 10 12 15 3 29m31-29c12 10-12 15-3 29"/>
-            </g>
-          </svg>
+          <img className="signin-srs-logo" src={srsLogo} alt="SRS Consulting Inc" />
         </div>
         <div className="signin-content">
           <div className="signin-card">

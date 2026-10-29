@@ -161,6 +161,9 @@ def test_leads_list_page_views_search_and_sort(client, outbox):
     assert client.get("/api/leads/page", params={"created_from": "2000-01-01T00:00:00Z"}).json()["total"] == 6
     assert client.get("/api/leads/page", params={"created_to": "2000-01-01T00:00:00Z"}).json()["total"] == 0
     assert client.get("/api/leads/page", params={"owner": "x"}).status_code == 400
+    assert client.get("/api/leads/page", params={"modified_from": "2000-01-01T00:00:00Z"}).json()["total"] == 6
+    assert client.get("/api/leads/page", params={"modified_to": "2000-01-01T00:00:00Z"}).json()["total"] == 0
+    assert client.get("/api/leads/page", params={"sort": "modified"}).status_code == 200
     # a Manager sees everyone's leads; another salesperson's are hidden from Ravi
     assert login_as(client, 1).get("/api/leads/page", params={"view": "my_open"}).json()["total"] == 0
     assert login_as(client, 1).get("/api/leads/page").json()["total"] == 6
