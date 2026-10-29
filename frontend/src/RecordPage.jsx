@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import OpportunityAttachments from "./Attachments";
 import { EmailList, useEmails } from "./Email";
 import { can, canCreateSales } from "./permissions";
 import { amount, dateTime, shortDate } from "./format";
@@ -393,6 +394,7 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
               ))}
             </ul>
           </Card>
+          {!lead && <OpportunityAttachments key={item.id} opportunity={item} user={user} canEdit={canEdit} />}
         </aside>
       </div>
     </div>

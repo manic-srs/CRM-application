@@ -101,18 +101,32 @@ export function opportunityPayload(values) {
 const actor = (editing, actorId) =>
   actorId ? { [editing ? "changed_by_id" : "created_by_id"]: Number(actorId) } : {};
 
-// Multipart upload (email with attachments); JSON errors are read like apiRequest does
-async function upload(path, formData) {
+// Multipart upload (email with attachments, opportunity files); JSON errors are read like apiRequest does.
+// The messages default to the email ones.
+async function upload(
+  path,
+  formData,
+  {
+    failed = "The email could not be sent.",
+    tooLarge = "The attachments are too large.",
+    timedOut,
+    timeout = 60000,
+  } = {},
+) {
   let response;
   try {
     response = await fetch(`${BASE}${path}`, {
       method: "POST",
       body: formData,
       headers: authHeaders(),
-      signal: AbortSignal.timeout(60000),
+      signal: AbortSignal.timeout(timeout),
     });
-  } catch {
-    throw new Error("Cannot reach the backend. Check that it is running and try again.");
+  } catch (error) {
+    throw new Error(
+      error.name === "TimeoutError" && timedOut
+        ? timedOut
+        : "Cannot reach the backend. Check that it is running and try again.",
+    );
   }
   checkLogin(response);
   const result = await response.json().catch(() => null);
@@ -124,11 +138,35 @@ async function upload(path, formData) {
         : Array.isArray(detail)
           ? detail.map((d) => `${d.loc.at(-1)}: ${d.msg}`).join("; ")
           : response.status === 413
-            ? "The attachments are too large."
-            : "The email could not be sent.",
+            ? tooLarge
+            : failed,
     );
   }
   return result;
+}
+
+// A stored file as a Blob, fetched with the login header (the token is never put in the address)
+async function fileRequest(path) {
+  let response;
+  try {
+    response = await fetch(`${BASE}${path}`, {
+      headers: authHeaders(),
+      cache: "no-store",
+      signal: AbortSignal.timeout(120000),
+    });
+  } catch (error) {
+    throw new Error(
+      error.name === "TimeoutError"
+        ? "The file took too long to download. Try again."
+        : "Cannot reach the backend. Check that it is running and try again.",
+    );
+  }
+  checkLogin(response);
+  if (!response.ok) {
+    const detail = (await response.json().catch(() => null))?.detail;
+    throw new Error(typeof detail === "string" ? detail : "The file could not be opened.");
+  }
+  return response.blob();
 }
 
 export const api = {
@@ -232,6 +270,22 @@ export const api = {
   emails: (field, id) => apiRequest(`/emails?${field}=${encodeURIComponent(id)}`),
   // plain links can't send headers, so the download passes the login token in the address
   attachmentUrl: (id) => `${BASE}/emails/attachments/${id}?token=${encodeURIComponent(token)}`,
+  // Opportunity attachments: one file per upload. Files are fetched with the login header (see fileRequest).
+  attachments: (opportunityId) => apiRequest(`/opportunities/${opportunityId}/attachments`),
+  uploadAttachment: (opportunityId, file) => {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    return upload(`/opportunities/${opportunityId}/attachments`, form, {
+      failed: "The file could not be uploaded.",
+      tooLarge: "The file is larger than 20 MB.",
+      timedOut: "The upload took too long. Try again.",
+      timeout: 180000,
+    });
+  },
+  attachmentFile: (opportunityId, id, download = false) =>
+    fileRequest(`/opportunities/${opportunityId}/attachments/${id}/file${download ? "?download=true" : ""}`),
+  deleteAttachment: (opportunityId, id) =>
+    apiRequest(`/opportunities/${opportunityId}/attachments/${id}`, { method: "DELETE" }),
 };
 
 const idText = (value) => (value == null ? "" : String(value));

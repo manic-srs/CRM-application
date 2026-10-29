@@ -440,6 +440,19 @@ class EmailOut(Out):
     attachments: list[AttachmentOut] = []
 
 
+class OpportunityAttachmentOut(Out):
+    """A file on an opportunity (never the bytes: those come from the download only)."""
+    id: int
+    opportunity_id: int
+    filename: str
+    content_type: str  # detected from the file content by the server
+    size_bytes: int
+    stage: str  # stage of the deal when the file was uploaded
+    uploaded_by_id: int
+    uploaded_by_name: str | None = None
+    uploaded_at: datetime | None
+
+
 class SearchResult(BaseModel):
     type: str
     id: int

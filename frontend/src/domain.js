@@ -33,6 +33,24 @@ export const money = (value) =>
         value,
       );
 export const localInput = (value) => (value ? value.slice(0, 16) : "");
+
+// Opportunity attachments. The backend checks the same rules again, and the real file content.
+export const ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024; // shown as "20 MB per file"
+export const ATTACHMENT_EXTENSIONS = [".pdf", ".docx", ".jpg", ".jpeg", ".png"];
+export const ATTACHMENT_STAGES = ["Opportunity", "Proposal"]; // files can't be added or deleted after Won / Lost
+export const PREVIEW_TYPES = ["application/pdf", "image/jpeg", "image/png"]; // open in a new tab; Word files download
+export function attachmentProblem(file) {
+  const name = file.name || "";
+  const dot = name.lastIndexOf(".");
+  const ext = dot > 0 ? name.slice(dot).toLowerCase() : "";
+  if (ext === ".doc")
+    return `${name}: old Word files (.doc) can't be uploaded. Save it as .docx first.`;
+  if (!ATTACHMENT_EXTENSIONS.includes(ext))
+    return `${name}: only PDF, Word (.docx), JPG and PNG files can be uploaded.`;
+  if (!file.size) return `${name} is empty.`;
+  if (file.size > ATTACHMENT_MAX_BYTES) return `${name} is larger than 20 MB.`;
+  return "";
+}
 export function salesOverview(data) {
   const home = data.home;
   const result = (outcome) =>

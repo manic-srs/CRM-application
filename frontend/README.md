@@ -54,6 +54,7 @@ Every notification, task, Assistant item and Home card opens the record it is ab
 | `src/Login.jsx` | Login |
 | `src/UsersPage.jsx` | Users page (Admin) and Change Password |
 | `src/Email.jsx` | Send Email (with attachments) and the list of sent emails |
+| `src/Attachments.jsx` | Attachments card on the opportunity page: upload, open (PDF / images), download and delete files |
 | `src/SellerHome.jsx` | Home page cards |
 | `src/ListView.jsx` | List views and the opportunity Kanban |
 | `src/RecordPage.jsx` | Lead and opportunity pages |
