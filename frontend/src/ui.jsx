@@ -12,6 +12,8 @@ const paths = {
   bell: "M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4",
   help: "M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2-3 4m0 3h.01M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0",
   edit: "m15 5 4 4M4 20l4-1L21 6l-4-4L4 15Z",
+  trash: "M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3",
+  transfer: "M4 8h14l-4-4M20 16H6l4 4",
   logout: "M9 3H3v18h6m5-14 5 5-5 5m-7-5h14",
   list: "M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01",
   kanban: "M3 3h5v18H3ZM10 3h5v12h-5ZM17 3h4v8h-4Z",
@@ -295,5 +297,82 @@ export function Pagination({ page, pages, size, total, start, setPage, setSize }
         </button>
       </div>
     </nav>
+  );
+}
+
+// "Actions ▾" button at the end of a record's buttons (Edit, Transfer, Delete...), like HubSpot / Zoho.
+// items: [{ label, onClick, danger }] or "-" for a divider. Opens under the button, right-aligned;
+// arrow keys move between items, Esc or a click outside closes it.
+export function ActionMenu({ items, label = "Actions" }) {
+  const [open, setOpen] = React.useState(null);
+  const ref = React.useRef(null);
+  const list = React.useRef(null);
+  React.useEffect(() => {
+    if (!open) return;
+    list.current?.querySelector("button")?.focus();
+    const away = (e) => ref.current && !ref.current.contains(e.target) && setOpen(null);
+    const key = (e) => {
+      if (e.key === "Escape") return setOpen(null);
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      e.preventDefault();
+      const buttons = [...(list.current?.querySelectorAll("button") || [])];
+      const at = buttons.indexOf(document.activeElement);
+      const next = (at + (e.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
+      buttons[next]?.focus();
+    };
+    const close = () => setOpen(null);
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", key);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", key);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [open]);
+  // drop dividers at the start/end or next to each other
+  const shown = items.filter(Boolean).filter((item, i, all) => item !== "-" || (i > 0 && i < all.length - 1 && all[i - 1] !== "-"));
+  if (!shown.length) return null;
+  return (
+    <div className="action-menu" ref={ref}>
+      <button
+        type="button"
+        className={`sf-button action-menu-button ${open ? "open" : ""}`}
+        aria-haspopup="menu"
+        aria-expanded={!!open}
+        onClick={(e) => {
+          if (open) return setOpen(null);
+          const r = e.currentTarget.getBoundingClientRect();
+          setOpen({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) });
+        }}
+      >
+        {label}
+        <Icon name="down" size={14} />
+      </button>
+      {open && (
+        <div className="action-menu-list" role="menu" aria-label={label} style={open} ref={list}>
+          {shown.map((item, i) =>
+            item === "-" ? (
+              <hr key={i} />
+            ) : (
+              <button
+                key={item.label}
+                type="button"
+                role="menuitem"
+                className={item.danger ? "danger" : ""}
+                onClick={() => {
+                  setOpen(null);
+                  item.onClick();
+                }}
+              >
+                {item.label}
+              </button>
+            ),
+          )}
+        </div>
+      )}
+    </div>
   );
 }

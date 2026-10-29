@@ -3158,3 +3158,53 @@ a.pill:hover {
   color: var(--text-weak);
   font-size: 12px;
 }
+
+/* "Actions ▾" menu on record pages (Edit, Transfer, Delete) */
+.action-menu {
+  position: relative;
+  display: inline-flex;
+}
+.sf-button.action-menu-button svg {
+  transition: transform 0.15s;
+}
+.sf-button.action-menu-button.open {
+  border-color: var(--brand);
+  background: #f3f9ff;
+}
+.sf-button.action-menu-button.open svg {
+  transform: rotate(180deg);
+}
+.action-menu-list {
+  position: fixed;
+  z-index: 70;
+  min-width: 190px;
+  padding: 6px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--white);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+.action-menu-list button {
+  display: block;
+  width: 100%;
+  padding: 8px 16px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.action-menu-list button:hover,
+.action-menu-list button:focus-visible {
+  outline: none;
+  background: #f3f6fb;
+}
+.action-menu-list button.danger {
+  color: #ba0517;
+}
+.action-menu-list hr {
+  margin: 6px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}

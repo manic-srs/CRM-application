@@ -3,7 +3,7 @@ import OpportunityAttachments from "./Attachments";
 import { EmailList, useEmails } from "./Email";
 import { can, canCreateSales, canTransferLead } from "./permissions";
 import { amount, dateTime, shortDate } from "./format";
-import { Card, Icon, ObjectIcon, PathBar, StageBadge } from "./ui";
+import { ActionMenu, Card, Icon, ObjectIcon, PathBar, StageBadge } from "./ui";
 
 const LEAD_PATH = ["New", "Nurturing", "Demo", "Converted"];
 const OPP_PATH = ["Opportunity", "Proposal", "Won"];
@@ -221,21 +221,6 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
             <button className="sf-button" onClick={() => openTask(item.id, collection)}>
               New Task
             </button>
-            {canEdit && (
-              <button className="sf-button" onClick={edit}>
-                Edit
-              </button>
-            )}
-            {canTransfer && !closed && (
-              <button className="sf-button" onClick={() => setModal({ type: "transfer", record: item })}>
-                Transfer
-              </button>
-            )}
-            {canEdit && lead && item.stage === "Demo" && (
-              <button className="sf-button" onClick={() => setModal({ type: "cancelDemo", record: item })}>
-                Reschedule / Cancel Demo
-              </button>
-            )}
             {canConvert && lead && !closed && (
               <button className="sf-button" onClick={() => convert(item.id)}>
                 Convert
@@ -246,11 +231,26 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
                 Mark as Lost
               </button>
             )}
-            {canEdit && lead && item.stage !== "Converted" && (
-              <button className="sf-button danger-text" onClick={() => setModal({ type: "delete", collection, record: item })}>
-                Delete
-              </button>
-            )}
+            {/* Edit, Transfer, Reschedule demo and Delete sit under one "Actions ▾" menu */}
+            <ActionMenu
+              items={[
+                canEdit && { label: "Edit", onClick: edit },
+                canTransfer && !closed && {
+                  label: "Transfer",
+                  onClick: () => setModal({ type: "transfer", record: item }),
+                },
+                canEdit && lead && item.stage === "Demo" && {
+                  label: "Reschedule / Cancel Demo",
+                  onClick: () => setModal({ type: "cancelDemo", record: item }),
+                },
+                "-",
+                canEdit && lead && item.stage !== "Converted" && {
+                  label: "Delete",
+                  danger: true,
+                  onClick: () => setModal({ type: "delete", collection, record: item }),
+                },
+              ]}
+            />
           </div>
         </div>
         <dl className="highlights-fields">
