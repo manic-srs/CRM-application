@@ -74,3 +74,25 @@ export const initials = (name = "") =>
     .slice(0, 2)
     .join("")
     .toUpperCase();
+
+// "+91 98200 00110", "+1 416-555-0114", "4165550114" -> one consistent style with single spaces
+export function formatPhone(value) {
+  if (!value) return "";
+  const text = String(value).trim();
+  const digits = text.replace(/\D/g, "");
+  if (!text.startsWith("+") && digits.length === 10) return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+  if (text.startsWith("+1") && digits.length === 11) return `+1 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`;
+  if (text.startsWith("+91") && digits.length === 12) return `+91 ${digits.slice(2, 7)} ${digits.slice(7)}`;
+  return text.replace(/[\s\-.()]+/g, " ").replace(/\s+/g, " ");
+}
+
+// Lists show only the start of a phone number; the full number is on the record page.
+// "+1 (416) 555-0114" -> "+1 (416) •••-••••", "+91 98200 00110" -> "+91 982•• •••••"
+export function maskPhone(value) {
+  const text = formatPhone(value);
+  if (!text) return "";
+  const country = text.startsWith("+") ? (text.match(/^\+(\d{1,3})/)?.[1].length ?? 0) : 0;
+  let shown = 0;
+  const keep = country + 3; // country code + first 3 digits
+  return text.replace(/\d/g, (d) => (++shown <= keep ? d : "•"));
+}

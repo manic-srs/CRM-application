@@ -4,7 +4,7 @@ import LeadsTable from "./LeadsTable";
 import { applyFilters, filterSummary, opts, ownerOptions, Th, useFilters } from "./Filters";
 import { LEAD_SOURCES, LEAD_STAGES, OPPORTUNITY_STAGES, UPLOAD_SOURCE } from "./domain";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { amount, compact, shortDate } from "./format";
+import { amount, compact, maskPhone, shortDate } from "./format";
 import { DateCell, Icon, ObjectIcon, Pagination, StageBadge, usePaged } from "./ui";
 
 const OPEN_LEAD = ["New", "Nurturing", "Demo"];
@@ -66,7 +66,7 @@ function columns(collection, data) {
       ["Name", (r) => r.name, (r) => link(r, r.name)],
       ["Title", (r) => r.title || ""],
       ["Company", (r) => r.company || ""],
-      ["Phone", (r) => r.phone || ""],
+      ["Phone", (r) => maskPhone(r.phone)],
       ["Email", (r) => r.email || "", (r) => (r.email ? <a href={`mailto:${r.email}`}>{r.email}</a> : "")],
       ["Status", (r) => r.stage, (r) => <StageBadge stage={r.stage} />],
       ["Source", (r) => r.source || ""],
@@ -87,7 +87,7 @@ function columns(collection, data) {
     accounts: [
       ["Account Name", (r) => r.name, (r) => link(r, r.name)],
       ["Industry", (r) => r.industry || ""],
-      ["Phone", (r) => r.phone || ""],
+      ["Phone", (r) => maskPhone(r.phone)],
       ["Website", (r) => r.website || ""],
       ["Owner", (r) => r.owner_name || ""],
       ["Created", (r) => r.created_at || "", (r) => <DateCell value={r.created_at} />, "date"],
@@ -97,7 +97,7 @@ function columns(collection, data) {
       ["Name", (r) => r.full_name, (r) => link(r, r.full_name)],
       ["Account Name", (r) => r.account_name || "", account],
       ["Title", (r) => r.job_title || ""],
-      ["Phone", (r) => r.phone || ""],
+      ["Phone", (r) => maskPhone(r.phone)],
       ["Email", (r) => r.email || "", (r) => (r.email ? <a href={`mailto:${r.email}`}>{r.email}</a> : "")],
       ["Owner", (r) => ownerName(data, r.owner_id)],
       ["Created", (r) => r.created_at || "", (r) => <DateCell value={r.created_at} />, "date"],

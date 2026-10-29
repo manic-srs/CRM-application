@@ -43,7 +43,7 @@ email, tasks and reminders, notifications, lead conversion, closing a deal, and 
   for records the user can't open), so two people don't work the same company.
 
 **Bulk upload and download**
-- Upload up to 100,000 leads at a time from Excel (.xlsx) or CSV, for example an Apollo export. The file is checked
+- Upload up to 100,000 leads at a time from Excel (.xlsx) or CSV. The file is checked
   first (rows ready, duplicates of open leads, invalid rows), then uploaded. No emails are sent to uploaded leads.
 - Uploaded leads appear in the normal lead lists with Lead Source **Upload**, and in the **Uploaded Leads** list view.
   Only Last Name and Company are required; a wrong email, link or number is left blank (and listed) instead of
@@ -170,7 +170,7 @@ Lost:         available from any open stage (reason required)
 completed, with an optional note recorded in the stage history. Moving back and marking Lost are always allowed.
 Implemented in `backend/app/services.py` (`confirm_skipped`).
 
-**Bulk upload.** Leads > Upload accepts .xlsx or .csv files with up to 100,000 rows (50 MB). Apollo column names
+**Bulk upload.** Leads > Upload accepts .xlsx or .csv files with up to 100,000 rows (50 MB). Common column names
 are recognised (First Name, Last Name, Title, Company, Email, Person Linkedin Url, Website, Company Linkedin Url,
 Annual Revenue, # Employees, City, State, Country). Last Name and Company are required. Rows whose email or LinkedIn
 profile already belongs to an open lead are skipped. Implemented in `backend/app/routers/lead_files.py`.

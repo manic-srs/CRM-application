@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { apiRequest } from "./api";
 import { DateCell, Icon, StageBadge } from "./ui";
-import { dateTime } from "./format";
+import { dateTime, maskPhone } from "./format";
 import { filterSummary, rangeBounds, Th } from "./Filters";
 
 const PAGE = 100;
@@ -20,17 +20,6 @@ const COLUMNS = [
   ["Created", "created", 100],
   ["Last Modified", "modified", 125],
 ];
-
-// "+91 98200 00110", "+1 416-555-0114", "4165550114" -> one consistent style with single spaces
-export function formatPhone(value) {
-  if (!value) return "";
-  const text = String(value).trim();
-  const digits = text.replace(/\D/g, "");
-  if (!text.startsWith("+") && digits.length === 10) return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
-  if (text.startsWith("+1") && digits.length === 11) return `+1 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`;
-  if (text.startsWith("+91") && digits.length === 12) return `+91 ${digits.slice(2, 7)} ${digits.slice(7)}`;
-  return text.replace(/[\s\-.()]+/g, " ").replace(/\s+/g, " ");
-}
 
 // a cell that keeps to one line and shows the full text on hover
 const Cell = ({ children, title, className = "" }) => (
@@ -148,7 +137,7 @@ export default function LeadsTable({ view, stage, filters = {}, defs = [], onFil
                   <Cell>{l.company || ""}</Cell>
                   <Cell>{l.title || ""}</Cell>
                   <Cell title={l.email || ""}>{l.email && <a href={`mailto:${l.email}`}>{l.email}</a>}</Cell>
-                  <Cell className="phone">{formatPhone(l.phone)}</Cell>
+                  <Cell className="phone">{maskPhone(l.phone)}</Cell>
                   <td className="cell">
                     <StageBadge stage={l.stage} />
                   </td>

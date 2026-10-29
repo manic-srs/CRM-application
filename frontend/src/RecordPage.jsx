@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import OpportunityAttachments from "./Attachments";
 import { EmailList, useEmails } from "./Email";
 import { can, canCreateSales, canTransferLead } from "./permissions";
-import { amount, dateTime, shortDate } from "./format";
+import { amount, dateTime, formatPhone, shortDate } from "./format";
 import { ActionMenu, Card, Icon, ObjectIcon, PathBar, StageBadge } from "./ui";
 
 const LEAD_PATH = ["New", "Nurturing", "Demo", "Converted"];
@@ -185,7 +185,7 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
     ? [
         ["Title", item.title],
         ["Company", item.company],
-        ["Phone", item.phone],
+        ["Phone", formatPhone(item.phone)],
         ["Email", item.email && <a href={`mailto:${item.email}`}>{item.email}</a>],
         ["LinkedIn", <ExternalLink key="li" href={item.linkedin_url}>Profile</ExternalLink>],
         ["Company Links", (item.company_website || item.company_linkedin_url) && (

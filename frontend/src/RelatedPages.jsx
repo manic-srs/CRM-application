@@ -1,6 +1,6 @@
 import React from "react";
 import { EmailList, useEmails } from "./Email";
-import { amount, dateTime, shortDate } from "./format";
+import { amount, dateTime, formatPhone, maskPhone, shortDate } from "./format";
 import { Card, Icon, ObjectIcon, StageBadge } from "./ui";
 
 function NotFound({ collection }) {
@@ -68,7 +68,7 @@ export function AccountPage({ id, data, openNew, openEmail, emailVersion }) {
         name={account.name}
         fields={[
           ["Industry", account.industry],
-          ["Phone", account.phone],
+          ["Phone", formatPhone(account.phone)],
           ["Website", site(account.website)],
           ["Account Owner", account.owner_name],
         ]}
@@ -106,7 +106,7 @@ export function AccountPage({ id, data, openNew, openEmail, emailVersion }) {
                 ["Account Name", account.name],
                 ["Account Owner", account.owner_name],
                 ["Industry", account.industry],
-                ["Phone", account.phone],
+                ["Phone", formatPhone(account.phone)],
                 ["Website", site(account.website)],
                 ["LinkedIn", site(account.linkedin_url)],
                 ["Address", account.address],
@@ -140,7 +140,7 @@ export function AccountPage({ id, data, openNew, openEmail, emailVersion }) {
                     <dt>Email:</dt>
                     <dd>{c.email}</dd>
                     <dt>Phone:</dt>
-                    <dd>{c.phone}</dd>
+                    <dd>{maskPhone(c.phone)}</dd>
                   </dl>
                 </li>
               ))}
@@ -188,7 +188,7 @@ export function ContactPage({ id, data, openEmail, emailVersion }) {
         fields={[
           ["Title", contact.job_title],
           ["Account Name", <a href={`#/accounts/${contact.account_id}`}>{contact.account_name}</a>],
-          ["Phone", contact.phone],
+          ["Phone", formatPhone(contact.phone)],
           ["Email", contact.email],
         ]}
       >
@@ -224,7 +224,7 @@ export function ContactPage({ id, data, openEmail, emailVersion }) {
                 ["Account Name", <a href={`#/accounts/${contact.account_id}`}>{contact.account_name}</a>],
                 ["Title", contact.job_title],
                 ["Email", contact.email],
-                ["Phone", contact.phone],
+                ["Phone", formatPhone(contact.phone)],
                 ["LinkedIn", site(contact.linkedin_url)],
                 ["Created", dateTime(contact.created_at)],
                 ["Last Modified", dateTime(contact.updated_at)],

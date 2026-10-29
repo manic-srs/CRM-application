@@ -1,4 +1,4 @@
-// Leads and Opportunities lists: Upload (many records at once from Excel / CSV, e.g. an Apollo export),
+// Leads and Opportunities lists: Upload (many records at once from Excel / CSV),
 // Download (to Excel / CSV, a reason is required) and History (who uploaded / downloaded what, when and why).
 // Uploads and downloads are recorded in the Activity Log.
 import React, { useEffect, useRef, useState } from "react";
@@ -20,7 +20,7 @@ const OBJECTS = {
     label: "Leads",
     one: "lead",
     sample: SAMPLE_LEADS,
-    intro: "Import leads from an Excel (.xlsx) or CSV file, such as an Apollo export.",
+    intro: "Import leads from an Excel (.xlsx) or CSV file.",
     rules: ["Required: Last Name, Company", "Duplicates of open leads are skipped", "Leads start at New", "No emails are sent"],
     columns: [
       ["Name", (l) => [l.first_name, l.last_name].filter(Boolean).join(" ")],
