@@ -6,14 +6,15 @@ At each stage the system closes the old follow-up ("Auto-closed") and creates th
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, or_, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy.orm import Session, selectinload
 
 from app import schemas
 from app.constants import LEAD_FLOW, LEAD_OPEN_STAGES, LEAD_SOURCES, LEAD_STAGES, STAGE_PROBABILITY
 from app.database import get_db
 from app.security import acting_user, acting_user_id, check_owner_change, forbid_admin_create, owner_for_new, require_edit, require_view, visible
-from app.models import Account, Contact, Email, Lead, Opportunity, User
+from app.models import (Account, Contact, Email, EmailAttachment, Lead, Note, Notification, Opportunity, StageHistory,
+                        Task, User)
 from app.serializers import account_out, contact_out, history_out, lead_detail, lead_out, opportunity_out, task_out
 from app.services import (
     confirm_skipped,
@@ -22,6 +23,7 @@ from app.services import (
     auto_close_open_tasks,
     create_auto_task,
     get_or_404,
+    log_activity,
     now,
     record_stage_change,
     notify,
@@ -50,13 +52,18 @@ def list_leads(
     source: str | None = Query(None),
     owner_id: int | None = Query(None),
     search: str | None = Query(None, description="Name, company or email"),
+    include_untouched: bool = Query(False, description="Also uploaded leads nobody has worked on yet"),
     db: Session = Depends(get_db),
 ):
+    """Leads the user can see. Uploaded leads nobody has worked on yet are left out (they can be 100,000s);
+    the Leads page lists every lead page by page at /api/leads/page."""
     if stage and stage not in LEAD_STAGES:
         raise HTTPException(status_code=400, detail=f"Unknown stage '{stage}'. Use: {', '.join(LEAD_STAGES)}")
     if source and source not in LEAD_SOURCES:
         raise HTTPException(status_code=400, detail=f"Unknown source '{source}'. Use: {', '.join(LEAD_SOURCES)}")
-    query = visible(select(Lead), Lead)
+    query = visible(select(Lead), Lead).options(selectinload(Lead.owner), selectinload(Lead.opportunity))
+    if not include_untouched:
+        query = query.where(Lead.untouched.is_(False))
     if stage:
         query = query.where(Lead.stage == stage)
     if source:
@@ -160,6 +167,7 @@ def get_lead(lead_id: int, db: Session = Depends(get_db)):
 def update_lead(lead_id: int, data: schemas.LeadUpdate, db: Session = Depends(get_db)):
     lead = get_or_404(db, Lead, lead_id, "Lead")
     require_edit(lead.owner_id, "lead")
+    lead.untouched = False  # someone is working on it now
     changes = data.model_dump(exclude_unset=True)
     changes.pop("changed_by_id", None)
     actor = acting_user_id()
@@ -206,6 +214,7 @@ def change_stage(lead_id: int, data: schemas.LeadStageChange, db: Session = Depe
     if lead.stage == data.stage:
         raise HTTPException(status_code=400, detail=f"Lead {lead_id} is already at {data.stage}")
     require_edit(lead.owner_id, "lead")
+    lead.untouched = False  # someone is working on it now
     by = acting_user_id()
 
     if LEAD_FLOW.index(data.stage) > LEAD_FLOW.index(lead.stage):  # forward: no skipping (going back is allowed)
@@ -247,6 +256,7 @@ def mark_lost(lead_id: int, data: schemas.MarkLost, db: Session = Depends(get_db
     lead = get_or_404(db, Lead, lead_id, "Lead")
     ensure_open(lead)
     require_edit(lead.owner_id, "lead")
+    lead.untouched = False  # someone is working on it now
     by = acting_user_id()
     old = lead.stage
     lead.stage = "Lost"
@@ -279,6 +289,7 @@ def convert_lead(lead_id: int, data: schemas.ConvertLead | None = None, db: Sess
     lead = get_or_404(db, Lead, lead_id, "Lead")
     ensure_open(lead)
     require_edit(lead.owner_id, "lead")
+    lead.untouched = False  # someone is working on it now
     # Convert comes after Demo: New -> Nurturing -> Demo must be done (or confirmed as done)
     lead.stage = confirm_skipped(db, flow=LEAD_FLOW, current=lead.stage, target_index=len(LEAD_FLOW),
                                  completed=data.completed_stages, note=data.completed_note, by=acting_user_id(),
@@ -290,7 +301,9 @@ def convert_lead(lead_id: int, data: schemas.ConvertLead | None = None, db: Sess
         account = get_or_404(db, Account, data.account_id, "Account")
     else:
         account = Account(
-            name=lead.company or lead.name, industry=lead.industry, phone=lead.phone, owner_id=lead.owner_id
+            name=lead.company or lead.name, industry=lead.industry, phone=lead.phone, owner_id=lead.owner_id,
+            website=lead.company_website, linkedin_url=lead.company_linkedin_url, address=lead.location,
+            annual_revenue=lead.annual_revenue, employees=lead.employees,
         )
         db.add(account)
         db.flush()
@@ -302,6 +315,7 @@ def convert_lead(lead_id: int, data: schemas.ConvertLead | None = None, db: Sess
         job_title=lead.title,
         email=lead.email,
         phone=lead.phone,
+        linkedin_url=lead.linkedin_url,
         account_id=account.id,
         owner_id=lead.owner_id,
     )
@@ -354,6 +368,40 @@ def convert_lead(lead_id: int, data: schemas.ConvertLead | None = None, db: Sess
         "tasks_auto_closed": closed,
         "new_task": task_out(task) if task else None,
     }
+
+
+# ---------- delete ----------
+
+@router.delete("/{lead_id}")
+def delete_lead(lead_id: int, db: Session = Depends(get_db)):
+    """Delete a lead that is not converted: its owner, a Manager or the Admin.
+    Its tasks, notes, emails and stage history go with it. The Admin and the Managers are told,
+    and it is recorded in the Activity Log (name, company, email, owner, stage)."""
+    lead = get_or_404(db, Lead, lead_id, "Lead")
+    me = require_edit(lead.owner_id, "lead")
+    if lead.stage == "Converted" or lead.opportunity is not None:
+        raise HTTPException(status_code=400, detail="A converted lead can't be deleted: it has an opportunity.")
+    owner = lead.owner.full_name if lead.owner else "Unknown"
+    summary = " • ".join(x for x in (lead.company, lead.email, f"Owner: {owner}", f"Stage: {lead.stage}") if x)
+    name = lead.name
+    owner_id = lead.owner_id
+    email_ids = select(Email.id).where(Email.lead_id == lead.id)
+    db.execute(delete(EmailAttachment).where(EmailAttachment.email_id.in_(email_ids)))
+    db.execute(delete(Email).where(Email.lead_id == lead.id))
+    task_ids = select(Task.id).where(Task.lead_id == lead.id)
+    db.execute(delete(Notification).where(Notification.task_id.in_(task_ids)))
+    db.execute(delete(Notification).where(Notification.link == record_link(lead_id=lead.id)))
+    for model in (Task, Note, StageHistory):
+        db.execute(delete(model).where(model.lead_id == lead.id))
+    db.delete(lead)
+    log_activity(db, me.id, "Lead deleted", name, summary)
+    # the Admin and Managers, and the owner when someone else deleted it
+    told = db.scalars(select(User).where(or_(User.role.in_(("Admin", "Manager")), User.id == owner_id),
+                                          User.is_active.is_(True), User.id != me.id)).all()
+    for user in told:
+        notify(db, user.id, "Lead deleted", f'Lead "{name}" was deleted by {me.full_name}.\n{summary}', link="/leads")
+    db.commit()
+    return {"message": f'Lead "{name}" was deleted.'}
 
 
 @router.get("/{lead_id}/history", response_model=list[schemas.StageHistoryOut])

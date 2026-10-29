@@ -35,12 +35,22 @@ test("lead form uses backend fields and only requires last name and company", ()
       industry: null,
       email: null,
       phone: null,
+      linkedin_url: null,
+      company_website: null,
+      company_linkedin_url: null,
+      annual_revenue: null,
+      employees: null,
+      location: null,
       source: "Phone",
       owner_id: 3,
       welcome_email: false, // the "welcome email to the lead" box was not ticked
     },
   );
   assert.equal(leadPayload({ last_name: "A", company: "B", welcome_email: "on" }).welcome_email, true);
+  const links = leadPayload({ last_name: "A", company: "B", linkedin_url: " linkedin.com/in/a ", employees: "250", annual_revenue: "" });
+  assert.equal(links.linkedin_url, "linkedin.com/in/a"); // the backend adds https://
+  assert.equal(links.employees, 250);
+  assert.equal(links.annual_revenue, null);
   assert.ok(!("welcome_email" in leadPayload({ last_name: "A", company: "B" }, true))); // editing: not sent
   assert.ok(!LEAD_STAGES.includes("Won"));
   assert.ok(LEAD_SOURCES.includes("Social Media"));

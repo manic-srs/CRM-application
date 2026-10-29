@@ -44,6 +44,7 @@ PERMISSION_GROUPS = {
     "Records": ("view_team_records", "view_team_dashboard", "edit_team_records", "reassign_owner"),
     "Team": ("grant_team_access",),
     "Email": ("send_emails",),
+    "Data": ("import_leads", "export_data"),
     "Administration": ("manage_users", "manage_permissions"),
 }
 PERMISSIONS = {
@@ -54,6 +55,10 @@ PERMISSIONS = {
     "reassign_owner": ("Reassign owner", "Give a record to another user", ("Manager",)),
     "grant_team_access": ("Give team access", "Let a salesperson see the whole team's records", ("Manager",)),
     "send_emails": ("Send emails", "Send emails to leads and contacts", ("Manager", "Salesperson")),
+    "import_leads": ("Upload data", "Create many leads or opportunities at once from an Excel or CSV file",
+                     ("Manager", "Salesperson")),
+    "export_data": ("Download data", "Download leads or opportunities to Excel or CSV (a reason is required and recorded)",
+                    ("Manager", "Salesperson")),
     "manage_users": ("Manage users", "Add users, reset passwords, deactivate, transfer records", ()),
     "manage_permissions": ("Manage roles & permissions", "Change this permission matrix", ()),
 }

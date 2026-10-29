@@ -1,5 +1,9 @@
-import { canCreateSales } from "./permissions";
-import React, { useMemo, useState } from "react";
+import { DownloadLeads, TransferHistory, UploadLeads } from "./LeadFiles";
+import { can, canCreateSales } from "./permissions";
+import LeadsTable from "./LeadsTable";
+import { applyFilters, filterSummary, opts, ownerOptions, Th, useFilters } from "./Filters";
+import { LEAD_SOURCES, LEAD_STAGES, OPPORTUNITY_STAGES, UPLOAD_SOURCE } from "./domain";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { amount, compact, shortDate } from "./format";
 import { Icon, ObjectIcon, StageBadge } from "./ui";
 
@@ -8,6 +12,17 @@ const OPEN_OPP = ["Opportunity", "Proposal"];
 const KANBAN_STAGES = ["Opportunity", "Proposal", "Won", "Lost"];
 
 const ownerName = (data, id) => data.users.find((u) => u.id === id)?.full_name || "";
+
+// Leads list views and their server-side filter (the Leads list is loaded page by page, see LeadsTable.jsx)
+const LEAD_VIEWS = {
+  "All Open Leads": "all_open",
+  "My Open Leads": "my_open",
+  "All Leads": "all",
+  "Converted Leads": "converted",
+  "Lost Leads": "lost",
+  "Uploaded Leads": "uploaded",
+  "My Uploaded Leads": "my_uploaded",
+};
 
 // List views per object, like the Salesforce "list view" picker
 function views(collection, user) {
@@ -19,6 +34,8 @@ function views(collection, user) {
       ["All Leads", () => true],
       ["Converted Leads", (r) => r.stage === "Converted"],
       ["Lost Leads", (r) => r.stage === "Lost"],
+      ["Uploaded Leads", () => true],
+      ["My Uploaded Leads", () => true],
     ],
     opportunities: [
       ["All Opportunities", () => true],
@@ -63,6 +80,7 @@ function columns(collection, data) {
       ["Stage", (r) => r.stage, (r) => <StageBadge stage={r.stage} />],
       ["Probability (%)", (r) => r.probability, (r) => r.probability, "num"],
       ["Owner", (r) => r.owner || ""],
+      ["Created", (r) => r.created_at || "", (r) => shortDate(r.created_at)],
     ],
     accounts: [
       ["Account Name", (r) => r.name, (r) => link(r, r.name)],
@@ -70,6 +88,7 @@ function columns(collection, data) {
       ["Phone", (r) => r.phone || ""],
       ["Website", (r) => r.website || ""],
       ["Account Owner", (r) => r.owner_name || ""],
+      ["Created", (r) => r.created_at || "", (r) => shortDate(r.created_at)],
     ],
     contacts: [
       ["Name", (r) => r.full_name, (r) => link(r, r.full_name)],
@@ -78,8 +97,58 @@ function columns(collection, data) {
       ["Phone", (r) => r.phone || ""],
       ["Email", (r) => r.email || "", (r) => (r.email ? <a href={`mailto:${r.email}`}>{r.email}</a> : "")],
       ["Contact Owner", (r) => ownerName(data, r.owner_id)],
+      ["Created", (r) => r.created_at || "", (r) => shortDate(r.created_at)],
     ],
   }[collection];
+}
+
+// Filters per object. Status choices follow the list view (open views offer only open statuses);
+// Owner is offered to people who see the team's records, except on "My ..." views.
+function filterDefs(collection, data, user, viewName, fixedStage) {
+  const team = can(user, "view_team_records") && !viewName.startsWith("My ");
+  const ownerCol = { opportunities: "Owner", accounts: "Account Owner", contacts: "Contact Owner" }[collection] || "Owner";
+  const owner = team ? [{ key: "owner", column: ownerCol, label: "Owner", options: ownerOptions(data.users || [], user), get: (r) => String(r.owner_id) }] : [];
+  const created = { key: "created", column: "Created", label: "Created", type: "date", get: (r) => r.created_at };
+  const stages = (all, open) => {
+    if (fixedStage) return null;
+    if (/Open/.test(viewName)) return open;
+    if (/Converted|Won|Lost/.test(viewName)) return null;
+    return all;
+  };
+  const distinct = (list) => [...new Set(list.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  if (collection === "leads") {
+    const st = stages(LEAD_STAGES, OPEN_LEAD);
+    return [
+      ...(st ? [{ key: "stage", label: "Lead Status", options: opts(st) }] : []),
+      { key: "source", label: "Lead Source", options: opts([...LEAD_SOURCES, UPLOAD_SOURCE]) },
+      ...owner,
+      created,
+    ];
+  }
+  if (collection === "opportunities") {
+    const st = stages(OPPORTUNITY_STAGES, OPEN_OPP);
+    return [
+      ...(st ? [{ key: "stage", column: "Stage", label: "Stage", options: opts(st), get: (r) => r.stage }] : []),
+      ...owner,
+      { key: "close", column: "Close Date", label: "Close Date", type: "date", future: true, get: (r) => r.expected_close_date },
+      created,
+    ];
+  }
+  if (collection === "accounts")
+    return [{ key: "industry", column: "Industry", label: "Industry", options: opts(distinct(data.accounts.map((a) => a.industry))), get: (r) => r.industry }, ...owner, created];
+  return [{ key: "account", column: "Account Name", label: "Account", options: opts(distinct(data.contacts.map((c) => c.account_name))), get: (r) => r.account_name }, ...owner, created];
+}
+
+// keep only filter values the current view offers (e.g. a "Lost" status left over from All Leads)
+function validFilters(defs, values) {
+  const out = {};
+  for (const f of defs) {
+    const v = values[f.key];
+    if (!v || (f.options && !f.options.some(([o]) => o === v))) continue;
+    out[f.key] = v;
+    if (f.type === "date") for (const k of ["from", "to"]) if (values[`${f.key}_${k}`]) out[`${f.key}_${k}`] = values[`${f.key}_${k}`];
+  }
+  return out;
 }
 
 const LABEL = { leads: "Leads", opportunities: "Opportunities", accounts: "Accounts", contacts: "Contacts" };
@@ -146,7 +215,10 @@ function Kanban({ records, setModal }) {
   );
 }
 
-export default function ListView({ collection, data, user, openNew, setModal, query }) {
+export default function ListView({ collection, data, user, openNew, setModal, query, notify, reload }) {
+  const [files, setFiles] = useState(null); // "upload" | "download" | "history" (Leads and Opportunities)
+  const dataList = collection === "leads" || collection === "opportunities";
+  const [uploads, setUploads] = useState(0); // reloads the Leads list after an upload
   const params = new URLSearchParams(query);
   const stageFilter = params.get("stage");
   const allViews = views(collection, user);
@@ -161,10 +233,28 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
           : allViews[0][0],
   );
   const [pickerOpen, setPickerOpen] = useState(false);
+  const pickerRef = useRef(null);
+  useEffect(() => {
+    // the list-view menu closes on a click anywhere else or on Esc
+    if (!pickerOpen) return;
+    const away = (e) => pickerRef.current && !pickerRef.current.contains(e.target) && setPickerOpen(false);
+    const key = (e) => e.key === "Escape" && setPickerOpen(false);
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", key);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", key);
+    };
+  }, [pickerOpen]);
   const [mode, setMode] = useState(params.get("view") === "kanban" ? "kanban" : "table");
   const [search, setSearch] = useState("");
   const cols = columns(collection, data);
   const [sort, setSort] = useState({ col: 0, dir: 1 });
+
+  const fixedStage = stageFilter && viewName === `${stageFilter} ${LABEL[collection]}` ? stageFilter : null;
+  const defs = filterDefs(collection, data, user, viewName, fixedStage);
+  const [filterValues, setFilterValues] = useFilters(collection);
+  const active = validFilters(defs, filterValues);
 
   const filter = stageFilter && viewName === `${stageFilter} ${LABEL[collection]}`
     ? (r) => r.stage === stageFilter
@@ -172,13 +262,13 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
 
   const rows = useMemo(() => {
     const term = search.trim().toLowerCase();
-    const list = data[collection].filter(filter).filter((r) => !term || cols.some(([, get]) => String(get(r)).toLowerCase().includes(term)));
+    const list = applyFilters(data[collection].filter(filter), defs, active).filter((r) => !term || cols.some(([, get]) => String(get(r)).toLowerCase().includes(term)));
     const get = cols[sort.col][1];
     return [...list].sort((a, b) => {
       const x = get(a), y = get(b);
       return (typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y))) * sort.dir;
     });
-  }, [data, collection, search, sort, viewName]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [data, collection, search, sort, viewName, JSON.stringify(active)]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pickerViews = stageFilter ? [[`${stageFilter} ${LABEL[collection]}`], ...allViews] : allViews;
 
@@ -188,7 +278,7 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
         <div className="list-title">
           <ObjectIcon type={collection} size={36} />
           <div>
-            <div className="view-picker">
+            <div className="view-picker" ref={pickerRef}>
               <button onClick={() => setPickerOpen((o) => !o)} aria-haspopup="listbox" aria-expanded={pickerOpen}>
                 <h1>{viewName}</h1>
                 <Icon name="down" size={14} />
@@ -215,6 +305,21 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
             </div>
           </div>
           <div className="list-buttons">
+            {dataList && can(user, "import_leads") && (
+              <button className="sf-button" onClick={() => setFiles("upload")}>
+                Upload
+              </button>
+            )}
+            {dataList && can(user, "export_data") && (
+              <button className="sf-button" onClick={() => setFiles("download")}>
+                Download
+              </button>
+            )}
+            {dataList && (
+              <button className="sf-button" onClick={() => setFiles("history")} title="Who uploaded or downloaded, when and why">
+                History
+              </button>
+            )}
             {(collection === "leads" || collection === "opportunities") && !canCreateSales(user) ? null : NEW_TYPE[collection] ? (
               <button className="sf-button" onClick={() => openNew(NEW_TYPE[collection])}>
                 New
@@ -226,10 +331,20 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
             )}
           </div>
         </div>
+        {collection !== "leads" && (
         <div className="list-meta">
           <span>
             {rows.length} item{rows.length === 1 ? "" : "s"} • Sorted by {cols[sort.col][0]}
             {search.trim() ? " • Filtered by search" : ""}
+            {filterSummary(defs, active) && (
+              <>
+                {" • "}
+                <b className="filter-note">{filterSummary(defs, active)}</b>{" "}
+                <button className="link filter-clear" onClick={() => setFilterValues({})}>
+                  Clear filters
+                </button>
+              </>
+            )}
           </span>
           <div className="list-tools">
             <label className="list-search">
@@ -248,9 +363,19 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
             )}
           </div>
         </div>
+        )}
       </section>
 
-      {mode === "kanban" && collection === "opportunities" ? (
+      {collection === "leads" ? (
+        <LeadsTable
+          view={LEAD_VIEWS[viewName] || "all"}
+          stage={fixedStage}
+          filters={active}
+          defs={defs}
+          onFilter={setFilterValues}
+          refresh={uploads}
+        />
+      ) : mode === "kanban" && collection === "opportunities" ? (
         <Kanban records={rows} setModal={setModal} />
       ) : (
         <section className="card table-card">
@@ -260,12 +385,17 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
                 <tr>
                   <th className="rownum" aria-label="Row number" />
                   {cols.map(([label, , , kind], i) => (
-                    <th key={label} className={kind === "num" ? "num" : ""}>
-                      <button onClick={() => setSort((s) => ({ col: i, dir: s.col === i ? -s.dir : 1 }))}>
-                        {label}
-                        {sort.col === i && <Icon name="down" size={12} className={sort.dir < 0 ? "flip" : ""} />}
-                      </button>
-                    </th>
+                    <Th
+                      key={label}
+                      label={label}
+                      className={kind === "num" ? "num" : ""}
+                      sorted={sort.col === i}
+                      flip={sort.dir > 0}
+                      onSort={() => setSort((s) => ({ col: i, dir: s.col === i ? -s.dir : 1 }))}
+                      filter={defs.find((f) => f.column === label)}
+                      values={active}
+                      onChange={setFilterValues}
+                    />
                   ))}
                 </tr>
               </thead>
@@ -286,6 +416,25 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
           </div>
         </section>
       )}
+      {files === "upload" && (
+        <UploadLeads
+          object={collection}
+          user={user}
+          data={data}
+          notify={notify}
+          onClose={() => setFiles(null)}
+          onDone={() => {
+            setFiles(null);
+            if (collection === "leads") {
+              setViewName("My Open Leads");
+              setUploads((n) => n + 1);
+            }
+            reload?.().catch(() => {});
+          }}
+        />
+      )}
+      {files === "download" && <DownloadLeads object={collection} notify={notify} onClose={() => setFiles(null)} />}
+      {files === "history" && <TransferHistory object={collection} onClose={() => setFiles(null)} />}
     </div>
   );
 }

@@ -7,6 +7,20 @@ import { Card, Icon, ObjectIcon, PathBar, StageBadge } from "./ui";
 const LEAD_PATH = ["New", "Nurturing", "Demo", "Converted"];
 const OPP_PATH = ["Opportunity", "Proposal", "Won"];
 
+// A research link (LinkedIn, website) that opens in a new tab
+export function ExternalLink({ href, children }) {
+  if (!href) return null;
+  const url = /^https?:\/\//i.test(href) ? href : `https://${href}`;
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer" className="external-link">
+      {children || url.replace(/^https?:\/\/(www\.)?/i, "").replace(/\/$/, "")}
+      <span aria-hidden="true"> ↗</span>
+    </a>
+  );
+}
+
+const headcount = (n) => (n == null ? "" : Number(n).toLocaleString());
+
 function Field({ label, children, onEdit }) {
   return (
     <div className="field-row">
@@ -170,6 +184,13 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
         ["Company", item.company],
         ["Phone", item.phone],
         ["Email", item.email && <a href={`mailto:${item.email}`}>{item.email}</a>],
+        ["LinkedIn", <ExternalLink key="li" href={item.linkedin_url}>Profile</ExternalLink>],
+        ["Company Links", (item.company_website || item.company_linkedin_url) && (
+          <span key="co" className="link-pair">
+            <ExternalLink href={item.company_website}>Website</ExternalLink>
+            <ExternalLink href={item.company_linkedin_url}>LinkedIn</ExternalLink>
+          </span>
+        )],
       ]
     : [
         ["Account Name", item.account_id && <a href={`#/accounts/${item.account_id}`}>{item.account_name}</a>],
@@ -210,6 +231,11 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
             {canEdit && !closed && (
               <button className="sf-button" onClick={() => setModal({ type: "lost", collection, record: item })}>
                 Mark as Lost
+              </button>
+            )}
+            {canEdit && lead && item.stage !== "Converted" && (
+              <button className="sf-button danger-text" onClick={() => setModal({ type: "delete", collection, record: item })}>
+                Delete
               </button>
             )}
           </div>
@@ -287,8 +313,16 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
                 <Field label="Industry" onEdit={edit}>{item.industry}</Field>
                 <Field label="Email" onEdit={edit}>{item.email && <a href={`mailto:${item.email}`}>{item.email}</a>}</Field>
                 <Field label="Phone" onEdit={edit}>{item.phone}</Field>
+                <Field label="Lead LinkedIn URL" onEdit={edit}><ExternalLink href={item.linkedin_url} /></Field>
+                <Field label="Location" onEdit={edit}>{item.location}</Field>
                 <Field label="Lead Source" onEdit={edit}>{item.source}</Field>
                 <Field label="Demo Date">{dateTime(item.demo_date)}</Field>
+              </Section>
+              <Section title="Company Details">
+                <Field label="Company Website" onEdit={edit}><ExternalLink href={item.company_website} /></Field>
+                <Field label="Company LinkedIn URL" onEdit={edit}><ExternalLink href={item.company_linkedin_url} /></Field>
+                <Field label="Turnover" onEdit={edit}>{item.annual_revenue != null ? `$${amount(item.annual_revenue)}` : ""}</Field>
+                <Field label="Headcount" onEdit={edit}>{headcount(item.employees)}</Field>
               </Section>
               {item.stage === "Lost" && (
                 <Section title="Lost Details">

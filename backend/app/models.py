@@ -66,6 +66,9 @@ class Account(Base):
     phone: Mapped[str | None] = mapped_column(String(30))
     website: Mapped[str | None] = mapped_column(String(255))
     address: Mapped[str | None] = mapped_column(String(500))
+    linkedin_url: Mapped[str | None] = mapped_column(String(300))
+    annual_revenue: Mapped[Decimal | None]
+    employees: Mapped[int | None]
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime | None] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(server_default=func.now(), onupdate=func.now())
@@ -87,6 +90,7 @@ class Contact(Base):
     job_title: Mapped[str | None] = mapped_column(String(100))
     email: Mapped[str | None] = mapped_column(String(255))
     phone: Mapped[str | None] = mapped_column(String(30))
+    linkedin_url: Mapped[str | None] = mapped_column(String(300))
     account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"))
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime | None] = mapped_column(server_default=func.now())
@@ -110,6 +114,16 @@ class Lead(Base):
     industry: Mapped[str | None] = mapped_column(String(100))
     email: Mapped[str | None] = mapped_column(String(255))
     phone: Mapped[str | None] = mapped_column(String(30))
+    # research links and company size (shown as clickable links on the lead)
+    linkedin_url: Mapped[str | None] = mapped_column(String(300))
+    company_website: Mapped[str | None] = mapped_column(String(255))
+    company_linkedin_url: Mapped[str | None] = mapped_column(String(300))
+    annual_revenue: Mapped[Decimal | None]  # turnover, USD
+    employees: Mapped[int | None]  # headcount
+    location: Mapped[str | None] = mapped_column(String(200))
+    # uploaded from a file and nobody has worked on it yet (kept out of the normal lists until someone does)
+    untouched: Mapped[bool] = mapped_column(default=False, server_default="false")
+    uploaded_from: Mapped[str | None] = mapped_column(String(255))  # file name, for leads created by an upload
     source: Mapped[str] = mapped_column(String(20), default="Other")
     stage: Mapped[str] = mapped_column(String(20), default="New")   # New/Nurturing/Demo/Converted/Lost
     demo_date: Mapped[datetime | None]
