@@ -6,6 +6,7 @@ import { Avatar, Icon, ObjectIcon } from "./ui";
 
 export const TABS = [
   ["home", "Home", "/", "home"],
+  ["assistant", "AI Assistant", "/assistant", "assistant"],
   ["opportunities", "Opportunities", "/opportunities", "opportunity"],
   ["leads", "Leads", "/leads", "lead"],
   ["tasks", "Tasks", "/tasks", "task"],

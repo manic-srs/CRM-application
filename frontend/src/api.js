@@ -248,6 +248,16 @@ export const api = {
       body: { email: email.trim(), password },
     }),
   search: (q) => apiRequest(`/search?q=${encodeURIComponent(q)}`),
+  // AI Assistant (a reply can take several steps, so it may wait up to 2 minutes)
+  assistantStatus: () => apiRequest("/assistant/status"),
+  assistantChat: (messages, message) =>
+    apiRequest("/assistant/chat", { method: "POST", body: { messages, message }, signal: AbortSignal.timeout(120000) }),
+  assistantConfirm: (messages, pending, confirmed) =>
+    apiRequest("/assistant/confirm", {
+      method: "POST",
+      body: { messages, pending, confirmed },
+      signal: AbortSignal.timeout(120000),
+    }),
   me: () => apiRequest("/auth/me"),
   // My Profile: name + which notifications also come by email
   updateProfile: (changes) => apiRequest("/auth/me", { method: "PUT", body: changes }),
