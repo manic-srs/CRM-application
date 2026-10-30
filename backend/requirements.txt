@@ -6,6 +6,6 @@ python-dotenv
 bcrypt
 python-multipart  # file uploads (email attachments)
 openpyxl  # Excel upload and download of leads
+httpx  # AI Assistant calls the OpenAI API (also used by the tests)
 # tests
 pytest
-httpx

@@ -3,6 +3,8 @@ import { shortDate, time } from "./format";
 import React, { useEffect, useState } from "react";
 
 const paths = {
+  flash: "M13 2 4 14h7l-1 8 9-12h-7Z",
+  up: "M12 19V5m-6 6 6-6 6 6",
   search: "m21 21-4.4-4.4M19 10.5a8.5 8.5 0 1 1-17 0 8.5 8.5 0 0 1 17 0",
   plus: "M12 5v14M5 12h14",
   close: "m6 6 12 12M6 18 18 6",
@@ -69,6 +71,7 @@ const glyphs = {
   note: "M6 3h9l4 4v14H6Zm3 7h7m-7 4h7",
   home: "M4 11 12 4l8 7v9h-5v-6H9v6H4Z",
   user: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 8c0-3.3 3.1-5.5 7-5.5s7 2.2 7 5.5Z",
+  assistant: "M10 3 11.8 8.2 17 10l-5.2 1.8L10 17l-1.8-5.2L3 10l5.2-1.8Zm8 10 .9 2.1 2.1.9-2.1.9L18 21l-.9-2.1L15 18l2.1-.9Z",
 };
 const tileColor = {
   lead: "#f88962",
@@ -80,6 +83,7 @@ const tileColor = {
   note: "#e6d478",
   home: "#ef7ead",
   user: "#1b96ff",
+  assistant: "#7f56d9",
 };
 const typeKey = {
   Lead: "lead",
