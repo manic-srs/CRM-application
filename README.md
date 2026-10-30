@@ -228,3 +228,47 @@ See [backend/README.md](backend/README.md) and [frontend/README.md](frontend/REA
 - AI assistant to draft follow-up emails from a previous conversation
 - Email templates
 - Inbound email sync
+
+## AI email drafting
+
+In **New Email → Message**, type directly into **Describe your message** at the bottom
+of the message box. Press **Enter** or click the arrow to generate a subject and message.
+There is no popup or four-option menu. A compact **Email stage** dropdown sits above
+the description input. It defaults to **Use current stage**, read from the CRM record,
+and lists all lead and opportunity stages. Choose another stage to guide this email's
+wording; this never changes the record itself. You can choose a stage, describe your
+message, or both. Unconfirmed milestones should be phrased conditionally or use placeholders.
+
+Example: "Write a friendly follow-up asking about their priorities. Keep it under 100 words."
+
+Drafts are instructed to use professional B2B sales language: a clear subject, a concise
+customer-focused opening, short paragraphs, and one polite next step appropriate to the
+sales stage. They avoid slang, hype, pressure, invented claims, and internal CRM terminology.
+Always review the draft for factual accuracy before sending.
+
+The generated subject and message appear directly in the existing composer and remain
+editable. **Undo draft** restores the previous email until you manually edit the generated
+text. Cancellation or generation errors preserve the existing email. Sending remains a
+separate **Send** / **Open in Outlook** action.
+
+Enable real AI generation in the root `.env` beside `docker-compose.yml`:
+
+```dotenv
+EMAIL_DRAFT_MODE=openai
+OPENAI_API_KEY=your-openai-api-key
+OPENAI_EMAIL_MODEL=gpt-4.1-mini
+```
+
+Run `docker compose up -d --build` after changing mode or model. Docker mounts the root
+`.env` file as a read-only secret at `/run/secrets/ai_settings`. The key is not copied into
+images, frontend code, or Docker environment configuration. It is read into backend memory
+and sent to OpenAI as an authorization header. Never commit `.env` or put the key in a
+`VITE_` variable. A backend run directly with Uvicorn can use backend environment variables.
+
+The backend uses the OpenAI Responses API with structured subject/body output and
+`store: false`. Requests include the description and minimal customer context (name,
+company when available, and actual CRM stage). Existing email text, attachments, internal
+notes, lost reasons, and email history are not included by this input. The sender signature
+is added locally. Access requires email permission and access to the related CRM record.
+The legacy sample-mode API remains available for backend tests; free-text instructions
+require AI mode. No API call sends an email or changes the CRM stage.

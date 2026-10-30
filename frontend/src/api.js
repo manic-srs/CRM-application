@@ -275,6 +275,8 @@ export const api = {
   transferRecords: (id, toUserId, deactivate) =>
     apiRequest(`/users/${id}/transfer`, { method: "POST", body: { to_user_id: Number(toUserId), deactivate } }),
   emailSettings: () => apiRequest("/emails/settings"),
+  emailDraftOptions: (field, id, signal) => apiRequest(`/emails/draft-options?record_field=${encodeURIComponent(field)}&record_id=${encodeURIComponent(id)}`, { signal }),
+  draftEmail: (values, signal) => apiRequest("/emails/draft", { method: "POST", body: values, signal }),
   // Roles & Permissions (Admin) and team access (Manager)
   permissions: () => apiRequest("/permissions"),
   activityLog: () => apiRequest("/activity-log"),

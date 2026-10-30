@@ -1,6 +1,7 @@
 // Send Email (with attachments) from a lead, opportunity, contact or account, and the list of sent emails.
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
+import EmailDraftAssistant from "./EmailDraftAssistant";
 import { dateTime } from "./format";
 import { Icon, ObjectIcon } from "./ui";
 
@@ -49,10 +50,13 @@ export function EmailComposer({ target, user, onClose, onSent }) {
   const [via, setVia] = useState("crm");
   const app = "outlook"; // "My email" always opens Outlook (company mail)
   useEffect(() => {
-    api.emailSettings().then(setSender).catch(() => {});
+    api.emailSettings().then(setSender).catch(err => setSender({ ai_drafting_enabled: false, settings_error: err.message }));
   }, []);
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [subject, setSubject] = useState(target.subject || "");
+  const [message, setMessage] = useState(target.greeting || "");
   const fileInput = useRef(null);
   const ref = useRef(null);
   const formRef = useRef(null);
@@ -81,6 +85,7 @@ export function EmailComposer({ target, user, onClose, onSent }) {
 
   const submit = async (event) => {
     event.preventDefault();
+    if (sending || aiBusy) return;
     setError("");
     const form = new FormData(event.target);
     if (!String(form.get("to")).trim()) return setError("Enter at least one recipient.");
@@ -174,14 +179,15 @@ export function EmailComposer({ target, user, onClose, onSent }) {
               <span>
                 Subject <i>*</i>
               </span>
-              <input name="subject" required maxLength={255} defaultValue={target.subject || ""} autoComplete="off" />
+              <input name="subject" required maxLength={255} value={subject} onChange={e => setSubject(e.target.value)} autoComplete="off" disabled={sending || aiBusy} />
             </label>
-            <label className="field">
-              <span>
-                Message <i>*</i>
-              </span>
-              <textarea name="body" rows={9} required defaultValue={target.greeting || ""} />
-            </label>
+            <div className="field">
+              <label htmlFor="email-message">Message <i>*</i></label>
+              <div className="email-editor">
+                <textarea id="email-message" name="body" rows={9} required value={message} onChange={e => setMessage(e.target.value)} disabled={sending || aiBusy} />
+                <EmailDraftAssistant target={target} settings={sender} subject={subject} message={message} sending={sending} onBusyChange={setAiBusy} onApply={draft => { setSubject(draft.subject); setMessage(draft.body); }} />
+              </div>
+            </div>
             {via === "crm" && (
             <div
               className="dropzone"
@@ -231,7 +237,7 @@ export function EmailComposer({ target, user, onClose, onSent }) {
             <button type="button" className="sf-button" onClick={onClose} disabled={sending}>
               Cancel
             </button>
-            <button type="submit" className="sf-button brand" disabled={sending} aria-busy={sending}>
+            <button type="submit" className="sf-button brand" disabled={sending || aiBusy} aria-busy={sending}>
               {sending ? "Sending…" : via === "mine" ? `Open in ${APP_NAME[app]}` : "Send"}
             </button>
           </div>

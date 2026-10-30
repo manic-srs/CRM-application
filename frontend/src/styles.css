@@ -2802,6 +2802,30 @@ a.pill:hover {
 .activity-table td {
   white-space: normal;
 }
+
+/* Direct drafting input inside the message editor; no overlay or menu. */
+.email-editor { position: relative; border: 1px solid var(--border-strong); border-radius: 7px; background: #fff; }
+.email-editor:focus-within { border-color: #0176d3; box-shadow: 0 0 0 1px #0176d3; }
+.field .email-editor > textarea { display: block; width: 100%; min-height: 240px; padding: 12px; border: 0; border-radius: 7px 7px 0 0; resize: vertical; }
+.field .email-editor > textarea:focus { outline: 0; border: 0; box-shadow: none; }
+.email-assistant-inline { padding: 8px 12px 12px; }
+.email-assistant-stage-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; margin: 0 4px 9px; }
+.email-assistant-stage-row label { color: #42546a; font-size: 12px; font-weight: 500; }
+.field .email-assistant-stage-row select { width: auto; max-width: 100%; min-width: 170px; height: 30px; padding: 0 28px 0 9px; border: 1px solid #d0dbe9; border-radius: 6px; background-color: #fff; color: #35465e; font-size: 12px; }
+.email-assistant-stage-row > span { color: #788699; font-size: 11px; }
+.email-assistant-input-row { display: flex; align-items: center; gap: 10px; padding: 5px 6px 5px 15px; border: 1px solid transparent; border-radius: 25px; background: #f0f4fa; color: #42546a; }
+.email-assistant-input-row:focus-within { border-color: #8eb9ee; background: #edf4ff; }
+.email-assistant-wand { width: 21px; height: 21px; flex-shrink: 0; }
+.field .email-assistant-input-row input { flex: 1; min-width: 0; height: 34px; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; font-size: 13px; }
+.field .email-assistant-input-row input:focus { border: 0; outline: 0; box-shadow: none; }
+.email-assistant-generate { display: grid; place-items: center; flex-shrink: 0; width: 34px; height: 34px; border-radius: 50%; background: #0176d3; color: #fff; }
+.email-assistant-generate:hover:not(:disabled) { background: #014486; }
+.email-assistant-generate:disabled { background: #dae3ee; color: #7f8ea2; }
+.email-assistant-generate svg { width: 20px; height: 20px; }
+.email-assistant-inline-status { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 12px; margin: 7px 4px 0; color: #69788c; font-size: 11px; line-height: 1.5; }
+.email-assistant-inline .form-error { margin-top: 8px; font-size: 12px; }
+@media (max-width: 480px) { .email-assistant-inline { padding: 6px 8px 10px; } .field .email-assistant-input-row input { font-size: 16px; } .email-assistant-input-row { gap: 8px; padding-left: 11px; } }
+
 /* people and activity tables show their full text (no "…") */
 .users-table td {
   max-width: none;

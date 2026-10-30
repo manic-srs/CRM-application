@@ -62,7 +62,12 @@ services:
       # New users must have a company email (comma separated list; empty = any domain)
       ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS-srsconsultinginc.com}
       SECRET_KEY: ${SECRET_KEY:-salestrack-dev-secret-change-me}
+      EMAIL_DRAFT_MODE: ${EMAIL_DRAFT_MODE:-openai}
+      OPENAI_ENV_FILE: /run/secrets/ai_settings
+      OPENAI_EMAIL_MODEL: ${OPENAI_EMAIL_MODEL:-gpt-4.1-mini}
       TZ: America/New_York     # same clock for PostgreSQL and the API, so "today" matches
+    secrets:
+      - ai_settings
     ports:
       - "8001:8000"
     depends_on:
@@ -85,3 +90,8 @@ services:
 
 volumes:
   crm_pg_data:
+
+# Local file mount only: never copy the API key into an image or environment configuration.
+secrets:
+  ai_settings:
+    file: ./.env

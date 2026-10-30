@@ -168,8 +168,8 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
   const sendEmail = () =>
     openEmail(
       lead
-        ? { type: "lead", field: "lead_id", id: item.id, name: item.name, email: item.email, firstName: item.first_name }
-        : { type: "opportunity", field: "opportunity_id", id: item.id, name: item.name, email: contact?.email, firstName: contact?.first_name },
+        ? { type: "lead", field: "lead_id", id: item.id, name: item.name, email: item.email, firstName: item.first_name, stage: item.stage }
+        : { type: "opportunity", field: "opportunity_id", id: item.id, name: item.name, email: contact?.email, firstName: contact?.first_name, stage: item.stage },
     );
 
   const path = lead ? LEAD_PATH : OPP_PATH;
