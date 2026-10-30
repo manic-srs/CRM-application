@@ -60,7 +60,8 @@ Every notification, task, Assistant item and Home card opens the record it is ab
 | `src/RecordPage.jsx` | Lead and opportunity pages |
 | `src/RelatedPages.jsx` | Account and contact pages |
 | `src/TasksPage.jsx` | Tasks list |
-| `src/Modal.jsx` | Create / edit forms and stage actions (convert, won, lost, stage change, note) |
+| `src/Modal.jsx` | Create / edit forms and stage actions (convert, won and stage change with optional files, lost, note) |
+| `src/LeadAutofill.jsx` | LinkedIn Profile URL on the lead form; on New Lead it fills empty fields from Apollo (through the backend) |
 | `src/api.js` | API calls and request/response mapping |
 | `src/useWorkspace.js` | Loads and refreshes data from the API |
 | `src/domain.js`, `src/format.js` | Dropdown values and display formatting |

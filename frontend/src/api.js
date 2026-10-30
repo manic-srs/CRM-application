@@ -174,6 +174,52 @@ async function fileRequest(path) {
   return response.blob();
 }
 
+// LinkedIn autofill (New Lead): the backend asks Apollo. The error keeps the HTTP status, so the form knows
+// whether trying again can help (503 = not set up on this server).
+async function lookupProfile(linkedinUrl) {
+  let response;
+  try {
+    response = await fetch(`${BASE}/leads/enrichment`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ linkedin_url: linkedinUrl }),
+      signal: AbortSignal.timeout(30000),
+    });
+  } catch (error) {
+    throw Object.assign(
+      new Error(
+        error.name === "TimeoutError"
+          ? "The lookup took too long. Try again."
+          : "Cannot reach the backend. Check that it is running and try again.",
+      ),
+      { status: 0 },
+    );
+  }
+  checkLogin(response);
+  const result = await response.json().catch(() => null);
+  if (!response.ok) {
+    const detail = result?.detail;
+    throw Object.assign(new Error(typeof detail === "string" ? detail : "The profile could not be looked up."), {
+      status: response.status,
+    });
+  }
+  return result;
+}
+
+// Change Stage / Mark as Won popups with files: one request, saved together or not at all.
+// fields: [name, value] pairs (a name can repeat); empty values are left out.
+function saveWithFiles(path, fields, files, { failed, what }) {
+  const form = new FormData();
+  for (const [name, value] of fields) if (value != null && value !== "") form.append(name, value);
+  files.forEach((file) => form.append("files", file, file.name));
+  return upload(path, form, {
+    failed,
+    tooLarge: "The files are too large. Each file can be up to 20 MB.",
+    timedOut: `Saving took too long. Reload the page to check whether ${what} before trying again.`,
+    timeout: 10 * 60 * 1000,
+  });
+}
+
 export const api = {
   // actorId = the logged-in user, so the backend can tell an owner "assigned to you by ..."
   saveLead: (v, id, actorId) =>
@@ -347,6 +393,29 @@ export const api = {
     fileRequest(`/opportunities/${opportunityId}/attachments/${id}/file${download ? "?download=true" : ""}`),
   deleteAttachment: (opportunityId, id) =>
     apiRequest(`/opportunities/${opportunityId}/attachments/${id}`, { method: "DELETE" }),
+  // LinkedIn autofill on New Lead (Apollo, through the backend only)
+  leadEnrichmentStatus: () => apiRequest("/leads/enrichment"),
+  enrichLead: (linkedinUrl) => lookupProfile(linkedinUrl),
+  // Change Stage popup with files: the stage change and the files are saved together, or nothing is saved
+  stageWithFiles: (opportunityId, values, files) =>
+    saveWithFiles(`/opportunities/${opportunityId}/stage-with-files`, [["stage", values.stage], ["note", values.note]], files, {
+      failed: "The stage could not be changed.",
+      what: "the stage changed",
+    }),
+  // Mark as Won popup with files (labelled Proposal by the server): the files and Won are saved together
+  wonWithFiles: (opportunityId, values, files) =>
+    saveWithFiles(
+      `/opportunities/${opportunityId}/won-with-files`,
+      [
+        ["final_value", values.final_value],
+        ["note", values.note],
+        ["notify_customer", values.notify_customer ? "true" : "false"],
+        ...(values.completed_stages || []).map((stage) => ["completed_stages", stage]),
+        ["completed_note", values.completed_note],
+      ],
+      files,
+      { failed: "The opportunity could not be marked as Won.", what: "it was marked as Won" },
+    ),
 };
 
 const idText = (value) => (value == null ? "" : String(value));

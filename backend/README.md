@@ -93,6 +93,23 @@ and overdue. When a lead is converted, its emails also show on the new opportuni
 
 Reminders and overdue tasks are checked every minute in the background (`app/scheduler.py`).
 
+## LinkedIn autofill (New Lead)
+
+`POST /leads/enrichment` (`app/apollo.py`, `app/routers/lead_enrichment.py`) looks a LinkedIn profile up in Apollo
+(People Enrichment) and returns the lead details found. It saves and sends nothing; the form is saved as usual.
+
+- Only `linkedin.com/in/<name>` profile addresses are accepted; new leads save them as `https://linkedin.com/in/<name>`
+  (other LinkedIn links are kept as typed, as before). Conversion copies the address to the contact.
+- Only Apollo's fixed endpoint is called, with `APOLLO_API_KEY` in the `x-api-key` header (backend only). Personal
+  emails, phone reveal and waterfall enrichment are off. The LinkedIn page itself is never fetched.
+- Filled: first and last name, company, title, industry, the email only when Apollo marks it verified, and the phone
+  only for a direct business line. Values that don't fit the form are reported, not cut. No match fills nothing.
+- The profile must be verified: fields are filled only when the LinkedIn URL in Apollo's answer is the pasted profile
+  (`url_verified: true`). A missing, invalid or different URL fails closed (`status: "unverified"`, nothing filled).
+- Same access as creating a lead. 10 lookups a minute per user; each user's answers are kept in memory for 10 minutes
+  (only those fields), so the same profile doesn't use credits twice. Keys and personal details are never logged.
+- Without `APOLLO_API_KEY` the endpoint answers 503 and leads are entered by hand.
+
 ## Opportunity attachments
 
 The Attachments card on the opportunity page (`app/routers/attachments.py`, table `opportunity_attachments`):
@@ -107,6 +124,13 @@ The Attachments card on the opportunity page (`app/routers/attachments.py`, tabl
 - Files are sent only with the `Authorization` header (a `?token=` address is refused); the app shows them from a
   temporary `blob:` address. Responses are not cached (`Cache-Control: private, no-store`, `nosniff`).
 - Older databases get the table automatically on startup (`upgrade_database()` in `app/main.py`).
+- The Change Stage popup (Opportunity / Proposal) can add up to 5 files: `POST /opportunities/{id}/stage-with-files`
+  (`app/routers/opportunities.py`) does the same stage change as `PUT /stage` and saves the files with the new stage,
+  in one transaction. Every file is checked first; if one is refused nothing is saved (no stage change, note, task,
+  notification or file). The nginx limit is raised to 102 MB for these addresses only.
+- The Mark as Won popup can add up to 5 files the same way: `POST /opportunities/{id}/won-with-files` does the same as
+  `POST /won` and saves the files labelled Proposal (the stage being closed) while the deal is still open, then moves
+  it to Won in the same transaction. If anything is refused, nothing changes and no thank-you email is sent.
 Notification emails are sent only after the change is saved.
 
 Mail settings (environment variables in `docker-compose.yml`; to use a real mail server, put them in a `.env` file,
@@ -139,6 +163,7 @@ All APIs start with `/api`.
 | New lead | POST /leads |
 | Lead page | GET /leads/{id} (details, tasks, notes and history together) |
 | Edit lead | PUT /leads/{id} |
+| New lead: LinkedIn autofill | GET /leads/enrichment (is it on?), POST /leads/enrichment (`{"linkedin_url": ...}`) |
 | Lead path bar | PUT /leads/{id}/stage |
 | Mark lead lost | POST /leads/{id}/lost |
 | Convert lead | POST /leads/{id}/convert |
@@ -158,6 +183,8 @@ All APIs start with `/api`.
 | Download attachment | GET /emails/attachments/{id} |
 | Opportunity files (list, upload one file) | GET /opportunities/{id}/attachments, POST /opportunities/{id}/attachments (form field `file`) |
 | Open / download, delete an opportunity file | GET /opportunities/{id}/attachments/{attachment_id}/file (`?download=true` to save), DELETE /opportunities/{id}/attachments/{attachment_id} |
+| Change Stage popup with files | POST /opportunities/{id}/stage-with-files (form fields `stage`, `note`, `files`) |
+| Mark as Won popup with files | POST /opportunities/{id}/won-with-files (form fields `final_value`, `note`, `notify_customer`, `completed_stages`, `completed_note`, `files`) |
 | Search box | GET /search?q= |
 | DB check | GET /health/db |
 
@@ -185,7 +212,8 @@ backend/
     scheduler.py     reminder and overdue checks every minute
     schemas.py       request and response formats
     serializers.py   adds names to the responses
-    routers/         the APIs (auth, home, leads, opportunities, attachments, tasks, accounts, activity, emails)
+    apollo.py        LinkedIn autofill: Apollo People Enrichment (server only)
+    routers/         the APIs (auth, home, leads, lead_enrichment, opportunities, attachments, tasks, accounts, activity, emails)
   tests/             tests
   Dockerfile
   requirements.txt

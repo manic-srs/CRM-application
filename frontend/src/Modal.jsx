@@ -2,7 +2,9 @@
 // (lost, won, convert, stage change, note). Form logic by Samhit; Salesforce-style layout.
 import React, { useEffect, useRef, useState } from "react";
 import { api } from "./api";
-import { LEAD_SOURCES, LOST_REASONS, PRIORITIES, SALUTATIONS, localInput } from "./domain";
+import { StageFiles } from "./Attachments";
+import LinkedInField from "./LeadAutofill";
+import { ATTACHMENT_STAGES, LEAD_SOURCES, LOST_REASONS, PRIORITIES, SALUTATIONS, WON_FILES_STAGE, localInput } from "./domain";
 import { can } from "./permissions";
 import { Icon } from "./ui";
 
@@ -96,6 +98,12 @@ export default function Modal({ modal, close, data, run, notify, user }) {
   const [relatedType, setRelatedType] = useState(
     record?.relatedType || modal.relatedType || "general",
   );
+  // Change Stage to Opportunity / Proposal and Mark as Won: files saved with the stage change (kept here until Save)
+  const stageFilesOn =
+    type === "won" || (type === "stage" && modal.collection === "opportunities" && ATTACHMENT_STAGES.includes(modal.stage));
+  const [stageFiles, setStageFiles] = useState([]);
+  const attached = stageFilesOn && stageFiles.length;
+  const attachedText = attached ? ` ${attached} file${attached === 1 ? " was" : "s were"} attached.` : "";
   const titles = {
     lead: record ? `Edit ${record.name}` : "New Lead",
     opportunity: `Edit ${record?.name}`,
@@ -280,8 +288,8 @@ export default function Modal({ modal, close, data, run, notify, user }) {
     if (type === "convert") return "Lead converted. Account, contact, opportunity and follow-up task created.";
     if (type === "lead" && !record)
       return `Lead "${saved.name}" was created.${v.welcome_email === "on" && v.email ? " A welcome email was sent to the lead." : ""}`;
-    if (type === "stage") return `"${name}" moved to ${modal.stage}. The next follow-up task was created.`;
-    if (type === "won") return `"${name}" was marked as Won.${mailed}`;
+    if (type === "stage") return `"${name}" moved to ${modal.stage}. The next follow-up task was created.${attachedText}`;
+    if (type === "won") return `"${name}" was marked as Won.${mailed}${attachedText}`;
     if (type === "lost") return `"${name}" was marked as Lost.${mailed}`;
     if (type === "task") return record ? "Task updated." : "Task created.";
     if (type === "note") return "Note added.";
@@ -362,7 +370,7 @@ export default function Modal({ modal, close, data, run, notify, user }) {
           throw new Error("Last name and company are required.");
         const missing = [
           ["email", "Email"],
-          ["linkedin_url", "Lead LinkedIn URL"],
+          ["linkedin_url", "LinkedIn Profile URL"],
           ["company_website", "Company Website"],
           ["company_linkedin_url", "Company LinkedIn URL"],
         ].filter(([name]) => !(v[name] || "").trim());
@@ -397,13 +405,15 @@ export default function Modal({ modal, close, data, run, notify, user }) {
           lost_notes: v.lost_notes || null,
           notify_customer: v.notify_customer === "on",
         });
-      if (type === "won")
-        await run("won", record.id, {
+      if (type === "won") {
+        const values = {
           final_value: v.final_value === "" ? null : Number(v.final_value),
           note: v.note || null,
           notify_customer: v.notify_customer === "on",
           ...skipPayload(v),
-        });
+        };
+        await (stageFiles.length ? run("wonWithFiles", record.id, values, stageFiles) : run("won", record.id, values));
+      }
       if (type === "convert")
         saved = await run("convert", record.id, {
           opportunity_name: v.opportunity_name || null,
@@ -413,7 +423,9 @@ export default function Modal({ modal, close, data, run, notify, user }) {
           account_id: v.account_id ? Number(v.account_id) : null,
           ...skipPayload(v),
         });
-      if (type === "stage")
+      if (type === "stage" && stageFilesOn && stageFiles.length)
+        await run("stageWithFiles", record.id, { stage: modal.stage, note: v.note || null }, stageFiles);
+      else if (type === "stage")
         await run("stage", modal.collection, record.id, {
           stage: modal.stage,
           note: v.note || null,
@@ -520,6 +532,13 @@ export default function Modal({ modal, close, data, run, notify, user }) {
           )}
           {type === "lead" && duplicateBox()}
           {type === "lead" && (
+            <>
+            <LinkedInField
+              autofill={!record}
+              defaultValue={record?.linkedin_url ?? ""}
+              form={() => ref.current?.querySelector("form")}
+              onCompany={lookUpCompany}
+            />
             <div className="form-grid">
               {select("Salutation", "salutation", SALUTATIONS)}
               {field("First Name", "first_name")}
@@ -530,7 +549,6 @@ export default function Modal({ modal, close, data, run, notify, user }) {
               {field("Industry", "industry")}
               {field("Email", "email", "email", true)}
               {field("Phone", "phone", "tel")}
-              {field("Lead LinkedIn URL", "linkedin_url", "text", true)}
               {field("Location", "location")}
               {select(
                 "Lead Source",
@@ -563,6 +581,7 @@ export default function Modal({ modal, close, data, run, notify, user }) {
                   localInput(record.demo_date),
                 )}
             </div>
+            </>
           )}
           {type === "opportunity" && (
             <div className="form-grid">
@@ -694,6 +713,7 @@ export default function Modal({ modal, close, data, run, notify, user }) {
                 record.expected_value ?? "",
               )}
               {textArea("Closing Note", "note")}
+              <StageFiles files={stageFiles} setFiles={setStageFiles} stage={WON_FILES_STAGE} saving={submitting} />
               {customerCheck(
                 "Send the customer a thank-you email",
                 "A no-reply email to the deal's contact: thank you for accepting the proposal, and who will contact them about next steps.",
@@ -733,6 +753,7 @@ export default function Modal({ modal, close, data, run, notify, user }) {
                   localInput(record.demo_date),
                 )}
               {textArea("Note", "note")}
+              {stageFilesOn && <StageFiles files={stageFiles} setFiles={setStageFiles} stage={modal.stage} saving={submitting} />}
             </>
           )}
           {type === "transfer" && (

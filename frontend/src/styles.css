@@ -1951,6 +1951,84 @@ a.pill:hover {
 .sf-button.danger:hover {
   background: #8e030f;
 }
+/* Change Stage popup: files saved with the stage change */
+.stage-files {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+.stage-files-label {
+  color: #444;
+  font-size: 12px;
+}
+.stage-files .dropzone {
+  margin-top: 0;
+}
+.stage-files .dropzone.dragging {
+  border-color: var(--brand);
+  background: var(--brand-light);
+}
+.stage-files .file-list {
+  margin: 0;
+}
+.stage-files .file-list li > .link {
+  flex: 1 1 0;
+  width: 0; /* a long name is cut off instead of widening the popup on small screens */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.stage-files .file-list small {
+  flex: none;
+}
+.stage-files-note {
+  color: var(--text-weak);
+  font-size: 12px;
+}
+.stage-files-note .stage-badge {
+  font-size: 11px;
+}
+.stage-files .form-error {
+  margin-top: 0;
+}
+/* Lead form: LinkedIn Profile URL (full width above the two columns) and Apollo autofill messages */
+.linkedin-field {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.linkedin-field .field {
+  margin-bottom: 0;
+}
+.autofill-status {
+  display: grid;
+  gap: 4px;
+  color: var(--text-weak);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.autofill-status:empty {
+  display: none;
+}
+.autofill-status svg {
+  vertical-align: -2px;
+}
+.autofill-status.matched svg {
+  color: var(--success);
+}
+.autofill-status .autofill-problem {
+  color: #c23934;
+}
+.autofill-status ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.field input.autofilled {
+  border-color: #8eb9ee;
+  background: #eef4ff;
+}
 .email-item {
   display: flex;
   align-items: flex-start;

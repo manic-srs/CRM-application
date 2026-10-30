@@ -18,7 +18,12 @@ import {
   salesOverview,
   money,
   ATTACHMENT_MAX_BYTES,
+  STAGE_FILES_MAX,
+  autofillPlan,
+  linkedInProfileUrl,
   attachmentProblem,
+  attachmentType,
+  pickStageFiles,
 } from "./domain.js";
 
 test("lead form uses backend fields and only requires last name and company", () => {
@@ -318,4 +323,195 @@ test("email uploads keep their own messages", async (t) => {
   await assert.rejects(api.sendEmail(new FormData()), /The attachments are too large\./);
   status = 500;
   await assert.rejects(api.sendEmail(new FormData()), /The email could not be sent\./);
+});
+test("files chosen in the Change Stage popup are checked, kept once and limited", () => {
+  const file = (name, size, lastModified = 1) => ({ name, size, lastModified });
+  const proposal = file("proposal.pdf", 10);
+  let picked = pickStageFiles([], [proposal, file("old.doc", 10), file("empty.png", 0), file("big.pdf", ATTACHMENT_MAX_BYTES + 1)]);
+  assert.deepEqual(picked.files, [proposal]);
+  assert.equal(picked.problems.length, 3);
+  assert.match(picked.problems.join("\n"), /\.doc[\s\S]*is empty[\s\S]*larger than 20 MB/);
+  // the same file chosen again is not added twice; another file with the same name is
+  picked = pickStageFiles(picked.files, [proposal, file("proposal.pdf", 10, 2)]);
+  assert.equal(picked.files.length, 2);
+  assert.deepEqual(picked.problems, []);
+  assert.equal(STAGE_FILES_MAX, 5);
+  picked = pickStageFiles(picked.files, ["a.png", "b.jpg", "c.jpeg", "d.docx"].map((n) => file(n, 5)));
+  assert.equal(picked.files.length, 5);
+  assert.match(picked.problems[0], /^d\.docx: up to 5 files/);
+  assert.deepEqual(
+    ["a.PDF", "b.docx", "c.JPG", "d.jpeg", "e.png", "f.doc", "g.txt", "pdf"].map(attachmentType),
+    ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "image/jpeg",
+     "image/jpeg", "image/png", "", "", ""],
+  );
+});
+test("a stage change with files is one request, sent with the login header", async (t) => {
+  const calls = [];
+  let reply = () => new Response(JSON.stringify({ id: 6, stage: "Proposal" }), { status: 200 });
+  t.mock.method(globalThis, "fetch", async (url, options = {}) => {
+    calls.push({ url, options });
+    return reply();
+  });
+  const files = [new File(["%PDF-"], "quote.pdf"), new File(["png"], "chart.png")];
+  setToken("secret-token");
+  try {
+    await api.stageWithFiles("6", { stage: "Proposal", note: "Sent the quote" }, files);
+    await api.stageWithFiles("6", { stage: "Opportunity", note: null }, files.slice(0, 1));
+    await api.stage("opportunities", "6", { stage: "Proposal", note: null }); // without files: unchanged JSON call
+  } finally {
+    setToken("");
+  }
+  assert.deepEqual(
+    calls.map((c) => [c.url, c.options.method]),
+    [
+      ["/api/opportunities/6/stage-with-files", "POST"],
+      ["/api/opportunities/6/stage-with-files", "POST"],
+      ["/api/opportunities/6/stage", "PUT"],
+    ],
+  );
+  const form = calls[0].options.body;
+  assert.equal(form.get("stage"), "Proposal");
+  assert.equal(form.get("note"), "Sent the quote");
+  assert.deepEqual(form.getAll("files").map((f) => f.name), ["quote.pdf", "chart.png"]);
+  assert.equal(calls[1].options.body.get("note"), null); // an empty note is not sent
+  assert.equal(calls[0].options.headers.Authorization, "Bearer secret-token");
+  assert.ok(!calls[0].url.includes("secret-token"));
+  assert.deepEqual(JSON.parse(calls[2].options.body), { stage: "Proposal", note: null });
+
+  reply = () => new Response(JSON.stringify({ detail: "chart.png is named as a PNG image but is really a PDF." }), { status: 415 });
+  await assert.rejects(api.stageWithFiles("6", { stage: "Proposal" }, files), /chart\.png .* really a PDF/);
+  reply = () => new Response("<html>Request Entity Too Large</html>", { status: 413 });
+  await assert.rejects(api.stageWithFiles("6", { stage: "Proposal" }, files), /Each file can be up to 20 MB/);
+  reply = () => new Response("", { status: 500 });
+  await assert.rejects(api.stageWithFiles("6", { stage: "Proposal" }, files), /The stage could not be changed/);
+  reply = () => {
+    throw new TypeError("network unavailable");
+  };
+  await assert.rejects(api.stageWithFiles("6", { stage: "Proposal" }, files), /Cannot reach the backend/);
+});
+test("Mark as Won with files is one request with the amount, note, email choice and files", async (t) => {
+  const calls = [];
+  let reply = () => new Response(JSON.stringify({ id: 6, stage: "Won" }), { status: 200 });
+  t.mock.method(globalThis, "fetch", async (url, options = {}) => {
+    calls.push({ url, options });
+    return reply();
+  });
+  const files = [new File(["%PDF-"], "signed.pdf"), new File(["png"], "photo.png")];
+  setToken("secret-token");
+  try {
+    await api.wonWithFiles("6", { final_value: 1500.5, note: "Signed", notify_customer: true, completed_stages: ["Proposal"],
+                                  completed_note: "Sent by email" }, files);
+    await api.wonWithFiles("6", { final_value: 0, note: null, notify_customer: false }, files.slice(0, 1));
+    await api.won("6", { final_value: null, note: null, notify_customer: true }); // without files: unchanged JSON call
+  } finally {
+    setToken("");
+  }
+  assert.deepEqual(
+    calls.map((c) => [c.url, c.options.method]),
+    [
+      ["/api/opportunities/6/won-with-files", "POST"],
+      ["/api/opportunities/6/won-with-files", "POST"],
+      ["/api/opportunities/6/won", "POST"],
+    ],
+  );
+  const form = calls[0].options.body;
+  assert.deepEqual(
+    [...form.entries()].map(([name, value]) => [name, typeof value === "string" ? value : value.name]),
+    [["final_value", "1500.5"], ["note", "Signed"], ["notify_customer", "true"], ["completed_stages", "Proposal"],
+     ["completed_note", "Sent by email"], ["files", "signed.pdf"], ["files", "photo.png"]],
+  );
+  const second = calls[1].options.body;
+  assert.equal(second.get("final_value"), "0"); // 0 is an amount, not "empty"
+  assert.equal(second.get("notify_customer"), "false");
+  assert.equal(second.get("note"), null);
+  assert.equal(calls[0].options.headers.Authorization, "Bearer secret-token");
+  assert.ok(!calls[0].url.includes("secret-token"));
+  assert.deepEqual(JSON.parse(calls[2].options.body), { final_value: null, note: null, notify_customer: true });
+
+  reply = () => new Response(JSON.stringify({ detail: "final_value: Input should be greater than or equal to 0" }), { status: 422 });
+  await assert.rejects(api.wonWithFiles("6", { final_value: -5 }, files), /final_value: Input should be greater/);
+  reply = () => new Response("<html>Request Entity Too Large</html>", { status: 413 });
+  await assert.rejects(api.wonWithFiles("6", {}, files), /Each file can be up to 20 MB/);
+  reply = () => new Response("", { status: 500 });
+  await assert.rejects(api.wonWithFiles("6", {}, files), /could not be marked as Won/);
+});
+test("only LinkedIn person profiles are looked up, in one form", () => {
+  const url = (value) => linkedInProfileUrl(value).url;
+  assert.equal(url("https://www.linkedin.com/in/Jane-Doe-123/"), "https://linkedin.com/in/jane-doe-123");
+  assert.equal(url("  linkedin.com/in/jane-doe-123?trk=public#about "), "https://linkedin.com/in/jane-doe-123");
+  assert.equal(url("http://uk.linkedin.com/in/jane_doe"), "https://linkedin.com/in/jane_doe");
+  assert.equal(url("https://www.linkedin.com/in/j%C3%BCrgen-m"), "https://linkedin.com/in/j%C3%BCrgen-m");
+  for (const bad of [
+    "",
+    "https://www.linkedin.com/company/acme",
+    "https://www.linkedin.com/school/some-school",
+    "https://www.linkedin.com/in/",
+    "https://www.linkedin.com/in/jane/details/experience",
+    "https://www.linkedin.com/sales/lead/abc123",
+    "https://linkedin.com.example.test/in/jane-doe",
+    "https://evil-linkedin.com/in/jane-doe",
+    "https://www.linkedin.com@example.test/in/jane-doe",
+    "https://www.linkedin.com:443/in/jane-doe",
+    "javascript:alert(1)",
+    "ftp://linkedin.com/in/jane-doe",
+    "https://lnkd.in/abc123",
+    "https://www.linkedin.com/in/jane doe",
+    "https://www.linkedin.com/in/ab",
+    `https://www.linkedin.com/in/${"a".repeat(300)}`,
+  ])
+    assert.ok(linkedInProfileUrl(bad).error, `should refuse ${bad}`);
+});
+test("Apollo autofill fills empty fields and never overwrites what the user typed", () => {
+  const empty = { first_name: "", last_name: "", company: "", title: "", industry: "", email: "", phone: "" };
+  const jane = { first_name: "Jane", last_name: "Doe", company: "Synthetic Co", title: "CTO" };
+  // a first profile: empty fields are filled; the user's own company stays
+  let plan = autofillPlan({ ...empty, company: "Typed Co" }, {}, jane);
+  assert.deepEqual(plan.set, { first_name: "Jane", last_name: "Doe", title: "CTO" });
+  assert.deepEqual(plan.filled, ["first_name", "last_name", "title"]);
+  assert.deepEqual(plan.kept, ["company"]);
+  // the user then edits the title; a second profile replaces only the untouched autofill
+  const form = { ...empty, first_name: "Jane", last_name: "Doe", company: "Typed Co", title: "Chief Technology Officer" };
+  plan = autofillPlan(form, plan.autofilled, { first_name: "Sam", last_name: "Lee", title: "VP Sales", email: "sam@example.test" });
+  assert.deepEqual(plan.set, { first_name: "Sam", last_name: "Lee", email: "sam@example.test" });
+  assert.deepEqual(plan.kept, ["title"]);
+  // a profile without a last name removes the old profile's untouched last name
+  plan = autofillPlan({ ...form, first_name: "Sam", last_name: "Lee", email: "sam@example.test" }, plan.autofilled, { first_name: "Sam" });
+  assert.deepEqual(plan.set, { last_name: "", email: "" });
+  // clearing the address ({}) removes untouched autofill only
+  plan = autofillPlan({ ...form, first_name: "Sam" }, plan.autofilled, {});
+  assert.deepEqual(plan.set, { first_name: "" });
+  assert.deepEqual(plan.autofilled, {});
+});
+test("LinkedIn autofill calls only the backend, with the login header, and keeps the error status", async (t) => {
+  const calls = [];
+  let reply = () => new Response(JSON.stringify({ enabled: true }), { status: 200 });
+  t.mock.method(globalThis, "fetch", async (url, options = {}) => {
+    calls.push({ url, options });
+    return reply();
+  });
+  setToken("secret-token");
+  try {
+    await api.leadEnrichmentStatus();
+    reply = () => new Response(JSON.stringify({ status: "no_match", linkedin_url: "x", fields: {} }), { status: 200 });
+    await api.enrichLead("https://www.linkedin.com/in/jane-doe");
+    reply = () => new Response(JSON.stringify({ detail: "LinkedIn autofill isn't set up on this server." }), { status: 503 });
+    await assert.rejects(api.enrichLead("https://www.linkedin.com/in/jane-doe"), (err) => err.status === 503 && /isn't set up/.test(err.message));
+    reply = () => {
+      throw new TypeError("network unavailable");
+    };
+    await assert.rejects(api.enrichLead("https://www.linkedin.com/in/jane-doe"), (err) => err.status === 0 && /Cannot reach the backend/.test(err.message));
+  } finally {
+    setToken("");
+  }
+  assert.deepEqual(calls.map((c) => [c.url, c.options.method || "GET"]), [
+    ["/api/leads/enrichment", "GET"],
+    ["/api/leads/enrichment", "POST"],
+    ["/api/leads/enrichment", "POST"],
+    ["/api/leads/enrichment", "POST"],
+  ]);
+  assert.deepEqual(JSON.parse(calls[1].options.body), { linkedin_url: "https://www.linkedin.com/in/jane-doe" });
+  for (const call of calls) {
+    assert.ok(call.url.startsWith("/api/") && !call.url.includes("apollo") && !call.url.includes("secret-token"));
+    assert.equal(call.options.headers.Authorization, "Bearer secret-token");
+  }
 });

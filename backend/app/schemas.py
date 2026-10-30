@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import Literal
 
 import re
+from urllib.parse import quote, unquote, urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
@@ -201,6 +202,40 @@ def clean_url(value: str | None, *, linkedin: bool = False) -> str | None:
     return value
 
 
+PROFILE_HOST = re.compile(r"(?:www\.|[a-z]{2}\.)?linkedin\.com")  # also country sites such as uk.linkedin.com
+PROFILE_NAME = re.compile(r"[\w-]{3,100}")  # letters (any language), digits, - and _
+
+
+def linkedin_profile_url(value: str | None) -> str:
+    """A person's LinkedIn profile (linkedin.com/in/<name>) in one form: https://linkedin.com/in/<name>.
+    Raises ValueError for anything else: company or school pages, sites that only look like LinkedIn, other schemes,
+    a login or port in the address, short links (lnkd.in) and extra path parts. Query and #fragment are dropped."""
+    raw = (value or "").strip()
+    if not raw or len(raw) > 300 or any(ch.isspace() for ch in raw):
+        raise ValueError("Enter a LinkedIn profile address like https://www.linkedin.com/in/name")
+    if "://" not in raw:
+        if raw.startswith("/") or ":" in raw.split("/")[0]:
+            raise ValueError("Enter a LinkedIn profile address like https://www.linkedin.com/in/name")
+        raw = "https://" + raw
+    parts = urlsplit(raw)
+    if parts.scheme.lower() not in ("http", "https"):
+        raise ValueError("Only https:// LinkedIn profile addresses can be used")
+    try:
+        port = parts.port
+    except ValueError:
+        port = -1
+    host = (parts.hostname or "").lower()
+    if "@" in parts.netloc or port is not None or not PROFILE_HOST.fullmatch(host):
+        raise ValueError("This isn't a linkedin.com profile address")
+    match = re.fullmatch(r"/in/([^/]+)/?", parts.path)
+    if not match:
+        raise ValueError("Use a person's profile address (linkedin.com/in/...), not a company, school or other page")
+    name = unquote(match.group(1))
+    if not PROFILE_NAME.fullmatch(name):
+        raise ValueError("This LinkedIn profile address isn't valid")
+    return f"https://linkedin.com/in/{quote(name.lower(), safe='-_')}"
+
+
 class LeadLinks(BaseModel):
     """Research links and company size on a lead (New Lead / Edit Lead / import)."""
 
@@ -243,6 +278,15 @@ class LeadCreate(LeadLinks):
     created_by_id: int | None = None  # ignored: the logged-in user creates it
     welcome_email: bool = True  # email the lead (no-reply) that their details were received; needs an email
     confirm_duplicate: bool = False  # the email already exists on a closed lead / contact: create a new lead anyway
+
+    @field_validator("linkedin_url")
+    @classmethod
+    def _profile(cls, v):
+        """A person's profile address is saved in one form (other LinkedIn links stay as typed)."""
+        try:
+            return linkedin_profile_url(v) if v else v
+        except ValueError:
+            return v
 
 
 class LeadUpdate(LeadLinks):
