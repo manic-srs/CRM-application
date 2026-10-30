@@ -35,9 +35,14 @@ email, tasks and reminders, notifications, lead conversion, closing a deal, and 
 - Automatic follow-up tasks and reminders at each stage.
 - Duplicate email detection when creating a lead.
 - Opportunity attachments: PDF, Word (.docx), JPG and PNG files (20 MB each) added at the Opportunity and Proposal
-  stages, kept with their stage, and viewable after the deal closes.
+  stages, kept with their stage, and viewable after the deal closes. Files can also be chosen in the Change Stage
+  popup; they are saved together with the stage change and labelled with the new stage. Files chosen in the Mark as
+  Won popup are saved together with the win and labelled Proposal.
 - Lead research fields: LinkedIn profile, company website, company LinkedIn page (clickable, required with email),
   turnover, headcount and location.
+- LinkedIn autofill on New Lead: paste a LinkedIn profile URL and the empty fields are filled with the details Apollo
+  returns (name, company, title, industry, verified work email, direct business phone). Nothing is saved until Save;
+  off until `APOLLO_API_KEY` is set.
 - Delete a lead (owner, Manager or Admin); the Admin and Managers are notified and it is logged.
 - While typing the company on a lead, existing leads and accounts for that company are shown (only owner and stage
   for records the user can't open), so two people don't work the same company.
@@ -147,6 +152,7 @@ Settings are read from `.env` in the project root. This file is excluded from ve
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Default Admin account created on first start |
 | `SECRET_KEY` | Secret used to sign login tokens (use a long random value) |
 | `APP_URL` | Base URL used in email links (default `http://localhost:5173`) |
+| `APOLLO_API_KEY` | LinkedIn autofill on New Lead (Apollo People Enrichment). Backend only; matched lookups can use Apollo credits |
 
 Apply changes with `docker compose up -d`.
 
@@ -224,7 +230,6 @@ See [backend/README.md](backend/README.md) and [frontend/README.md](frontend/REA
 - Self-service password reset is not available; passwords are reset by an Admin.
 
 **Roadmap**
-- Lead enrichment from a LinkedIn URL (Apollo.io or an alternative)
 - AI assistant to draft follow-up emails from a previous conversation
 - Email templates
 - Inbound email sync

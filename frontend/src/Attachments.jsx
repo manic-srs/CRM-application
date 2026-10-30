@@ -2,7 +2,15 @@
 // Files are fetched with the login header and shown from a temporary blob: address (no file links with tokens).
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
-import { ATTACHMENT_EXTENSIONS, ATTACHMENT_STAGES, PREVIEW_TYPES, attachmentProblem } from "./domain";
+import {
+  ATTACHMENT_EXTENSIONS,
+  ATTACHMENT_STAGES,
+  PREVIEW_TYPES,
+  STAGE_FILES_MAX,
+  attachmentProblem,
+  attachmentType,
+  pickStageFiles,
+} from "./domain";
 import { size } from "./Email";
 import { dateTime } from "./format";
 import { Card, Icon, ObjectIcon, StageBadge } from "./ui";
@@ -65,7 +73,7 @@ export default function OpportunityAttachments({ opportunity, user, canEdit }) {
   }, [id]);
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, opportunity.stage]); // the Change Stage popup can add files with the stage change
 
   const say = (text, error = false) => setMessage({ text, error });
 
@@ -320,5 +328,141 @@ export default function OpportunityAttachments({ opportunity, user, canEdit }) {
         )}
       </div>
     </Card>
+  );
+}
+
+// Files chosen in the Change Stage popup (Opportunity / Proposal). Nothing is uploaded here: the popup sends them
+// with the stage change when it is saved. PDF and images can be checked first in a new tab, Word files downloaded,
+// straight from this computer.
+export function StageFiles({ files, setFiles, stage, saving }) {
+  const [problems, setProblems] = useState([]);
+  const [dragging, setDragging] = useState(false);
+  const [blocked, setBlocked] = useState(false);
+  const input = useRef(null);
+
+  const add = (list) => {
+    if (saving) return;
+    const picked = pickStageFiles(files, [...list]);
+    setFiles(picked.files);
+    setProblems(picked.problems);
+  };
+  const remove = (file) => {
+    setFiles((current) => current.filter((f) => f !== file));
+    setProblems([]);
+  };
+  const look = (file) => {
+    const type = attachmentType(file.name);
+    setBlocked(false);
+    if (PREVIEW_TYPES.includes(type)) {
+      const tab = window.open("", "_blank"); // inside the click, so the browser doesn't block it
+      if (!tab) return setBlocked(true);
+      tab.opener = null;
+      const address = URL.createObjectURL(new Blob([file], { type }));
+      tab.location.replace(address);
+      keepUntilClosed(tab, address);
+      return;
+    }
+    const address = URL.createObjectURL(new Blob([file], { type }));
+    const link = document.createElement("a");
+    link.href = address;
+    link.download = file.name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(address), 60000); // the browser has the file by then
+  };
+
+  const total = files.reduce((sum, f) => sum + f.size, 0);
+  return (
+    <div className="stage-files" role="group" aria-labelledby="stage-files-label">
+      <span id="stage-files-label" className="stage-files-label">
+        Attachments
+      </span>
+      <div
+        className={`dropzone ${dragging ? "dragging" : ""}`}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          add(e.dataTransfer.files);
+        }}
+      >
+        <button type="button" className="sf-button small" onClick={() => input.current.click()} disabled={saving}>
+          Add Files
+        </button>
+        <span className="muted">
+          or drop files here. PDF, Word (.docx), JPG or PNG • 20 MB per file • up to {STAGE_FILES_MAX} files
+        </span>
+        <input
+          ref={input}
+          type="file"
+          multiple
+          hidden
+          accept={ATTACHMENT_EXTENSIONS.join(",")}
+          onChange={(e) => {
+            add(e.target.files);
+            e.target.value = "";
+          }}
+        />
+      </div>
+      {problems.length > 0 && (
+        <div className="upload-results" role="alert">
+          <ul>
+            {problems.map((p) => (
+              <li key={p} className="error">
+                <Icon name="warn" size={14} />
+                <span>{p}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {files.length > 0 && (
+        <>
+          <ul className="file-list">
+            {files.map((f) => {
+              const type = attachmentType(f.name);
+              return (
+                <li key={`${f.name}-${f.size}-${f.lastModified}`}>
+                  <ObjectIcon type="note" size={20} />
+                  <button
+                    type="button"
+                    className="link"
+                    onClick={() => look(f)}
+                    title={PREVIEW_TYPES.includes(type) ? `Preview ${f.name} in a new tab` : `Download ${f.name}`}
+                  >
+                    {f.name}
+                  </button>
+                  <small>
+                    {KIND[type]} • {size(f.size)}
+                  </small>
+                  <button type="button" aria-label={`Remove ${f.name}`} onClick={() => remove(f)} disabled={saving}>
+                    <Icon name="close" size={12} />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          <p className="stage-files-note" role="status">
+            {saving ? (
+              `Uploading ${files.length} file${files.length === 1 ? "" : "s"} (${size(total)}) and saving…`
+            ) : (
+              <>
+                Nothing is uploaded until you save. The files will be labelled <StageBadge stage={stage} />.
+              </>
+            )}
+          </p>
+        </>
+      )}
+      {blocked && (
+        <p className="form-error" role="alert">
+          Your browser blocked the new tab. Allow pop-ups for this site to preview the file.
+        </p>
+      )}
+    </div>
   );
 }
