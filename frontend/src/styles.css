@@ -1283,6 +1283,51 @@ td.high {
   color: var(--text-weak);
   text-align: center;
 }
+/* Leads Kanban (inside the Leads list card): five columns; Converted and Lost are separate closed columns, so their
+   headers are flat instead of path arrows. Narrow screens scroll the board sideways, not the page. */
+.kanban.lead-board {
+  grid-template-columns: repeat(5, minmax(210px, 1fr));
+  border: 0;
+  border-radius: 0;
+}
+.lead-board .kanban-col.closed {
+  background: #f7f7f7;
+}
+.lead-board .kanban-col.closed .kanban-stage {
+  clip-path: none;
+  border-radius: 4px;
+}
+.lead-board .k-converted {
+  background: #cdefc4;
+}
+.lead-board .kanban-col header p {
+  margin-top: 4px;
+  color: var(--text-weak);
+  font-size: 12px;
+  font-weight: 400;
+}
+.lead-board .kanban-card dd {
+  overflow-wrap: anywhere;
+}
+.lead-board .lead-card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 8px;
+  margin-top: 6px;
+}
+.lead-board .action-menu-button {
+  min-height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+.lead-board .kanban-more {
+  padding: 4px 8px;
+  color: var(--text-weak);
+  font-size: 12px;
+  text-align: center;
+}
 
 /* ---------- record pages ---------- */
 .highlights {
@@ -1584,6 +1629,35 @@ td.high {
   border-radius: 4px;
   background: #fef1ee;
   color: #c23934;
+}
+/* New Task section of the stage-change popups (Change Stage, Convert, Mark as Won, Cancel Demo) */
+.stage-task {
+  margin: 12px 0 8px;
+  padding: 8px 12px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.stage-task legend {
+  padding: 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.stage-task > .field-hint {
+  margin: 0 0 8px;
+}
+.stage-task .form-grid {
+  margin-bottom: 4px;
+}
+.field input[aria-invalid="true"] {
+  border-color: #c23934;
+}
+/* a required stage-change note left blank (shown under the field) */
+.field textarea[aria-invalid="true"] {
+  border-color: #c23934;
+}
+.field-error {
+  color: #c23934;
+  font-size: 12px;
 }
 .modal-footer {
   display: flex;

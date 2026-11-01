@@ -57,6 +57,20 @@ DATE_TIME = {"type": "string", "description": "ISO date and time, e.g. 2026-11-0
 DATE = {"type": "string", "description": "ISO date, e.g. 2026-11-30"}
 COMPLETED = {"type": "array", "items": S, "description": "Earlier stages the user confirmed were already done "
              "(stages can't be skipped). Only fill this after the user says so."}
+NOTE = {"type": "string", "description": "Required: the user's own note for this stage change, in their words. "
+        "Ask the user for it; never write it yourself."}
+CONVERSION_COMMENT = {"type": "string", "description": "Required: the user's own Conversion Comment (why the lead is "
+                      "converted), in their words. Ask the user for it; never write it yourself."}
+# Every stage change except Lost needs the user's new task (on Won: a post-sale task such as handover or onboarding)
+TASK_ARGS = {
+    "task_title": {"type": "string", "description": "Required: the subject of the new task the user wants with this "
+                   "change (for Won, a post-sale task such as handover or onboarding). Ask the user; never make it up."},
+    "task_due_date": {"type": "string", "description": "Required: when the new task is due, ISO date and time "
+                      "(e.g. 2026-11-05T15:00). Ask the user; never make it up."},
+    "task_priority": {"type": "string", "enum": ["Low", "Normal", "High"], "description": "Default Normal"},
+    "task_description": S,
+}
+TASK_REQUIRED = ["task_title", "task_due_date"]
 LEAD_FIELDS = {
     "salutation": {"type": "string", "enum": ["Mr.", "Ms.", "Mrs.", "Dr.", "Prof."]},
     "first_name": S, "last_name": S, "company": S, "title": S, "industry": S, "email": S, "phone": S,
@@ -92,14 +106,15 @@ TOOLS = [
     _tool("update_lead", "Change details of a lead (not its stage or owner).", {"lead_id": I, **LEAD_FIELDS}, ["lead_id"]),
     _tool("move_lead_stage", "Move a lead to New, Nurturing or Demo. Demo needs demo_date.", {
         "lead_id": I, "stage": {"type": "string", "enum": ["New", "Nurturing", "Demo"]}, "demo_date": DATE_TIME,
-        "note": S, "completed_stages": COMPLETED}, ["lead_id", "stage"]),
+        "note": NOTE, "completed_stages": COMPLETED, **TASK_ARGS}, ["lead_id", "stage", "note", *TASK_REQUIRED]),
     _tool("reschedule_demo", "Move a booked demo to a new date and time (the lead stays at Demo).", {
         "lead_id": I, "new_date": DATE_TIME, "reason": S}, ["lead_id", "new_date"]),
     _tool("convert_lead", "Convert a lead into an account, contact and opportunity.", {
-        "lead_id": I, "opportunity_name": S, "amount": N, "close_date": DATE, "completed_stages": COMPLETED}, ["lead_id"]),
+        "lead_id": I, "note": CONVERSION_COMMENT, "opportunity_name": S, "amount": N, "close_date": DATE,
+        "completed_stages": COMPLETED, **TASK_ARGS}, ["lead_id", "note", *TASK_REQUIRED]),
     _tool("move_opportunity_stage", "Move an opportunity to Opportunity or Proposal.", {
-        "opportunity_id": I, "stage": {"type": "string", "enum": ["Opportunity", "Proposal"]}, "note": S},
-        ["opportunity_id", "stage"]),
+        "opportunity_id": I, "stage": {"type": "string", "enum": ["Opportunity", "Proposal"]}, "note": NOTE,
+        **TASK_ARGS}, ["opportunity_id", "stage", "note", *TASK_REQUIRED]),
     _tool("create_task", "Create a follow-up task, optionally on a lead or an opportunity.", {
         "title": S, "due_date": DATE_TIME, "priority": {"type": "string", "enum": ["Low", "Normal", "High"]},
         "description": S, "lead_id": I, "opportunity_id": I}, ["title", "due_date"]),
@@ -107,23 +122,54 @@ TOOLS = [
     _tool("add_note", "Add a note to a lead or an opportunity.", {"body": S, "lead_id": I, "opportunity_id": I}, ["body"]),
     # the user confirms these in the app before they run
     _tool("mark_lead_lost", "Close a lead as Lost (needs the user's confirmation).", {
-        "lead_id": I, "reason": LOST, "notes": S,
+        "lead_id": I, "reason": LOST, "notes": NOTE,
         "notify_customer": {"type": "boolean", "description": "Default false. True only if the user asks to email the customer"}},
-        ["lead_id", "reason"]),
+        ["lead_id", "reason", "notes"]),
     _tool("cancel_demo", "Cancel a demo and move the lead back to Nurturing (needs confirmation). "
-          "To change the date instead, use reschedule_demo.", {"lead_id": I, "reason": S}, ["lead_id"]),
+          "To change the date instead, use reschedule_demo.", {"lead_id": I, "reason": NOTE, **TASK_ARGS},
+          ["lead_id", "reason", *TASK_REQUIRED]),
     _tool("transfer_lead", "Give a lead to another user (needs confirmation).", {
         "lead_id": I, "to_user_name": S, "note": S}, ["lead_id", "to_user_name"]),
     _tool("mark_opportunity_won", "Close a deal as Won (needs confirmation).", {
-        "opportunity_id": I, "final_amount": N, "note": S, "completed_stages": COMPLETED,
-        "notify_customer": {"type": "boolean", "description": "Default false"}}, ["opportunity_id"]),
+        "opportunity_id": I, "final_amount": N, "note": NOTE, "completed_stages": COMPLETED,
+        "notify_customer": {"type": "boolean", "description": "Default false"}, **TASK_ARGS},
+        ["opportunity_id", "note", *TASK_REQUIRED]),
     _tool("mark_opportunity_lost", "Close a deal as Lost (needs confirmation).", {
-        "opportunity_id": I, "reason": LOST, "notes": S, "notify_customer": {"type": "boolean"}},
-        ["opportunity_id", "reason"]),
+        "opportunity_id": I, "reason": LOST, "notes": NOTE, "notify_customer": {"type": "boolean"}},
+        ["opportunity_id", "reason", "notes"]),
     _tool("delete_lead", "Delete a lead (needs confirmation).", {"lead_id": I}, ["lead_id"]),
 ]
 CONFIRM_FIRST = {"mark_lead_lost", "cancel_demo", "transfer_lead", "mark_opportunity_won", "mark_opportunity_lost",
                  "delete_lead"}
+# Stage changes and the argument that carries the user's note (required, like on the screens)
+NOTE_ARGS = {"move_lead_stage": "note", "convert_lead": "note", "move_opportunity_stage": "note",
+             "mark_lead_lost": "notes", "cancel_demo": "reason", "mark_opportunity_won": "note",
+             "mark_opportunity_lost": "notes"}
+NOTE_MISSING = f"{schemas.STAGE_NOTE_REQUIRED} Ask the user for their note; don't write one for them."
+COMMENT_MISSING = (f"{schemas.CONVERSION_COMMENT_REQUIRED} Ask the user for their conversion comment; "
+                   "don't write one for them.")
+TASK_TOOLS = {"move_lead_stage", "convert_lead", "move_opportunity_stage", "mark_opportunity_won", "cancel_demo"}
+TASK_MISSING = (f"{schemas.STAGE_TASK_REQUIRED} Ask the user for the task's subject and due date (for Won, a post-sale "
+                "task such as handover or onboarding); don't make them up.")
+
+
+def stage_task(args: dict) -> dict | None:
+    """The user's new task from the tool arguments (None when they gave none; the API then refuses the change)."""
+    if not any(args.get(k) for k in ("task_title", "task_due_date")):
+        return None
+    task = {"title": args.get("task_title"), "due_date": args.get("task_due_date"),
+            "priority": args.get("task_priority"), "description": args.get("task_description")}
+    return {k: v for k, v in task.items() if v is not None}
+
+
+def has_task(args: dict) -> bool:
+    return all(isinstance(args.get(k), str) and args[k].strip() for k in TASK_REQUIRED)
+
+
+def user_note(name: str, args: dict) -> str:
+    """The note the user gave for this stage change ("" when there is none)."""
+    note = args.get(NOTE_ARGS.get(name, ""))
+    return note.strip() if isinstance(note, str) else ""
 
 
 # ---------- running a tool ----------
@@ -217,7 +263,7 @@ def run_tool(db: Session, name: str, args: dict) -> tuple[dict, dict | None]:
         return _lead_row(out), _link("Lead", out)
     if name == "move_lead_stage":
         data = schemas.LeadStageChange(stage=a["stage"], demo_date=a.get("demo_date"), note=a.get("note"),
-                                       completed_stages=a.get("completed_stages", []))
+                                       completed_stages=a.get("completed_stages", []), task=stage_task(a))
         out = _plain(leads.change_stage(lead_id=a["lead_id"], data=data, db=db))
         return _lead_row(out), _link("Lead", out)
     if name == "reschedule_demo":
@@ -225,13 +271,14 @@ def run_tool(db: Session, name: str, args: dict) -> tuple[dict, dict | None]:
         out = _plain(leads.cancel_demo(lead_id=a["lead_id"], data=data, db=db))
         return _lead_row(out), _link("Lead", out)
     if name == "convert_lead":
-        data = schemas.ConvertLead(opportunity_name=a.get("opportunity_name"), expected_value=a.get("amount"),
-                                   expected_close_date=a.get("close_date"), completed_stages=a.get("completed_stages", []))
+        data = schemas.ConvertLead(note=a.get("note"), opportunity_name=a.get("opportunity_name"),
+                                   expected_value=a.get("amount"), expected_close_date=a.get("close_date"),
+                                   completed_stages=a.get("completed_stages", []), task=stage_task(a))
         out = _plain(leads.convert_lead(lead_id=a["lead_id"], data=data, db=db))
         opp = out.get("opportunity") or {}
         return {"opportunity": _opp_row(opp), "account": (out.get("account") or {}).get("name")}, _link("Opportunity", opp)
     if name == "move_opportunity_stage":
-        data = schemas.OpportunityStageChange(stage=a["stage"], note=a.get("note"))
+        data = schemas.OpportunityStageChange(stage=a["stage"], note=a.get("note"), task=stage_task(a))
         out = _plain(opportunities.change_stage(opportunity_id=a["opportunity_id"], data=data, db=db))
         return _opp_row(out), _link("Opportunity", out)
     if name == "create_task":
@@ -254,7 +301,8 @@ def run_tool(db: Session, name: str, args: dict) -> tuple[dict, dict | None]:
         out = _plain(leads.mark_lost(lead_id=a["lead_id"], data=data, db=db))
         return _lead_row(out), _link("Lead", out)
     if name == "cancel_demo":
-        out = _plain(leads.cancel_demo(lead_id=a["lead_id"], data=schemas.CancelDemo(reason=a.get("reason")), db=db))
+        out = _plain(leads.cancel_demo(lead_id=a["lead_id"], db=db,
+                                       data=schemas.CancelDemo(reason=a.get("reason"), task=stage_task(a))))
         return _lead_row(out), _link("Lead", out)
     if name == "transfer_lead":
         data = schemas.LeadTransfer(to_user_id=_user_id(db, a["to_user_name"]), note=a.get("note"))
@@ -263,7 +311,7 @@ def run_tool(db: Session, name: str, args: dict) -> tuple[dict, dict | None]:
     if name == "mark_opportunity_won":
         data = schemas.MarkWon(final_value=a.get("final_amount"), note=a.get("note"),
                                completed_stages=a.get("completed_stages", []),
-                               notify_customer=bool(a.get("notify_customer")))
+                               notify_customer=bool(a.get("notify_customer")), task=stage_task(a))
         out = _plain(opportunities.mark_won(opportunity_id=a["opportunity_id"], data=data, db=db))
         return _opp_row(out), _link("Opportunity", out)
     if name == "mark_opportunity_lost":
@@ -300,7 +348,7 @@ def describe(db: Session, name: str, a: dict) -> str:
     lname = f'"{lead.name}" ({lead.company})' if lead else f"lead {a.get('lead_id')}"
     oname = f'"{opp.name}"' if opp else f"opportunity {a.get('opportunity_id')}"
     mail = " The customer will be emailed." if a.get("notify_customer") else ""
-    return {
+    line = {
         "mark_lead_lost": f"Mark lead {lname} as Lost (reason: {a.get('reason')}).{mail}",
         "cancel_demo": f"Cancel the demo with {lname} and move it back to Nurturing.",
         "transfer_lead": f"Transfer lead {lname} to {a.get('to_user_name')}.",
@@ -309,6 +357,12 @@ def describe(db: Session, name: str, a: dict) -> str:
         "mark_opportunity_lost": f"Mark {oname} as Lost (reason: {a.get('reason')}).{mail}",
         "delete_lead": f"Delete lead {lname}. This can't be undone.",
     }.get(name, name)
+    note = user_note(name, a)  # the user sees the note that will be saved in the stage history
+    if note:
+        line = f'{line} Note: "{note}"'
+    if name in TASK_TOOLS and has_task(a):  # ...and the new task that will be created
+        line = f'{line} New task: "{a["task_title"].strip()}", due {a["task_due_date"].strip()}.'
+    return line
 
 
 # ---------- talking to the model ----------
@@ -327,6 +381,11 @@ def system_prompt() -> str:
         "- Lead stages go New -> Nurturing -> Demo -> Convert; deals go Opportunity -> Proposal -> Won. Stages can't be "
         "skipped: if a tool says a stage is missing, ask the user whether it was already done, and only then pass it "
         "in completed_stages.\n"
+        "- Every stage change (move, convert, Won, Lost, cancel demo) needs the user's own note explaining it (for a "
+        "conversion, the Conversion Comment). If the user hasn't given one, ask for it in one short question. Never "
+        "write the note yourself.\n"
+        "- Every stage change except Lost also needs a new task from the user: its subject and due date (for Won, a "
+        "post-sale task such as handover or onboarding). Ask for them; never make them up.\n"
         "- Closing actions (Lost, Won, transfer, cancel demo, delete) are confirmed by the user in the app: call the "
         "tool, then tell the user to press Confirm.\n"
         "- Don't email customers unless the user asks.\n"
@@ -378,7 +437,12 @@ def converse(db: Session, history: list[dict]) -> dict:
                 args = json.loads(c["function"]["arguments"] or "{}")
             except ValueError:
                 args = {}
-            if name in CONFIRM_FIRST:
+            if name in NOTE_ARGS and not user_note(name, args):
+                # a stage change without a note: not run, no Confirm card
+                result, link = {"error": COMMENT_MISSING if name == "convert_lead" else NOTE_MISSING}, None
+            elif name in TASK_TOOLS and not has_task(args):
+                result, link = {"error": TASK_MISSING}, None  # ...or without the user's new task
+            elif name in CONFIRM_FIRST:
                 if pending is None:
                     pending = {"call_id": c["id"], "tool": name, "args": args, "summary": describe(db, name, args)}
                     continue  # answered when the user clicks Confirm or Cancel

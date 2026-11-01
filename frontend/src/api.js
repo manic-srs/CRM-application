@@ -398,7 +398,8 @@ export const api = {
   enrichLead: (linkedinUrl) => lookupProfile(linkedinUrl),
   // Change Stage popup with files: the stage change and the files are saved together, or nothing is saved
   stageWithFiles: (opportunityId, values, files) =>
-    saveWithFiles(`/opportunities/${opportunityId}/stage-with-files`, [["stage", values.stage], ["note", values.note]], files, {
+    saveWithFiles(`/opportunities/${opportunityId}/stage-with-files`, [["stage", values.stage], ["note", values.note],
+      ["task", values.task && JSON.stringify(values.task)]], files, {
       failed: "The stage could not be changed.",
       what: "the stage changed",
     }),
@@ -409,6 +410,7 @@ export const api = {
       [
         ["final_value", values.final_value],
         ["note", values.note],
+        ["task", values.task && JSON.stringify(values.task)], // the New Task as JSON, as the server reads it
         ["notify_customer", values.notify_customer ? "true" : "false"],
         ...(values.completed_stages || []).map((stage) => ["completed_stages", stage]),
         ["completed_note", values.completed_note],

@@ -1,5 +1,7 @@
 """Change Stage popup with files (POST /api/opportunities/{id}/stage-with-files): the stage change and its files are
 saved together, or nothing is saved. Uses the made-up files and helpers of test_opportunity_attachments.py."""
+import json
+
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -13,6 +15,9 @@ from conftest import login_as
 from test_opportunity_attachments import (ASHA, DOCX, DOCX_SAMPLE, JPEG, PDF, PNG, PRIYA, RAVI, add_salesperson,
                                           db_session, jpeg_file, move, new_opportunity, pdf_file, png_file, saved,
                                           stored_rows, url, zip_file)
+
+TASK = {"title": "Synthetic follow-up task", "due_date": "2030-01-15T10:00:00"}  # every stage change needs one
+HANDOVER = {"title": "Synthetic handover", "due_date": "2030-01-20T10:00:00"}  # the post-sale task on Won
 
 
 @pytest.fixture(autouse=True)
@@ -31,8 +36,8 @@ def stage_url(opp_id):
     return f"/api/opportunities/{opp_id}/stage-with-files"
 
 
-def change(client, opp_id, stage, files, note=None):
-    form = {"stage": stage} | ({"note": note} if note is not None else {})
+def change(client, opp_id, stage, files, note="Synthetic test note", task=TASK):
+    form = {"stage": stage} | ({"note": note} if note is not None else {}) | ({"task": json.dumps(task)} if task else {})
     return client.post(stage_url(opp_id), data=form, files=[("files", f) for f in files])
 
 
@@ -82,7 +87,7 @@ def test_files_are_saved_with_the_stage_change_and_get_the_new_stage(client, sen
 
     # the stage change itself is the same as PUT /stage without files
     other = new_opportunity(client)
-    assert client.put(f"/api/opportunities/{other['id']}/stage", json={"stage": "Proposal", "note": "Sent the proposal"}).status_code == 200
+    assert client.put(f"/api/opportunities/{other['id']}/stage", json={"task": TASK, "stage": "Proposal", "note": "Sent the proposal"}).status_code == 200
     assert summary(client, opp["id"]) == summary(client, other["id"])
     assert summary(client, opp["id"])[3][-1] == ("Opportunity", "Proposal", "Sent the proposal")
 
@@ -152,7 +157,7 @@ def test_a_failed_save_can_be_retried_without_duplicates(client, sent):
     after = state(opp["id"])
     assert after["files"] == 1 and len(after["history"]) == len(before["history"]) + 1
     assert after["notifications"] == before["notifications"] + 1 and len(sent) == 1
-    assert len([t for t in after["tasks"] if t[2] == "Open" and t[1].startswith("Follow up on proposal")]) == 1
+    assert len([t for t in after["tasks"] if t[2] == "Open" and t[1] == TASK["title"]]) == 1  # one new task
 
 
 # ---------- form ----------
@@ -218,8 +223,8 @@ def test_only_people_who_can_edit_the_deal_can_save(client):
 
 
 @pytest.mark.parametrize("close", [
-    lambda client, opp_id: client.post(f"/api/opportunities/{opp_id}/won", json={"completed_stages": ["Proposal"]}),
-    lambda client, opp_id: client.post(f"/api/opportunities/{opp_id}/lost", json={"lost_reason": "Price"}),
+    lambda client, opp_id: client.post(f"/api/opportunities/{opp_id}/won", json={"task": TASK, "completed_stages": ["Proposal"], "note": "Synthetic test note"}),
+    lambda client, opp_id: client.post(f"/api/opportunities/{opp_id}/lost", json={"lost_reason": "Price", "lost_notes": "Synthetic test note"}),
 ])
 def test_closed_deals_take_no_stage_change_or_files(client, close):
     opp = new_opportunity(client)
@@ -232,10 +237,10 @@ def test_closed_deals_take_no_stage_change_or_files(client, close):
 
 def test_stage_changes_without_files_are_unchanged(client):
     opp = new_opportunity(client)
-    res = client.put(f"/api/opportunities/{opp['id']}/stage", json={"stage": "Proposal", "note": "No files"})
+    res = client.put(f"/api/opportunities/{opp['id']}/stage", json={"task": TASK, "stage": "Proposal", "note": "No files"})
     assert res.status_code == 200 and res.json()["stage"] == "Proposal"
     assert stored_rows() == []
-    assert client.put(f"/api/opportunities/{opp['id']}/stage", json={"stage": "Proposal"}).status_code == 400
+    assert client.put(f"/api/opportunities/{opp['id']}/stage", json={"task": TASK, "stage": "Proposal", "note": "Synthetic test note"}).status_code == 400
 
 
 # ---------- Mark as Won with files (POST /api/opportunities/{id}/won-with-files) ----------
@@ -246,6 +251,8 @@ def won_url(opp_id):
 
 def win(client, opp_id, files, **fields):
     """Mark as Won with files; fields are form fields (completed_stages may be a list)."""
+    fields.setdefault("note", "Synthetic test: closing note")
+    fields.setdefault("task", json.dumps(HANDOVER))
     return client.post(won_url(opp_id), data=fields, files=[("files", f) for f in files])
 
 
@@ -285,9 +292,11 @@ def test_mark_as_won_saves_the_amount_note_files_and_email_together(client, sent
     other = new_opportunity(client)
     move(client, other["id"], "Proposal")
     assert client.post(f"/api/opportunities/{other['id']}/won",
-                       json={"final_value": 1500.5, "note": "Contract signed"}).status_code == 200
+                       json={"task": HANDOVER, "final_value": 1500.5, "note": "Contract signed"}).status_code == 200
     assert summary(client, opp["id"]) == summary(client, other["id"])
-    assert all(t["status"] != "Open" for t in client.get(f"/api/opportunities/{opp['id']}").json()["tasks"])
+    # every earlier task is closed; only the post-sale task stays open on the won deal
+    assert [t["title"] for t in client.get(f"/api/opportunities/{opp['id']}").json()["tasks"]
+            if t["status"] == "Open"] == [HANDOVER["title"]]
 
 
 def saved_status(client, opp_id):
@@ -330,7 +339,7 @@ def test_a_deal_without_an_amount_needs_one(client, sent):
     login_as(client, RAVI)
     lead = client.post("/api/leads", json={"last_name": "NoAmount", "company": "Synthetic Co",
                                            "email": "no.amount@example.test", "welcome_email": False}).json()
-    opp = client.post(f"/api/leads/{lead['id']}/convert", json={"completed_stages": ["Nurturing", "Demo"]}).json()["opportunity"]
+    opp = client.post(f"/api/leads/{lead['id']}/convert", json={"task": TASK, "completed_stages": ["Nurturing", "Demo"], "note": "Synthetic test note"}).json()["opportunity"]
     move(client, opp["id"], "Proposal")
     before = state(opp["id"])
     sent.clear()
@@ -446,8 +455,8 @@ def test_only_people_who_can_edit_the_deal_can_mark_it_won_with_files(client):
 
 
 @pytest.mark.parametrize("close", [
-    lambda client, opp_id: client.post(f"/api/opportunities/{opp_id}/won", json={"completed_stages": ["Proposal"]}),
-    lambda client, opp_id: client.post(f"/api/opportunities/{opp_id}/lost", json={"lost_reason": "Price"}),
+    lambda client, opp_id: client.post(f"/api/opportunities/{opp_id}/won", json={"task": TASK, "completed_stages": ["Proposal"], "note": "Synthetic test note"}),
+    lambda client, opp_id: client.post(f"/api/opportunities/{opp_id}/lost", json={"lost_reason": "Price", "lost_notes": "Synthetic test note"}),
 ])
 def test_closed_deals_cant_be_won_with_files(client, sent, close):
     opp = new_opportunity(client)

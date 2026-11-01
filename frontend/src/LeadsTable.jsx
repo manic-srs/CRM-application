@@ -1,12 +1,16 @@
 // The Leads list: every list view (All Open Leads, My Open Leads, Uploaded Leads...) is loaded from the server
 // page by page with search and sorting, so it stays fast with 100,000s of leads. Uploaded leads have Lead Source "Upload".
+// The Kanban view uses the same query: one request per status column, each with its own total.
 import React, { useEffect, useState } from "react";
 import { apiRequest } from "./api";
+import { leadBoardColumns } from "./domain";
+import LeadsKanban from "./LeadsKanban";
 import { DateCell, Icon, StageBadge } from "./ui";
 import { dateTime, maskPhone } from "./format";
 import { filterSummary, rangeBounds, Th } from "./Filters";
 
 const PAGE = 100;
+const BOARD_CARDS = 100; // cards per Kanban column; the column says when there are more
 // [heading, sort key, column width]
 const COLUMNS = [
   ["Name", "name", 115],
@@ -28,13 +32,17 @@ const Cell = ({ children, title, className = "" }) => (
   </td>
 );
 
-export default function LeadsTable({ view, stage, filters = {}, defs = [], onFilter, refresh = 0 }) {
+export default function LeadsTable({ view, stage, filters = {}, defs = [], onFilter, refresh = 0, mode = "table", onMode,
+                                     user, setModal }) {
   const [search, setSearch] = useState("");
   const [term, setTerm] = useState("");
   const [sort, setSort] = useState({ col: "created", dir: "desc" });
   const [page, setPage] = useState(0);
   const [result, setResult] = useState(null);
+  const [board, setBoard] = useState(null); // Kanban: { stage: { total, items } } for the columns this list can have
   const [error, setError] = useState("");
+  const kanban = mode === "kanban";
+  const columns = leadBoardColumns(view, stage || filters.stage);
 
   useEffect(() => {
     const t = setTimeout(() => (setTerm(search.trim()), setPage(0)), 350); // search after typing stops
@@ -44,8 +52,7 @@ export default function LeadsTable({ view, stage, filters = {}, defs = [], onFil
   useEffect(() => setPage(0), [view, stage, filterKey]);
 
   useEffect(() => {
-    const params = new URLSearchParams({ view, sort: sort.col, direction: sort.dir, offset: page * PAGE, limit: PAGE });
-    if (stage || filters.stage) params.set("stage", stage || filters.stage);
+    const params = new URLSearchParams({ view, sort: sort.col, direction: sort.dir });
     if (filters.source) params.set("source", filters.source);
     if (filters.owner) params.set("owner", filters.owner);
     for (const key of ["created", "modified"]) {
@@ -55,16 +62,27 @@ export default function LeadsTable({ view, stage, filters = {}, defs = [], onFil
       if (to) params.set(`${key}_to`, to.toISOString());
     }
     if (term) params.set("search", term);
+    const load = (extra) => apiRequest(`/leads/page?${new URLSearchParams([...params, ...Object.entries(extra)])}`);
     let current = true;
-    apiRequest(`/leads/page?${params}`)
-      .then((r) => current && (setResult(r), setError("")))
-      .catch((err) => current && setError(err.message));
+    if (kanban) {
+      const shown = columns.filter((c) => !c.excluded);
+      Promise.all(shown.map((c) => load({ stage: c.stage, offset: 0, limit: BOARD_CARDS })))
+        .then((pages) => current && (setBoard(Object.fromEntries(shown.map((c, i) => [c.stage, pages[i]]))), setError("")))
+        .catch((err) => current && setError(err.message));
+    } else {
+      load({ ...(stage || filters.stage ? { stage: stage || filters.stage } : {}), offset: page * PAGE, limit: PAGE })
+        .then((r) => current && (setResult(r), setError("")))
+        .catch((err) => current && setError(err.message));
+    }
     return () => {
       current = false;
     };
-  }, [view, stage, filterKey, term, sort, page, refresh]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [kanban, view, stage, filterKey, term, sort, page, refresh]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const total = result?.total ?? 0;
+  const loaded = kanban ? board : result;
+  const total = kanban
+    ? columns.reduce((sum, c) => sum + (c.excluded ? 0 : board?.[c.stage]?.total || 0), 0)
+    : result?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / PAGE));
   const sortBy = (col) => {
     setSort((s) => ({ col, dir: s.col === col && s.dir === "asc" ? "desc" : "asc" }));
@@ -77,7 +95,7 @@ export default function LeadsTable({ view, stage, filters = {}, defs = [], onFil
       <section className="card table-card leads-card">
         <div className="list-meta leads-meta">
           <span>
-            {result ? `${total.toLocaleString()} item${total === 1 ? "" : "s"}` : "Loading…"} • Sorted by {sortLabel}
+            {loaded ? `${total.toLocaleString()} item${total === 1 ? "" : "s"}` : "Loading…"} • Sorted by {sortLabel}
             {term ? " • Filtered by search" : ""}
             {filterSummary(defs, filters) && (
               <>
@@ -94,6 +112,16 @@ export default function LeadsTable({ view, stage, filters = {}, defs = [], onFil
               <Icon name="search" size={14} />
               <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search this list..." aria-label="Search this list" />
             </label>
+            {onMode && (
+              <div className="toggle-group" role="group" aria-label="Display as">
+                <button className={kanban ? "" : "on"} onClick={() => onMode("table")} aria-label="Table" title="Table" aria-pressed={!kanban}>
+                  <Icon name="list" size={15} />
+                </button>
+                <button className={kanban ? "on" : ""} onClick={() => onMode("kanban")} aria-label="Kanban" title="Kanban" aria-pressed={kanban}>
+                  <Icon name="kanban" size={15} />
+                </button>
+              </div>
+            )}
           </div>
         </div>
         {error && (
@@ -102,6 +130,10 @@ export default function LeadsTable({ view, stage, filters = {}, defs = [], onFil
             <span>{error}</span>
           </div>
         )}
+        {kanban ? (
+          <LeadsKanban columns={columns} board={board} user={user} setModal={setModal} />
+        ) : (
+        <>
         <div className="table-scroll">
           <table className="sf-table leads-table">
             <colgroup>
@@ -170,6 +202,8 @@ export default function LeadsTable({ view, stage, filters = {}, defs = [], onFil
               Next
             </button>
           </div>
+        )}
+        </>
         )}
       </section>
     </>

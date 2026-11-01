@@ -1,4 +1,30 @@
 export const LEAD_STAGES = ["New", "Nurturing", "Demo", "Converted", "Lost"];
+// Leads Kanban: the open stages, then Converted and Lost as two separate closed (terminal) columns
+export const LEAD_OPEN_STAGES = ["New", "Nurturing", "Demo"];
+export const LEAD_CLOSED_STAGES = ["Converted", "Lost"];
+// the stages each Leads list view contains (the same rule as LIST_VIEWS in backend/app/routers/lead_files.py)
+const LEAD_VIEW_STAGES = { all_open: LEAD_OPEN_STAGES, my_open: LEAD_OPEN_STAGES, converted: ["Converted"], lost: ["Lost"] };
+// Per board column: whether the current list view and Lead Status filter can contain it ("" = yes, else why not)
+export function leadBoardColumns(view, stageFilter) {
+  return LEAD_STAGES.map((stage) => ({
+    stage,
+    closed: LEAD_CLOSED_STAGES.includes(stage),
+    excluded: !(LEAD_VIEW_STAGES[view] || LEAD_STAGES).includes(stage)
+      ? "Not in this list view"
+      : stageFilter && stageFilter !== stage
+        ? "Hidden by the Lead Status filter"
+        : "",
+  }));
+}
+// The existing popup a lead card opens for a stage (drop or Change Status menu), or null when that move isn't allowed:
+// closed leads don't move, the same stage does nothing, and Convert needs the right to create opportunities.
+export function leadStageAction(lead, stage, { canEdit, canConvert }) {
+  if (!lead || !canEdit || !LEAD_OPEN_STAGES.includes(lead.stage) || lead.stage === stage) return null;
+  if (stage === "Converted") return canConvert ? { type: "convert", record: lead } : null;
+  if (stage === "Lost") return { type: "lost", collection: "leads", record: lead };
+  if (LEAD_OPEN_STAGES.includes(stage)) return { type: "stage", collection: "leads", record: lead, stage };
+  return null;
+}
 export const OPPORTUNITY_STAGES = ["Opportunity", "Proposal", "Won", "Lost"];
 export const LEAD_SOURCES = [
   "Website",
@@ -51,7 +77,8 @@ export function linkedInProfileUrl(value) {
   if (!/^[\p{L}\p{N}_-]{3,100}$/u.test(name)) return { error: "This LinkedIn profile address isn't valid" };
   return { url: `https://linkedin.com/in/${encodeURIComponent(name.toLowerCase())}` };
 }
-// The lead fields Apollo can fill (in form order)
+// The lead fields Apollo can fill (in form order). The company ones come from the person's current employer; the
+// backend checks the two links with the form's own rules.
 export const AUTOFILL_FIELDS = {
   first_name: "First Name",
   last_name: "Last Name",
@@ -60,6 +87,8 @@ export const AUTOFILL_FIELDS = {
   industry: "Industry",
   email: "Email",
   phone: "Phone",
+  company_website: "Company Website",
+  company_linkedin_url: "Company LinkedIn URL",
 };
 // current: the form's values now; previous: values Apollo filled earlier that are still unchanged; incoming: the
 // current profile's values ({} removes the earlier profile's values). Fills empty fields, replaces or clears
@@ -97,6 +126,46 @@ export const money = (value) =>
         value,
       );
 export const localInput = (value) => (value ? value.slice(0, 16) : "");
+
+// Every stage change needs the user's note, saved in the Stage History (the backend refuses a blank one too).
+// The popup field that holds it: Note (Change Stage, Convert), Closing Note (Won), Lost Notes (Lost), and the Reason
+// when a cancelled demo moves the lead back to Nurturing. Rescheduling keeps the stage, so its reason stays optional.
+export const STAGE_NOTE_REQUIRED = "Enter a note to change the stage.";
+// Convert uses the same note, labelled "Conversion Comment", with its own message (as the backend says)
+export const CONVERSION_COMMENT_REQUIRED = "Enter a conversion comment.";
+export const stageNoteMessage = (type) => (type === "convert" ? CONVERSION_COMMENT_REQUIRED : STAGE_NOTE_REQUIRED);
+export function stageNoteField(type, demoChoice) {
+  if (["stage", "won", "convert"].includes(type)) return "note";
+  if (type === "lost") return "lost_notes";
+  if (type === "cancelDemo" && demoChoice === "nurturing") return "reason";
+  return null;
+}
+// The note as saved: spaces and line breaks around it are trimmed, the formatting inside is kept ("" = blank)
+export const stageNote = (value) => (typeof value === "string" ? value.trim() : "");
+
+// Every stage change except Lost also needs a New Task (the backend refuses one without it): the next follow-up,
+// the first task of the new opportunity on Convert, a post-sale task on Won. Fields as on the task form (task_*).
+export const TASK_SUBJECT_REQUIRED = "Enter a task subject.";
+export const TASK_DUE_REQUIRED = "Choose a due date for the task.";
+export const stageTaskNeeded = (type, demoChoice) =>
+  ["stage", "convert", "won"].includes(type) || (type === "cancelDemo" && demoChoice === "nurturing");
+export function stageTaskProblems(values) {
+  const problems = {};
+  if (!stageNote(values.task_title)) problems.task_title = TASK_SUBJECT_REQUIRED;
+  if (!stageNote(values.task_due_date)) problems.task_due_date = TASK_DUE_REQUIRED;
+  return problems;
+}
+export function stageTaskPayload(values) {
+  const optional = (value) => stageNote(value) || null;
+  return {
+    title: stageNote(values.task_title),
+    due_date: values.task_due_date,
+    priority: values.task_priority || "Normal",
+    reminder_at: optional(values.task_reminder_at),
+    description: optional(values.task_description),
+    owner_id: values.task_owner_id ? Number(values.task_owner_id) : null,
+  };
+}
 
 // Opportunity attachments. The backend checks the same rules again, and the real file content.
 export const ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024; // shown as "20 MB per file"

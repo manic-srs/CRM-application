@@ -4,12 +4,13 @@ Field names match the PostgreSQL tables in database/schema.sql.
 """
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 
 import re
 from urllib.parse import quote, unquote, urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_serializer, field_validator, model_validator
+from pydantic_core import PydanticCustomError
 
 LeadSource = Literal["Website", "Referral", "Phone", "Email", "Event", "Social Media", "Other", "Upload"]
 LostReason = Literal["Price", "Competitor", "No response", "No budget", "Not interested", "Other"]
@@ -373,15 +374,108 @@ class LeadTransfer(BaseModel):
 
 class CancelDemo(BaseModel):
     """reschedule_to set: the demo moves to that date and the lead stays at Demo.
-    Not set: the demo is cancelled and the lead goes back to Nurturing."""
+    Not set: the demo is cancelled and the lead goes back to Nurturing; that is a stage change, so the reason and a
+    new task are required then (see leads.cancel_demo)."""
     reason: str | None = Field(None, max_length=300)
     reschedule_to: datetime | None = None
+    task: "StageTask | None" = None  # defined below with the other stage-change rules
 
 
-class LeadStageChange(BaseModel):
+# ---------- Stage changes: every one needs the user's note (saved in the stage history) ----------
+
+STAGE_NOTE_REQUIRED = "Enter a note to change the stage."
+CONVERSION_COMMENT_REQUIRED = "Enter a conversion comment."  # the same note, on Convert (the "Conversion Comment")
+
+
+def required_note(value, message: str = STAGE_NOTE_REQUIRED) -> str:
+    """The user's own note for a stage change: text that isn't blank. Spaces and line breaks around it are trimmed;
+    the formatting inside is kept."""
+    if value is not None and not isinstance(value, str):
+        raise PydanticCustomError("stage_note_type", "The note must be text.")
+    value = (value or "").strip()
+    if not value:
+        raise PydanticCustomError("stage_note_required", message)
+    return value
+
+
+def stage_note(value) -> str:
+    return required_note(value)
+
+
+def conversion_comment(value) -> str:
+    return required_note(value, CONVERSION_COMMENT_REQUIRED)
+
+
+StageNote = Annotated[str, BeforeValidator(stage_note)]  # required: missing, null, "" and "   " are refused
+ConversionComment = Annotated[str, BeforeValidator(conversion_comment)]  # the same rule, with its own message
+
+# Every stage change except Lost also needs a new task: the follow-up the user plans (on Won, the post-sale task)
+
+STAGE_TASK_REQUIRED = "Add a new task for this stage change."
+TASK_SUBJECT_REQUIRED = "Enter a task subject."
+TASK_DUE_REQUIRED = "Choose a due date for the task."
+
+
+def task_subject(value) -> str:
+    if value is not None and not isinstance(value, str):
+        raise PydanticCustomError("task_subject_type", "The task subject must be text.")
+    value = (value or "").strip()
+    if not value:
+        raise PydanticCustomError("task_subject_required", TASK_SUBJECT_REQUIRED)
+    if len(value) > 200:
+        raise PydanticCustomError("task_subject_length", "The task subject can be up to 200 characters.")
+    return value
+
+
+def task_due(value):
+    if value is None or (isinstance(value, str) and not value.strip()):
+        raise PydanticCustomError("task_due_required", TASK_DUE_REQUIRED)
+    return value  # then read as a date and time, like the due date of any task
+
+
+class StageTask(BaseModel):
+    """The New Task of a stage change: the fields and rules of a new task (TaskCreate). The server links it to the
+    record (on Convert, the new opportunity) and gives it to the record's owner unless another assignee is chosen
+    (only by users who may assign records to others, as in POST /tasks)."""
+
+    model_config = ConfigDict(extra="forbid")
+    title: Annotated[str, BeforeValidator(task_subject)]
+    due_date: Annotated[datetime, BeforeValidator(task_due)]
+    reminder_at: datetime | None = None
+    priority: Priority = "Normal"
+    description: str | None = None
+    owner_id: int | None = None  # default: the owner of the record (the new opportunity on Convert)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fields_left_out(cls, data):
+        return {"title": None, "due_date": None, **data} if isinstance(data, dict) else data
+
+
+CancelDemo.model_rebuild()
+
+
+def stage_task(value):
+    if value is None:
+        raise PydanticCustomError("stage_task_required", STAGE_TASK_REQUIRED)
+    return value
+
+
+class NeedsTask(BaseModel):
+    """A stage change that needs the user's new task (all but Lost)."""
+
+    task: Annotated[StageTask, BeforeValidator(stage_task)]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _task_left_out(cls, data):
+        return {**data, "task": None} if isinstance(data, dict) and "task" not in data else data
+
+
+class LeadStageChange(NeedsTask):
     stage: Literal["New", "Nurturing", "Demo"]
     demo_date: datetime | None = None  # used when moving to Demo: the demo task is due then
-    note: str | None = None
+    note: StageNote
     changed_by_id: int | None = None  # default: the lead owner
     completed_stages: list[str] = []  # stages skipped on the way, confirmed as already done by the salesperson
     completed_note: str | None = Field(None, max_length=500)  # e.g. "Demo was done on a call"
@@ -389,14 +483,16 @@ class LeadStageChange(BaseModel):
 
 class MarkLost(BaseModel):
     lost_reason: LostReason
-    lost_notes: str | None = None  # internal: never sent to the customer
+    lost_notes: StageNote  # the note for this stage change; internal: never sent to the customer
     changed_by_id: int | None = None
     notify_customer: bool = True  # polite no-reply email to the customer (no reason or notes)
 
 
-class ConvertLead(BaseModel):
-    """All optional. account_id = attach to an existing account instead of creating one."""
+class ConvertLead(NeedsTask):
+    """The note (the Conversion Comment) and a new task for the new opportunity are required. account_id = attach to
+    an existing account instead of creating one."""
 
+    note: ConversionComment  # why the lead is converted: saved in the lead's and the new opportunity's stage history
     opportunity_name: str | None = Field(None, max_length=200)
     expected_value: float | None = Field(None, ge=0)
     expected_close_date: date | None = None
@@ -404,6 +500,12 @@ class ConvertLead(BaseModel):
     changed_by_id: int | None = None
     completed_stages: list[str] = []  # stages skipped on the way, confirmed as already done by the salesperson
     completed_note: str | None = Field(None, max_length=500)  # e.g. "Demo was done on a call"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _comment_left_out(cls, data):
+        """A request without the comment gets "Enter a conversion comment." too (not just "Field required")."""
+        return {**data, "note": None} if isinstance(data, dict) and "note" not in data else data
 
 
 # ---------- Accounts and contacts ----------
@@ -513,15 +615,16 @@ class OpportunityUpdate(BaseModel):
     changed_by_id: int | None = None  # logged-in user (not saved; used for the assignment notification)
 
 
-class OpportunityStageChange(BaseModel):
+class OpportunityStageChange(NeedsTask):
     stage: Literal["Opportunity", "Proposal"]
-    note: str | None = None
+    note: StageNote
     changed_by_id: int | None = None
 
 
-class MarkWon(BaseModel):
+class MarkWon(NeedsTask):
+    """task: the post-sale task (e.g. handover or onboarding); it stays open on the won deal."""
     final_value: float | None = Field(None, ge=0)  # default: the expected value
-    note: str | None = None
+    note: StageNote  # the closing note
     changed_by_id: int | None = None
     notify_customer: bool = True  # thank-you no-reply email to the deal's contact
     completed_stages: list[str] = []  # stages skipped on the way, confirmed as already done by the salesperson

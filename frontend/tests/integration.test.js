@@ -28,6 +28,7 @@ test(
       source: "Phone",
       owner_id: String(login.user.id),
     };
+    const stageTask = { title: "Integration follow-up", due_date: "2030-01-15T10:00:00" }; // stage changes need one
     const lead = await api.saveLead(values);
     assert.equal(lead.stage, "New");
     assert.ok(lead.id);
@@ -39,11 +40,21 @@ test(
     );
     assert.equal(edited.title, "Buyer");
     await api.note("leads", lead.id, "Integration check note");
-    let detail = await api.stage("leads", lead.id, { stage: "Nurturing" });
+    await assert.rejects(
+      api.stage("leads", lead.id, { stage: "Nurturing", note: "   ", task: stageTask }),
+      /Enter a note to change the stage/,
+    );
+    await assert.rejects(
+      api.stage("leads", lead.id, { stage: "Nurturing", note: "Integration check: first call done" }),
+      /Add a new task for this stage change/,
+    );
+    let detail = await api.stage("leads", lead.id, { stage: "Nurturing", note: "Integration check: first call done", task: stageTask });
     assert.ok(detail.tasks.some((task) => task.status === "Auto-closed"));
     const demo = await api.stage("leads", lead.id, {
       stage: "Demo",
       demo_date: "2026-12-20T11:00:00",
+      note: "Integration check: demo booked",
+      task: stageTask,
     });
     assert.match(
       demo.tasks.find((task) => task.status === "Open" && task.title.startsWith("Conduct demo")).due_date,
@@ -61,13 +72,15 @@ test(
     assert.equal(completed.status, "Done");
     await assert.rejects(api.completeTask(task.id), /already Done/);
     const converted = await api.convert(lead.id, {
+      note: "Integration check: ready for a proposal",
+      task: stageTask,
       expected_value: 1000,
       expected_close_date: "2026-12-31",
     });
     assert.equal(converted.lead.stage, "Converted");
     assert.equal(converted.opportunity.probability, 20);
     assert.equal(converted.new_task.status, "Open");
-    await assert.rejects(api.convert(lead.id, {}), /closed/);
+    await assert.rejects(api.convert(lead.id, { note: "Integration check: again", task: stageTask }), /closed/);
     const opp = converted.opportunity;
     await api.saveOpportunity(
       {
@@ -82,15 +95,17 @@ test(
     );
     const proposal = await api.stage("opportunities", opp.id, {
       stage: "Proposal",
+      note: "Integration check: proposal sent",
+      task: stageTask,
     });
     assert.equal(proposal.probability, 75);
-    const won = await api.won(opp.id, { final_value: 1200 });
+    const won = await api.won(opp.id, { final_value: 1200, note: "Integration check: signed", task: { ...stageTask, title: "Integration handover" } });
     assert.equal(won.final_value, 1200);
     assert.equal(won.probability, 100);
-    assert.ok(won.tasks.every((task) => task.status !== "Open"));
+    assert.deepEqual(won.tasks.filter((t) => t.status === "Open").map((t) => t.title), ["Integration handover"]);
     const second = await api.saveLead({ ...values, last_name: "Lost check" });
     await assert.rejects(
-      api.lost("leads", second.id, { lost_reason: "Unsupported" }),
+      api.lost("leads", second.id, { lost_reason: "Unsupported", lost_notes: "Test only" }),
       /lost_reason/,
     );
     const lost = await api.lost("leads", second.id, {

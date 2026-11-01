@@ -2,6 +2,8 @@
 demo cancellation, company-only user emails."""
 from conftest import login_as
 
+TASK = {"title": "Synthetic follow-up task", "due_date": "2030-01-15T10:00:00"}  # every stage change needs one
+
 LEAD = {"first_name": "Maria", "last_name": "Lopez", "company": "Bluebird", "email": "maria@bluebird.example", "source": "Website"}
 
 
@@ -53,7 +55,7 @@ def test_transfer_checks(client):
     assert client.post(f"/api/leads/{lead['id']}/transfer", json={"to_user_id": 2}).status_code == 400  # already the owner
     login_as(client, 3).put("/api/users/1", json={"is_active": False})
     assert login_as(client, 2).post(f"/api/leads/{lead['id']}/transfer", json={"to_user_id": 1}).status_code == 400
-    client.post(f"/api/leads/{lead['id']}/lost", json={"lost_reason": "Price"})
+    client.post(f"/api/leads/{lead['id']}/lost", json={"lost_reason": "Price", "lost_notes": "Synthetic test note"})
     assert login_as(client, 3).post(f"/api/leads/{lead['id']}/transfer", json={"to_user_id": 3}).status_code == 400
 
 
@@ -91,15 +93,16 @@ def test_role_change_is_dated_logged_and_resets_team_access(client):
 def test_cancel_demo(client):
     lead = new_lead(client)
     client.put(f"/api/leads/{lead['id']}/stage",
-               json={"stage": "Demo", "demo_date": "2026-12-01T11:00:00", "completed_stages": ["Nurturing"]})
-    res = client.post(f"/api/leads/{lead['id']}/cancel-demo", json={"reason": "Client travelling"})
+               json={"task": TASK, "stage": "Demo", "demo_date": "2026-12-01T11:00:00", "completed_stages": ["Nurturing"], "note": "Synthetic test note"})
+    res = client.post(f"/api/leads/{lead['id']}/cancel-demo", json={"task": TASK, "reason": "Client travelling"})
     assert res.status_code == 200, res.text
     out = res.json()
     assert out["stage"] == "Nurturing" and out["demo_date"] is None
     open_titles = [t["title"] for t in out["tasks"] if t["status"] == "Open"]
-    assert open_titles == ["Follow-up call - Maria Lopez"]  # demo reminders closed, rebook follow-up created
+    assert open_titles == [TASK["title"]]  # demo reminders closed; the user's new task (not a system follow-up call)
     assert out["history"][-1]["note"] == "Demo cancelled: Client travelling"
-    assert client.post(f"/api/leads/{lead['id']}/cancel-demo").status_code == 400  # no demo any more
+    assert client.post(f"/api/leads/{lead['id']}/cancel-demo",
+                       json={"task": TASK, "reason": "Synthetic test note"}).status_code == 400  # no demo any more
 
 
 # ---------- company emails only (item 19) ----------
@@ -121,7 +124,7 @@ def test_reschedule_demo_instead_of_cancelling(client):
     lead = new_lead(client)
     first = (datetime.now() + timedelta(days=3)).replace(hour=11, minute=0, second=0, microsecond=0)
     client.put(f"/api/leads/{lead['id']}/stage",
-               json={"stage": "Demo", "demo_date": first.isoformat(), "completed_stages": ["Nurturing"]})
+               json={"task": TASK, "stage": "Demo", "demo_date": first.isoformat(), "completed_stages": ["Nurturing"], "note": "Synthetic test note"})
     new = first + timedelta(days=2, hours=3)
     res = client.post(f"/api/leads/{lead['id']}/cancel-demo", json={"reason": "Client asked", "reschedule_to": new.isoformat()})
     assert res.status_code == 200, res.text

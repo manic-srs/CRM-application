@@ -2,6 +2,8 @@
 
 Opportunity -> Proposal -> Won, or Lost at any open stage. Opportunities come from converting a lead.
 """
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import ValidationError
 from sqlalchemy import insert, select
@@ -17,11 +19,12 @@ from app.routers.attachments import (MAX_REQUEST_BYTES, checked_type, clean_file
                                      locked_opportunity, read_upload)
 from app.serializers import history_out, opportunity_detail, opportunity_out
 from app.services import (
+    add_stage_task,
     confirm_skipped,
     customer_email,
     assignment_notice,
     auto_close_open_tasks,
-    create_auto_task,
+    get_for_update,
     get_or_404,
     now,
     record_stage_change,
@@ -29,6 +32,7 @@ from app.services import (
     resolve_user_id,
     schedule_close_date_task,
     stage_notice,
+    stage_task_owner,
 )
 from app.constants import CLOSE_DATE_TASK
 
@@ -109,30 +113,31 @@ def check_stage_change(opp: Opportunity, stage: str) -> int:
     return acting_user_id()
 
 
-def move_stage(db: Session, opp: Opportunity, stage: str, note: str | None, by: int) -> None:
-    """Opportunity <-> Proposal: stage history, follow-up tasks and the owner's notification (the caller saves)."""
+def move_stage(db: Session, opp: Opportunity, data: schemas.OpportunityStageChange, task_owner: int, by: int) -> None:
+    """Opportunity <-> Proposal: stage history (with the user's note), the user's new task (instead of the system
+    follow-up), old follow-ups closed and the owner's notification (the caller saves)."""
+    stage, note = data.stage, data.note
     old = opp.stage
     opp.stage = stage
     opp.probability = STAGE_PROBABILITY[stage]
     record_stage_change(db, opportunity_id=opp.id, from_stage=old, to_stage=stage, changed_by_id=by, note=note)
     auto_close_open_tasks(db, opportunity_id=opp.id, keep=(CLOSE_DATE_TASK,))  # the close-date reminder stays
-    task = create_auto_task(db, stage=stage, owner_id=opp.owner_id, record_name=opp.name, opportunity_id=opp.id)
-    details = []
-    if note:
-        details.append(f"Note: {note}")
+    task = add_stage_task(db, data.task, owner_id=task_owner, record_owner_id=opp.owner_id, actor_id=by,
+                          opportunity_id=opp.id)
     stage_notice(
         db, kind="Opportunity", stage=stage, record_name=opp.name, owner_id=opp.owner_id, actor_id=by,
-        opportunity_id=opp.id, task=task, details=details,
+        opportunity_id=opp.id, task=task, details=[f"Note: {note}"],
         title="Opportunity moved back to Opportunity" if stage == "Opportunity" else None,
     )
 
 
 @router.put("/{opportunity_id}/stage", response_model=schemas.OpportunityDetail)
 def change_stage(opportunity_id: int, data: schemas.OpportunityStageChange, db: Session = Depends(get_db)):
-    """Move between Opportunity and Proposal. Old follow-ups are auto-closed, the next one is created."""
-    opp = get_or_404(db, Opportunity, opportunity_id, "Opportunity")
+    """Move between Opportunity and Proposal. A note (saved in the stage history) and the user's new task are
+    required. Old follow-ups are auto-closed; the new task takes the place of the system follow-up."""
+    opp = get_for_update(db, Opportunity, opportunity_id, "Opportunity")
     by = check_stage_change(opp, data.stage)
-    move_stage(db, opp, data.stage, data.note, by)
+    move_stage(db, opp, data, stage_task_owner(db, data.task, opp.owner_id), by)
     db.commit()
     db.refresh(opp)
     return opportunity_detail(opp)
@@ -143,16 +148,18 @@ def change_stage(opportunity_id: int, data: schemas.OpportunityStageChange, db: 
 STAGE_MAX_FILES = 5  # more can be added on the Attachments card afterwards (while the deal is open)
 STAGE_MAX_REQUEST_BYTES = STAGE_MAX_FILES * MAX_REQUEST_BYTES + 1024 * 1024  # the files, the form and the note
 WON_FILES_STAGE = "Proposal"
-WON_FORM_FIELDS = {"final_value", "note", "notify_customer", "completed_stages", "completed_note", "files"}
+WON_FORM_FIELDS = {"final_value", "note", "task", "notify_customer", "completed_stages", "completed_note", "files"}
 FILES_FIELD ={"type": "array", "items": {"type": "string", "format": "binary"},
                "description": f"1 to {STAGE_MAX_FILES} PDF, Word (.docx), JPG or PNG files, up to 20 MB each"}
+TASK_FIELD = {"type": "string", "description": 'The new task as JSON, as in PUT /stage: {"title": ..., "due_date": ..., '
+                                               '"priority", "reminder_at", "description", "owner_id" optional}'}
 STAGE_FILES_FORM = {"requestBody": {"required": True, "content": {"multipart/form-data": {"schema": {
-    "type": "object", "required": ["stage", "files"],
+    "type": "object", "required": ["stage", "note", "task", "files"],
     "properties": {"stage": {"type": "string", "enum": OPPORTUNITY_OPEN_STAGES}, "note": {"type": "string"},
-                   "files": FILES_FIELD}}}}}}
+                   "task": TASK_FIELD, "files": FILES_FIELD}}}}}}
 WON_FILES_FORM = {"requestBody": {"required": True, "content": {"multipart/form-data": {"schema": {
-    "type": "object", "required": ["files"],
-    "properties": {"final_value": {"type": "number", "minimum": 0}, "note": {"type": "string"},
+    "type": "object", "required": ["note", "task", "files"],
+    "properties": {"final_value": {"type": "number", "minimum": 0}, "note": {"type": "string"}, "task": TASK_FIELD,
                    "notify_customer": {"type": "boolean", "default": True},
                    "completed_stages": {"type": "array", "items": {"type": "string"}},
                    "completed_note": {"type": "string", "maxLength": 500}, "files": FILES_FIELD}}}}}}
@@ -177,6 +184,16 @@ def refuse_unknown_fields(form, allowed: set[str]) -> None:
 def invalid_form(error: ValidationError) -> HTTPException:
     return HTTPException(status_code=422, detail="; ".join(
         f"{e['loc'][0]}: {e['msg']}" for e in error.errors(include_url=False)))
+
+
+def form_task(value):
+    """The New Task of a popup with files: the form field "task" holds it as JSON (checked by the schema)."""
+    if isinstance(value, str) and value.strip():
+        try:
+            return json.loads(value)
+        except ValueError:
+            return value  # not JSON: refused by the schema
+    return None if value in (None, "") else value
 
 
 async def checked_files(form, without: str) -> list[tuple[UploadFile, str, str]]:
@@ -209,25 +226,29 @@ async def save_files(db: Session, opp: Opportunity, stage: str, checked: list, b
 @router.post("/{opportunity_id}/stage-with-files", response_model=schemas.OpportunityDetail,
              dependencies=[Depends(header_login_only)], openapi_extra=STAGE_FILES_FORM)
 async def change_stage_with_files(opportunity_id: int, request: Request, db: Session = Depends(get_db)):
-    """The same stage change as PUT /stage, plus files (form fields stage, note, files) saved with it.
-    The files are checked like the Attachments card's uploads and get the new stage. Every file is checked before
-    anything is saved: if one is refused, nothing changes (no stage, note, task, notification or file)."""
+    """The same stage change as PUT /stage, plus files (form fields stage, note, task, files) saved with it.
+    The files are checked like the Attachments card's uploads and get the new stage. The note and the new task are
+    checked first, then every file, before anything is saved: if one is refused, nothing changes (no stage, note,
+    task, notification or file)."""
     opp = get_or_404(db, Opportunity, opportunity_id, "Opportunity")
     ensure_open(opp)
     require_edit(opp.owner_id, "opportunity")  # before the files are read
     check_request_size(request)
-    async with request.form(max_files=STAGE_MAX_FILES, max_fields=2) as form:
-        refuse_unknown_fields(form, {"stage", "note", "files"})
+    async with request.form(max_files=STAGE_MAX_FILES, max_fields=3) as form:
+        refuse_unknown_fields(form, {"stage", "note", "task", "files"})
         try:
-            data = schemas.OpportunityStageChange(stage=form.get("stage"), note=form.get("note") or None)
+            data = schemas.OpportunityStageChange(stage=form.get("stage"), note=form.get("note") or None,
+                                                  task=form_task(form.get("task")))
         except ValidationError as error:
             raise invalid_form(error)
+        stage_task_owner(db, data.task, opp.owner_id)  # the assignee is checked before the files are read
         checked = await checked_files(form, without="PUT /stage")
 
         opp = locked_opportunity(db, opportunity_id)
         by = check_stage_change(opp, data.stage)  # again: another save may have changed the deal meanwhile
+        task_owner = stage_task_owner(db, data.task, opp.owner_id)
         await save_files(db, opp, data.stage, checked, by)
-        move_stage(db, opp, data.stage, data.note, by)
+        move_stage(db, opp, data, task_owner, by)
         db.commit()
     db.refresh(opp)
     return opportunity_detail(opp)
@@ -243,9 +264,11 @@ def check_won(opp: Opportunity, data: schemas.MarkWon) -> tuple[float, int]:
     return final_value, acting_user_id()
 
 
-def close_won(db: Session, opp: Opportunity, data: schemas.MarkWon, final_value: float, by: int) -> None:
-    """Won: stage history, open tasks closed, the owner's notification and, if chosen, the customer's thank-you
-    email (sent only after the save is committed; the caller saves)."""
+def close_won(db: Session, opp: Opportunity, data: schemas.MarkWon, final_value: float, task_owner: int,
+              by: int) -> None:
+    """Won: stage history, open tasks closed, the user's post-sale task (created after that, so it stays open on the
+    won deal), the owner's notification and, if chosen, the customer's thank-you email (sent only after the save is
+    committed; the caller saves)."""
     # Won comes after Proposal: it must be done (or confirmed as done)
     opp.stage = confirm_skipped(db, flow=OPPORTUNITY_FLOW, current=opp.stage, target_index=len(OPPORTUNITY_FLOW),
                                 completed=data.completed_stages, note=data.completed_note, by=by,
@@ -257,9 +280,9 @@ def close_won(db: Session, opp: Opportunity, data: schemas.MarkWon, final_value:
     opp.closed_at = now()
     record_stage_change(db, opportunity_id=opp.id, from_stage=old, to_stage="Won", changed_by_id=by, note=data.note)
     auto_close_open_tasks(db, opportunity_id=opp.id)
-    details = [f"Final amount: ${final_value:,.2f}"]
-    if data.note:
-        details.append(f"Note: {data.note}")
+    add_stage_task(db, data.task, owner_id=task_owner, record_owner_id=opp.owner_id, actor_id=by,
+                   opportunity_id=opp.id)
+    details = [f"Final amount: ${final_value:,.2f}", f"Note: {data.note}"]
     stage_notice(db, kind="Opportunity", stage="Won", record_name=opp.name, owner_id=opp.owner_id,
                  actor_id=by, opportunity_id=opp.id, details=details)
     if data.notify_customer:
@@ -267,12 +290,12 @@ def close_won(db: Session, opp: Opportunity, data: schemas.MarkWon, final_value:
 
 
 @router.post("/{opportunity_id}/won", response_model=schemas.OpportunityDetail)
-def mark_won(opportunity_id: int, data: schemas.MarkWon | None = None, db: Session = Depends(get_db)):
-    """Close as Won from any open stage. final_value defaults to the expected value."""
-    data = data or schemas.MarkWon()
-    opp = get_or_404(db, Opportunity, opportunity_id, "Opportunity")
+def mark_won(opportunity_id: int, data: schemas.MarkWon, db: Session = Depends(get_db)):
+    """Close as Won from any open stage. The closing note and a post-sale task (e.g. handover or onboarding) are
+    required; final_value defaults to the expected value."""
+    opp = get_for_update(db, Opportunity, opportunity_id, "Opportunity")
     final_value, by = check_won(opp, data)
-    close_won(db, opp, data, final_value, by)
+    close_won(db, opp, data, final_value, stage_task_owner(db, data.task, opp.owner_id), by)
     db.commit()
     db.refresh(opp)
     return opportunity_detail(opp)
@@ -281,28 +304,32 @@ def mark_won(opportunity_id: int, data: schemas.MarkWon | None = None, db: Sessi
 @router.post("/{opportunity_id}/won-with-files", response_model=schemas.OpportunityDetail,
              dependencies=[Depends(header_login_only)], openapi_extra=WON_FILES_FORM)
 async def mark_won_with_files(opportunity_id: int, request: Request, db: Session = Depends(get_db)):
-    """The same as POST /won, plus files from the Mark as Won popup (form fields final_value, note, notify_customer,
-    completed_stages, completed_note, files). The files are checked like the Attachments card's uploads and labelled
-    Proposal, the stage being closed. They are saved while the deal is still open and it moves to Won in the same
-    save: if anything is refused, nothing changes (no amount, note, file, task, notification or email)."""
+    """The same as POST /won, plus files from the Mark as Won popup (form fields final_value, note, task,
+    notify_customer, completed_stages, completed_note, files). The files are checked like the Attachments card's
+    uploads and labelled Proposal, the stage being closed. They are saved while the deal is still open and it moves
+    to Won in the same save: if anything is refused, nothing changes (no amount, note, file, task, notification or
+    email)."""
     opp = get_or_404(db, Opportunity, opportunity_id, "Opportunity")
     ensure_open(opp)
     require_edit(opp.owner_id, "opportunity")  # before the files are read
     check_request_size(request)
     async with request.form(max_files=STAGE_MAX_FILES, max_fields=10) as form:
         refuse_unknown_fields(form, WON_FORM_FIELDS)
-        values = {name: form.get(name) for name in ("final_value", "note", "notify_customer", "completed_note")
+        values = {name: form.get(name) for name in ("final_value", "notify_customer", "completed_note")
                   if form.get(name) not in (None, "")}
         try:
-            data = schemas.MarkWon(**values, completed_stages=form.getlist("completed_stages"))
+            data = schemas.MarkWon(**values, note=form.get("note"), task=form_task(form.get("task")),
+                                   completed_stages=form.getlist("completed_stages"))
         except ValidationError as error:
             raise invalid_form(error)
+        stage_task_owner(db, data.task, opp.owner_id)  # the assignee is checked before the files are read
         checked = await checked_files(form, without="POST /won")
 
         opp = locked_opportunity(db, opportunity_id)
         final_value, by = check_won(opp, data)  # again: another save may have changed the deal meanwhile
+        task_owner = stage_task_owner(db, data.task, opp.owner_id)
         await save_files(db, opp, WON_FILES_STAGE, checked, by)
-        close_won(db, opp, data, final_value, by)
+        close_won(db, opp, data, final_value, task_owner, by)
         db.commit()
     db.refresh(opp)
     return opportunity_detail(opp)
@@ -310,8 +337,8 @@ async def mark_won_with_files(opportunity_id: int, request: Request, db: Session
 
 @router.post("/{opportunity_id}/lost", response_model=schemas.OpportunityDetail)
 def mark_lost(opportunity_id: int, data: schemas.MarkLost, db: Session = Depends(get_db)):
-    """Close as Lost from any open stage. A lost reason is required."""
-    opp = get_or_404(db, Opportunity, opportunity_id, "Opportunity")
+    """Close as Lost from any open stage. A lost reason and notes are required (no new task)."""
+    opp = get_for_update(db, Opportunity, opportunity_id, "Opportunity")
     ensure_open(opp)
     require_edit(opp.owner_id, "opportunity")
     by = acting_user_id()
@@ -325,9 +352,7 @@ def mark_lost(opportunity_id: int, data: schemas.MarkLost, db: Session = Depends
         db, opportunity_id=opp.id, from_stage=old, to_stage="Lost", changed_by_id=by, note=data.lost_notes
     )
     auto_close_open_tasks(db, opportunity_id=opp.id)
-    details = [f"Lost at stage: {old}", f"Reason: {data.lost_reason}"]
-    if data.lost_notes:
-        details.append(f"Notes: {data.lost_notes}")
+    details = [f"Lost at stage: {old}", f"Reason: {data.lost_reason}", f"Notes: {data.lost_notes}"]
     stage_notice(db, kind="Opportunity", stage="Lost", record_name=opp.name, owner_id=opp.owner_id,
                  actor_id=by, opportunity_id=opp.id, details=details)
     if data.notify_customer:

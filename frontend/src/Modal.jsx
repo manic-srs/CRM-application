@@ -4,7 +4,21 @@ import React, { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { StageFiles } from "./Attachments";
 import LinkedInField from "./LeadAutofill";
-import { ATTACHMENT_STAGES, LEAD_SOURCES, LOST_REASONS, PRIORITIES, SALUTATIONS, WON_FILES_STAGE, localInput } from "./domain";
+import {
+  ATTACHMENT_STAGES,
+  LEAD_SOURCES,
+  LOST_REASONS,
+  PRIORITIES,
+  SALUTATIONS,
+  WON_FILES_STAGE,
+  localInput,
+  stageNote,
+  stageNoteField,
+  stageNoteMessage,
+  stageTaskNeeded,
+  stageTaskPayload,
+  stageTaskProblems,
+} from "./domain";
 import { can } from "./permissions";
 import { Icon } from "./ui";
 
@@ -102,6 +116,12 @@ export default function Modal({ modal, close, data, run, notify, user }) {
   const stageFilesOn =
     type === "won" || (type === "stage" && modal.collection === "opportunities" && ATTACHMENT_STAGES.includes(modal.stage));
   const [stageFiles, setStageFiles] = useState([]);
+  // Every stage change (Change Stage, Convert, Won, Lost, cancelling a demo) needs a note; checked before anything is sent
+  const noteField = stageNoteField(type, demoChoice);
+  const [noteError, setNoteError] = useState(false);
+  // ...and all of them but Lost a New Task (task_* fields, checked with the note before anything is sent)
+  const taskNeeded = stageTaskNeeded(type, demoChoice);
+  const [taskErrors, setTaskErrors] = useState({});
   const attached = stageFilesOn && stageFiles.length;
   const attachedText = attached ? ` ${attached} file${attached === 1 ? " was" : "s were"} attached.` : "";
   const titles = {
@@ -236,6 +256,28 @@ export default function Modal({ modal, close, data, run, notify, user }) {
       <textarea name={name} rows={3} defaultValue={value} />
     </label>
   );
+  // The required note of a stage change. The error stays until something other than spaces is typed.
+  const noteBox = (label, name) => (
+    <label className="field">
+      <span>
+        {label}
+        <i> *</i>
+      </span>
+      <textarea
+        name={name}
+        rows={3}
+        aria-required="true"
+        aria-invalid={noteError || undefined}
+        aria-describedby={noteError ? "stage-note-error" : undefined}
+        onInput={(event) => noteError && stageNote(event.target.value) && setNoteError(false)}
+      />
+      {noteError && (
+        <small id="stage-note-error" className="field-error">
+          {stageNoteMessage(type)}
+        </small>
+      )}
+    </label>
+  );
   const select = (
     label,
     name,
@@ -281,6 +323,68 @@ export default function Modal({ modal, close, data, run, notify, user }) {
         ? [[record.owner_id, record.owner || "Current owner"]]
         : []),
     ], record?.owner_id ?? user?.id ?? "");
+  // New Task of a stage change: the task form's fields. It goes to the record's owner (the new opportunity's on
+  // Convert, which is the lead's owner) unless someone who may assign tasks to others picks another user.
+  const recordOwnerName = record?.owner || record?.owner_name || "";
+  const taskInput = (label, name, inputType, required, extra = {}) => (
+    <label className="field">
+      <span>
+        {label}
+        {required && <i> *</i>}
+      </span>
+      <input
+        name={name}
+        type={inputType}
+        aria-required={required || undefined}
+        aria-invalid={taskErrors[name] ? true : undefined}
+        aria-describedby={taskErrors[name] ? `${name}-error` : undefined}
+        onInput={(event) =>
+          taskErrors[name] && stageNote(event.target.value) && setTaskErrors(({ [name]: _, ...rest }) => rest)
+        }
+        {...extra}
+      />
+      {taskErrors[name] && (
+        <small id={`${name}-error`} className="field-error">
+          {taskErrors[name]}
+        </small>
+      )}
+    </label>
+  );
+  const TASK_HINTS = {
+    stage: "The next follow-up for this stage (instead of the system's automatic one).",
+    convert: "The first task of the new opportunity.",
+    won: "A post-sale task, such as handover or onboarding. It stays open after the deal is won.",
+    cancelDemo: "The next follow-up now that the lead is back in Nurturing.",
+  };
+  const taskSection = () => (
+    <fieldset className="stage-task">
+      <legend>New Task</legend>
+      <p className="field-hint">{TASK_HINTS[type]}</p>
+      <div className="form-grid">
+        {taskInput("Subject", "task_title", "text", true, { maxLength: 200 })}
+        {taskInput("Due Date", "task_due_date", "datetime-local", true)}
+        {select("Priority", "task_priority", PRIORITIES, "Normal", true)}
+        {can(user, "reassign_owner") ? (
+          select("Assigned To", "task_owner_id", [
+            ...data.users.map((u) => [u.id, u.full_name]),
+            ...(record?.owner_id && !data.users.some((u) => u.id === record.owner_id)
+              ? [[record.owner_id, recordOwnerName || "Current owner"]]
+              : []),
+          ], record?.owner_id ?? "")
+        ) : (
+          <label className="field">
+            <span>Assigned To</span>
+            <input readOnly value={recordOwnerName} aria-readonly="true" />
+          </label>
+        )}
+        {taskInput("Reminder", "task_reminder_at", "datetime-local", false)}
+      </div>
+      <label className="field">
+        <span>Description</span>
+        <textarea name="task_description" rows={2} />
+      </label>
+    </fieldset>
+  );
   // The green message after saving says what happened (the customer email, if any, is mentioned too)
   const doneMessage = (v, saved) => {
     const name = record?.name;
@@ -289,7 +393,7 @@ export default function Modal({ modal, close, data, run, notify, user }) {
     if (type === "lead" && !record)
       return `Lead "${saved.name}" was created.${v.welcome_email === "on" && v.email ? " A welcome email was sent to the lead." : ""}`;
     if (type === "stage") return `"${name}" moved to ${modal.stage}. The next follow-up task was created.${attachedText}`;
-    if (type === "won") return `"${name}" was marked as Won.${mailed}${attachedText}`;
+    if (type === "won") return `"${name}" was marked as Won. The new task was created.${mailed}${attachedText}`;
     if (type === "lost") return `"${name}" was marked as Lost.${mailed}`;
     if (type === "task") return record ? "Task updated." : "Task created.";
     if (type === "note") return "Note added.";
@@ -359,6 +463,17 @@ export default function Modal({ modal, close, data, run, notify, user }) {
   const submit = async (event) => {
     event.preventDefault();
     if (lock.current) return;
+    const noteInput = noteField && event.target.elements[noteField];
+    const noteMissing = !!noteInput && !stageNote(noteInput.value);
+    const taskProblems = taskNeeded ? stageTaskProblems(Object.fromEntries(new FormData(event.target))) : {};
+    if (noteMissing || Object.keys(taskProblems).length) {
+      // nothing is sent: the record, the other fields and the chosen files stay as they are
+      setError("");
+      setNoteError(noteMissing);
+      setTaskErrors(taskProblems);
+      (noteMissing ? noteInput : event.target.elements[Object.keys(taskProblems)[0]]).focus();
+      return;
+    }
     lock.current = true;
     setSubmitting(true);
     setError("");
@@ -402,13 +517,14 @@ export default function Modal({ modal, close, data, run, notify, user }) {
       if (type === "lost")
         await run("lost", modal.collection, record.id, {
           lost_reason: v.lost_reason,
-          lost_notes: v.lost_notes || null,
+          lost_notes: stageNote(v.lost_notes),
           notify_customer: v.notify_customer === "on",
         });
       if (type === "won") {
         const values = {
           final_value: v.final_value === "" ? null : Number(v.final_value),
-          note: v.note || null,
+          note: stageNote(v.note),
+          task: stageTaskPayload(v),
           notify_customer: v.notify_customer === "on",
           ...skipPayload(v),
         };
@@ -416,6 +532,8 @@ export default function Modal({ modal, close, data, run, notify, user }) {
       }
       if (type === "convert")
         saved = await run("convert", record.id, {
+          note: stageNote(v.note),
+          task: stageTaskPayload(v),
           opportunity_name: v.opportunity_name || null,
           expected_value:
             v.expected_value === "" ? null : Number(v.expected_value),
@@ -424,11 +542,12 @@ export default function Modal({ modal, close, data, run, notify, user }) {
           ...skipPayload(v),
         });
       if (type === "stage" && stageFilesOn && stageFiles.length)
-        await run("stageWithFiles", record.id, { stage: modal.stage, note: v.note || null }, stageFiles);
+        await run("stageWithFiles", record.id, { stage: modal.stage, note: stageNote(v.note), task: stageTaskPayload(v) }, stageFiles);
       else if (type === "stage")
         await run("stage", modal.collection, record.id, {
           stage: modal.stage,
-          note: v.note || null,
+          note: stageNote(v.note),
+          task: stageTaskPayload(v),
           ...skipPayload(v),
           ...(modal.collection === "leads" && modal.stage === "Demo"
             ? { demo_date: v.demo_date || null }
@@ -450,8 +569,9 @@ export default function Modal({ modal, close, data, run, notify, user }) {
         saved = await run("transferLead", record.id, { to_user_id: Number(v.to_user_id), note: v.note || null });
       if (type === "cancelDemo")
         await run("cancelDemo", record.id, {
-          reason: v.reason || null,
+          reason: stageNote(v.reason) || null,
           reschedule_to: demoChoice === "reschedule" ? v.reschedule_to : null,
+          ...(taskNeeded ? { task: stageTaskPayload(v) } : {}),
         });
       close();
       notify(doneMessage(v, saved));
@@ -695,7 +815,7 @@ export default function Modal({ modal, close, data, run, notify, user }) {
           {type === "lost" && (
             <>
               {select("Lost Reason", "lost_reason", LOST_REASONS, "", true)}
-              {textArea("Lost Notes", "lost_notes")}
+              {noteBox("Lost Notes", "lost_notes")}
               {customerCheck(
                 "Send the customer a polite closing email",
                 "A short thank-you (no-reply). The lost reason and notes are internal and are never sent.",
@@ -712,7 +832,8 @@ export default function Modal({ modal, close, data, run, notify, user }) {
                 record.expected_value == null,
                 record.expected_value ?? "",
               )}
-              {textArea("Closing Note", "note")}
+              {noteBox("Closing Note", "note")}
+              {taskSection()}
               <StageFiles files={stageFiles} setFiles={setStageFiles} stage={WON_FILES_STAGE} saving={submitting} />
               {customerCheck(
                 "Send the customer a thank-you email",
@@ -739,6 +860,8 @@ export default function Modal({ modal, close, data, run, notify, user }) {
                   </select>
                 </label>
               </div>
+              {noteBox("Conversion Comment", "note")}
+              {taskSection()}
             </>
           )}
           {type === "stage" && (
@@ -752,7 +875,8 @@ export default function Modal({ modal, close, data, run, notify, user }) {
                   false,
                   localInput(record.demo_date),
                 )}
-              {textArea("Note", "note")}
+              {noteBox("Note", "note")}
+              {taskSection()}
               {stageFilesOn && <StageFiles files={stageFiles} setFiles={setStageFiles} stage={modal.stage} saving={submitting} />}
             </>
           )}
@@ -785,7 +909,11 @@ export default function Modal({ modal, close, data, run, notify, user }) {
                     name="demo_choice"
                     value="reschedule"
                     checked={demoChoice === "reschedule"}
-                    onChange={() => setDemoChoice("reschedule")}
+                    onChange={() => {
+                      setDemoChoice("reschedule");
+                      setNoteError(false);
+                      setTaskErrors({});
+                    }}
                   />
                   <span>Reschedule to a new date (the lead stays at Demo and the reminders move)</span>
                 </label>
@@ -801,7 +929,9 @@ export default function Modal({ modal, close, data, run, notify, user }) {
                 </label>
               </fieldset>
               {demoChoice === "reschedule" && field("New Demo Date", "reschedule_to", "datetime-local", true, "")}
-              {textArea("Reason", "reason")}
+              {/* going back to Nurturing is a stage change, so the reason is its required note */}
+              {demoChoice === "nurturing" ? noteBox("Reason", "reason") : textArea("Reason", "reason")}
+              {taskNeeded && taskSection()}
             </>
           )}
           {type === "note" && (

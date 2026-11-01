@@ -12,6 +12,8 @@ from app.models import User
 from app.security import ensure_default_admin, make_token
 from conftest import login_as
 
+TASK = {"title": "Synthetic follow-up task", "due_date": "2030-01-15T10:00:00"}  # every stage change needs one
+
 
 @pytest.fixture
 def outbox(monkeypatch):
@@ -94,9 +96,9 @@ def test_salesperson_sees_and_changes_only_own_records(client):
         ("get", f"/api/leads/{lid}", None),
         ("get", f"/api/leads/{lid}/history", None),
         ("put", f"/api/leads/{lid}", {"title": "CEO"}),
-        ("put", f"/api/leads/{lid}/stage", {"stage": "Nurturing"}),
-        ("post", f"/api/leads/{lid}/lost", {"lost_reason": "Price"}),
-        ("post", f"/api/leads/{lid}/convert", {}),
+        ("put", f"/api/leads/{lid}/stage", {"stage": "Nurturing", "note": "Synthetic test note", "task": TASK}),
+        ("post", f"/api/leads/{lid}/lost", {"lost_reason": "Price", "lost_notes": "Synthetic test note"}),
+        ("post", f"/api/leads/{lid}/convert", {"note": "Synthetic test note", "task": TASK}),
         ("get", "/api/notes", None),
     ):
         res = client.request(method.upper(), url, json=body, params={"lead_id": lid} if url == "/api/notes" else None)
@@ -105,7 +107,7 @@ def test_salesperson_sees_and_changes_only_own_records(client):
     assert client.get("/api/emails", params={"lead_id": lid}).status_code == 404
     # own records work as before; a salesperson can transfer their own lead (Transfer leads) but can't
     # create records for someone else
-    assert client.put(f"/api/leads/{mine['id']}/stage", json={"stage": "Nurturing"}).status_code == 200
+    assert client.put(f"/api/leads/{mine['id']}/stage", json={"task": TASK, "stage": "Nurturing", "note": "Synthetic test note"}).status_code == 200
     assert client.put(f"/api/leads/{mine['id']}", json={"owner_id": 1}).status_code == 200
     assert client.post("/api/leads", json={"last_name": "X", "company": "Y", "owner_id": 1}).status_code == 403
     assert client.post("/api/tasks", json={"title": "T", "due_date": "2026-12-01T10:00:00", "owner_id": 1}).status_code == 403
@@ -120,7 +122,7 @@ def test_manager_gives_team_access_to_view_not_edit(client, outbox):
     assert "view_team_records" in me["permissions"] and "edit_team_records" not in me["permissions"]
     assert [l["name"] for l in client.get("/api/leads").json()] == ["Priya Lead"]
     assert client.get(f"/api/leads/{priyas['id']}").status_code == 200
-    assert client.put(f"/api/leads/{priyas['id']}/stage", json={"stage": "Nurturing"}).status_code == 403  # view only
+    assert client.put(f"/api/leads/{priyas['id']}/stage", json={"task": TASK, "stage": "Nurturing", "note": "Synthetic test note"}).status_code == 403  # view only
     assert client.put("/api/users/2/team-access", json={"team_access": False}).status_code == 403  # Ravi can't grant
     assert "Team access given" in [n["title"] for n in client.get("/api/notifications").json()]
     login_as(client, 1).put("/api/users/2/team-access", json={"team_access": False})
@@ -153,7 +155,7 @@ def test_roles_and_permissions_matrix(client):
 def test_manager_edits_and_transfers_any_lead(client):
     ravis = lead(client)
     login_as(client, 1)
-    assert client.put(f"/api/leads/{ravis['id']}/stage", json={"stage": "Nurturing"}).status_code == 200
+    assert client.put(f"/api/leads/{ravis['id']}/stage", json={"task": TASK, "stage": "Nurturing", "note": "Synthetic test note"}).status_code == 200
     # a Manager can transfer any lead they can see (Reassign owner)
     moved = client.post(f"/api/leads/{ravis['id']}/transfer", json={"to_user_id": 1})
     assert moved.status_code == 200 and moved.json()["owner_id"] == 1
@@ -188,9 +190,9 @@ def test_only_admin_manages_users(client):
 def test_transfer_records_when_someone_leaves(client, outbox):
     open_lead = lead(client, name="Open One")
     lost = lead(client, name="Lost One")
-    client.post(f"/api/leads/{lost['id']}/lost", json={"lost_reason": "Price"})
+    client.post(f"/api/leads/{lost['id']}/lost", json={"lost_reason": "Price", "lost_notes": "Synthetic test note"})
     converted = lead(client, name="Deal One")
-    opp = client.post(f"/api/leads/{converted['id']}/convert", json={"completed_stages": ["Nurturing", "Demo"], "expected_value": 5000}).json()["opportunity"]
+    opp = client.post(f"/api/leads/{converted['id']}/convert", json={"task": TASK, "completed_stages": ["Nurturing", "Demo"], "expected_value": 5000, "note": "Synthetic test note"}).json()["opportunity"]
 
     login_as(client, 3)
     assert client.post("/api/users/2/transfer", json={"to_user_id": 2}).status_code == 400
@@ -340,8 +342,8 @@ def test_customer_gets_welcome_won_and_lost_emails(client, outbox, monkeypatch):
     assert welcome[0]["body"].startswith("Hi Mani,") and "Ravi Kumar (ravi@crm.test)" in welcome[0]["body"]
     assert "don't reply" in welcome[0]["body"] and welcome[0]["sender_name"] == "SRS Consulting (no-reply)"
 
-    opp = client.post(f"/api/leads/{lead['id']}/convert", json={"completed_stages": ["Nurturing", "Demo"], "expected_value": 1000}).json()["opportunity"]
-    client.post(f"/api/opportunities/{opp['id']}/won", json={"completed_stages": ["Proposal"]})
+    opp = client.post(f"/api/leads/{lead['id']}/convert", json={"task": TASK, "completed_stages": ["Nurturing", "Demo"], "expected_value": 1000, "note": "Synthetic test note"}).json()["opportunity"]
+    client.post(f"/api/opportunities/{opp['id']}/won", json={"task": TASK, "completed_stages": ["Proposal"], "note": "Synthetic test note"})
     assert outbox[-1]["to"] == ["mani.personal@example.com"]  # the contact the lead became
     assert outbox[-1]["subject"] == "Thank you for choosing SRS Consulting"
     assert "accepting our proposal" in outbox[-1]["body"]
@@ -358,9 +360,9 @@ def test_customer_gets_welcome_won_and_lost_emails(client, outbox, monkeypatch):
 def test_customer_emails_can_be_turned_off(client, outbox):
     lead = client.post("/api/leads", json={"last_name": "Quiet", "company": "Q", "email": "q@example.com",
                                            "welcome_email": False}).json()
-    client.post(f"/api/leads/{lead['id']}/lost", json={"lost_reason": "Price", "notify_customer": False})
+    client.post(f"/api/leads/{lead['id']}/lost", json={"lost_reason": "Price", "notify_customer": False, "lost_notes": "Synthetic test note"})
     no_email = client.post("/api/leads", json={"last_name": "NoMail", "company": "Q"}).json()  # no address: skipped
-    client.post(f"/api/leads/{no_email['id']}/lost", json={"lost_reason": "Price"})
+    client.post(f"/api/leads/{no_email['id']}/lost", json={"lost_reason": "Price", "lost_notes": "Synthetic test note"})
     assert not [m for m in outbox if not m["subject"].startswith("[SalesTrack]")]
 
 
@@ -370,7 +372,7 @@ def test_email_settings(client, outbox):
     me = client.get("/api/auth/me").json()
     assert (me["email_stage_updates"], me["email_assignments"], me["email_reminders"]) == (False, True, True)
     record = lead(client)
-    client.put(f"/api/leads/{record['id']}/stage", json={"stage": "Nurturing"})
+    client.put(f"/api/leads/{record['id']}/stage", json={"task": TASK, "stage": "Nurturing", "note": "Synthetic test note"})
     assert not [m for m in outbox if m["subject"].startswith("[SalesTrack] Lead")]  # bell only
     assert {n["title"] for n in client.get("/api/notifications").json()} >= {"Lead created", "Lead moved to Nurturing"}
     # assignments are still emailed
@@ -381,7 +383,7 @@ def test_email_settings(client, outbox):
     saved = client.put("/api/auth/me", json={"email_stage_updates": True, "email_assignments": False}).json()
     assert (saved["email_stage_updates"], saved["email_assignments"], saved["full_name"]) == (True, False, "Ravi Kumar")
     outbox.clear()
-    client.put(f"/api/leads/{record['id']}/stage", json={"completed_stages": ["Nurturing"], "stage": "Demo", "demo_date": "2026-12-01T10:00:00"})
+    client.put(f"/api/leads/{record['id']}/stage", json={"task": TASK, "completed_stages": ["Nurturing"], "stage": "Demo", "demo_date": "2026-12-01T10:00:00", "note": "Synthetic test note"})
     assert [m["subject"] for m in outbox if m["to"] == ["ravi@crm.test"]] == ["[SalesTrack] Lead moved to Demo"]
     outbox.clear()
     lead(login_as(client, 1), owner_id=2)
@@ -399,7 +401,7 @@ def test_duplicate_email_on_new_lead(client, outbox):
     res = client.post("/api/leads", json={"last_name": "Again", "company": "Styra", "email": "mani@example.com"})
     assert res.status_code == 409 and "open lead" in res.json()["detail"]
     # after it is lost: allowed only when confirmed (returning customer)
-    client.post(f"/api/leads/{first['id']}/lost", json={"lost_reason": "Price", "notify_customer": False})
+    client.post(f"/api/leads/{first['id']}/lost", json={"lost_reason": "Price", "notify_customer": False, "lost_notes": "Synthetic test note"})
     res = client.post("/api/leads", json={"last_name": "Again", "company": "Styra", "email": "mani@example.com"})
     assert res.status_code == 409 and "already exists" in res.json()["detail"]
     again = client.post("/api/leads", json={"last_name": "Again", "company": "Styra", "email": "mani@example.com",
@@ -418,25 +420,25 @@ def test_duplicate_email_on_new_lead(client, outbox):
 def test_stages_cannot_be_skipped(client, outbox):
     record = lead(client)
     lid = record["id"]
-    res = client.put(f"/api/leads/{lid}/stage", json={"stage": "Demo"})
+    res = client.put(f"/api/leads/{lid}/stage", json={"task": TASK, "stage": "Demo", "note": "Synthetic test note"})
     assert res.status_code == 409 and "Complete Nurturing" in res.json()["detail"]
-    assert client.post(f"/api/leads/{lid}/convert", json={}).status_code == 409
+    assert client.post(f"/api/leads/{lid}/convert", json={"task": TASK, "note": "Synthetic test note"}).status_code == 409
     # confirm the skipped stage: saved in the history
-    res = client.put(f"/api/leads/{lid}/stage", json={"stage": "Demo", "completed_stages": ["Nurturing"],
-                                                       "completed_note": "Discussed on the first call"})
+    res = client.put(f"/api/leads/{lid}/stage", json={"task": TASK, "stage": "Demo", "completed_stages": ["Nurturing"],
+                                                       "completed_note": "Discussed on the first call", "note": "Synthetic test note"})
     assert res.status_code == 200
     history = [(h["from_stage"], h["to_stage"], h["note"]) for h in res.json()["history"]]
     assert history[-2] == ("New", "Nurturing", "Confirmed as completed: Discussed on the first call")
     assert history[-1][:2] == ("Nurturing", "Demo")
     # going back is allowed, and from Demo convert needs nothing more
-    opp = client.post(f"/api/leads/{lid}/convert", json={"expected_value": 1000}).json()["opportunity"]
-    res = client.post(f"/api/opportunities/{opp['id']}/won", json={})
+    opp = client.post(f"/api/leads/{lid}/convert", json={"task": TASK, "expected_value": 1000, "note": "Synthetic test note"}).json()["opportunity"]
+    res = client.post(f"/api/opportunities/{opp['id']}/won", json={"task": TASK, "note": "Synthetic test note"})
     assert res.status_code == 409 and "Complete Proposal" in res.json()["detail"]
-    won = client.post(f"/api/opportunities/{opp['id']}/won", json={"completed_stages": ["Proposal"]}).json()
+    won = client.post(f"/api/opportunities/{opp['id']}/won", json={"task": TASK, "completed_stages": ["Proposal"], "note": "Synthetic test note"}).json()
     assert won["stage"] == "Won" and [h["to_stage"] for h in won["history"]][-2:] == ["Proposal", "Won"]
     # Lost is allowed from any stage
     other = lead(client, name="Other")
-    assert client.post(f"/api/leads/{other['id']}/lost", json={"lost_reason": "Price"}).status_code == 200
+    assert client.post(f"/api/leads/{other['id']}/lost", json={"lost_reason": "Price", "lost_notes": "Synthetic test note"}).status_code == 200
 
 
 def test_admin_creates_leads_but_not_opportunities(client, outbox):
@@ -445,7 +447,7 @@ def test_admin_creates_leads_but_not_opportunities(client, outbox):
     made = client.post("/api/leads", json={"last_name": "Admin", "company": "X", "owner_id": 2})
     assert made.status_code == 201 and made.json()["owner_id"] == 2  # the Admin picks the owner
     assert client.put(f"/api/leads/{ravis['id']}", json={"title": "CTO"}).json()["title"] == "CTO"
-    res = client.post(f"/api/leads/{ravis['id']}/convert", json={"completed_stages": ["Nurturing", "Demo"], "expected_value": 10})
+    res = client.post(f"/api/leads/{ravis['id']}/convert", json={"task": TASK, "completed_stages": ["Nurturing", "Demo"], "expected_value": 10, "note": "Synthetic test note"})
     assert res.status_code == 403 and "Admins can't create opportunities" in res.json()["detail"]
 
 
@@ -457,9 +459,9 @@ def test_permission_matrix_has_groups_and_defaults(client):
 
 def test_bell_is_personal_managers_are_not_told_about_team_activity(client, outbox):
     ravis = lead(client, name="Team Deal")
-    opp = client.post(f"/api/leads/{ravis['id']}/convert", json={"completed_stages": ["Nurturing", "Demo"],
-                                                                  "expected_value": 900}).json()["opportunity"]
-    client.post(f"/api/opportunities/{opp['id']}/won", json={"completed_stages": ["Proposal"], "final_value": 900})
+    opp = client.post(f"/api/leads/{ravis['id']}/convert", json={"task": TASK, "completed_stages": ["Nurturing", "Demo"],
+                                                                  "expected_value": 900, "note": "Synthetic test note"}).json()["opportunity"]
+    client.post(f"/api/opportunities/{opp['id']}/won", json={"task": TASK, "completed_stages": ["Proposal"], "final_value": 900, "note": "Synthetic test note"})
     assert login_as(client, 1).get("/api/notifications").json() == []  # Priya (Manager) owns none of it
     # a lead given to the Manager is his, so he is told
     other = lead(login_as(client, 2), name="Moved Lead")

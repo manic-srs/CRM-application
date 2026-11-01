@@ -18,12 +18,15 @@ from app.models import (Account, Contact, Email, EmailAttachment, Lead, LeadTran
                         StageHistory, Task, User)
 from app.serializers import account_out, contact_out, history_out, lead_detail, lead_out, opportunity_out, task_out
 from app.services import (
+    add_stage_task,
     confirm_skipped,
     customer_email,
     assignment_notice,
     auto_close_open_tasks,
     create_auto_task,
+    get_for_update,
     get_or_404,
+    stage_task_owner,
     log_activity,
     now,
     open_system_task,
@@ -250,18 +253,24 @@ def transfer(lead_id: int, data: schemas.LeadTransfer, db: Session = Depends(get
 # ---------- demo cancellation ----------
 
 @router.post("/{lead_id}/cancel-demo", response_model=schemas.LeadDetail)
-def cancel_demo(lead_id: int, data: schemas.CancelDemo | None = None, db: Session = Depends(get_db)):
+def cancel_demo(lead_id: int, data: schemas.CancelDemo, db: Session = Depends(get_db)):
     """Cancel a booked demo, with two choices:
     - reschedule_to: the demo moves to the new date, the lead stays at Demo and the demo reminders move with it
-    - no new date: the lead goes back to Nurturing, the demo reminders are removed and a follow-up call is created"""
-    data = data or schemas.CancelDemo()
-    lead = get_or_404(db, Lead, lead_id, "Lead")
+    - no new date: the lead goes back to Nurturing and the demo reminders are removed. That is a stage change, so a
+      reason (saved in the stage history) and the user's new task (instead of the system's follow-up call) are
+      required."""
+    lead = get_for_update(db, Lead, lead_id, "Lead")
     require_edit(lead.owner_id, "lead")
     if lead.stage != "Demo":
         raise HTTPException(status_code=400, detail="Only a lead at the Demo stage has a demo to cancel")
+    reason = (data.reason or "").strip()
+    if data.reschedule_to is None and not reason:
+        raise HTTPException(status_code=422, detail=schemas.STAGE_NOTE_REQUIRED)
+    if data.reschedule_to is None and data.task is None:
+        raise HTTPException(status_code=422, detail=schemas.STAGE_TASK_REQUIRED)
+    task_owner = stage_task_owner(db, data.task, lead.owner_id) if data.reschedule_to is None else None
     by = acting_user_id()
     was = lead.demo_date
-    reason = (data.reason or "").strip()
     if data.reschedule_to is not None:
         new_date = data.reschedule_to.replace(tzinfo=None, microsecond=0)
         if new_date <= now():
@@ -287,7 +296,8 @@ def cancel_demo(lead_id: int, data: schemas.CancelDemo | None = None, db: Sessio
     note = "Demo cancelled" + (f": {reason}" if reason else "")
     record_stage_change(db, lead_id=lead.id, from_stage="Demo", to_stage="Nurturing", changed_by_id=by, note=note)
     auto_close_open_tasks(db, lead_id=lead.id)  # closes "Conduct demo" and "Prepare for demo"
-    task = create_auto_task(db, stage="Nurturing", owner_id=lead.owner_id, record_name=lead.name, lead_id=lead.id)
+    task = add_stage_task(db, data.task, owner_id=task_owner, record_owner_id=lead.owner_id, actor_id=by,
+                          lead_id=lead.id)
     details = [f"Cancelled demo: {was:%d %b %Y %I:%M %p}" if was else "No demo date was set"]
     if reason:
         details.append(f"Reason: {reason}")
@@ -302,13 +312,16 @@ def cancel_demo(lead_id: int, data: schemas.CancelDemo | None = None, db: Sessio
 
 @router.put("/{lead_id}/stage", response_model=schemas.LeadDetail)
 def change_stage(lead_id: int, data: schemas.LeadStageChange, db: Session = Depends(get_db)):
-    """Move to New, Nurturing or Demo (also to correct a wrong stage).
-    Old follow-ups are auto-closed and the follow-up for the new stage is created."""
-    lead = get_or_404(db, Lead, lead_id, "Lead")
+    """Move to New, Nurturing or Demo (also to correct a wrong stage). A note (saved in the history) and the user's
+    new task are required. Old follow-ups are auto-closed; the new task takes the place of the system follow-up for
+    the new stage. The demo reminders ("Conduct demo" at the demo and the day-before prep task) are still created
+    and kept in step with the demo date when one is given."""
+    lead = get_for_update(db, Lead, lead_id, "Lead")
     ensure_open(lead)
     if lead.stage == data.stage:
         raise HTTPException(status_code=400, detail=f"Lead {lead_id} is already at {data.stage}")
     require_edit(lead.owner_id, "lead")
+    task_owner = stage_task_owner(db, data.task, lead.owner_id)
     lead.untouched = False  # someone is working on it now
     by = acting_user_id()
 
@@ -322,22 +335,18 @@ def change_stage(lead_id: int, data: schemas.LeadStageChange, db: Session = Depe
         lead.demo_date = data.demo_date
     record_stage_change(db, lead_id=lead.id, from_stage=old, to_stage=data.stage, changed_by_id=by, note=data.note)
     auto_close_open_tasks(db, lead_id=lead.id)
-    task = create_auto_task(
-        db,
-        stage=data.stage,
-        owner_id=lead.owner_id,
-        record_name=lead.name,
-        lead_id=lead.id,
-        due_date=data.demo_date if data.stage == "Demo" else None,
-    )
+    task = add_stage_task(db, data.task, owner_id=task_owner, record_owner_id=lead.owner_id, actor_id=by,
+                          lead_id=lead.id)
     details = []
     if data.stage == "Demo":
+        if data.demo_date:  # the demo-time reminder ("Conduct demo", kept in step with the demo date) stays
+            create_auto_task(db, stage="Demo", owner_id=lead.owner_id, record_name=lead.name, lead_id=lead.id,
+                             due_date=data.demo_date)
         prep = schedule_demo_tasks(db, lead)  # "Conduct demo" reminder + day-before prep task
         if lead.demo_date:
             details.append(f"Demo date: {lead.demo_date:%d %b %Y %I:%M %p}")
         details += task_line("Prep reminder", prep)
-    if data.note:
-        details.append(f"Note: {data.note}")
+    details.append(f"Note: {data.note}")
     stage_notice(db, kind="Lead", stage=data.stage, record_name=lead.name, owner_id=lead.owner_id,
                  actor_id=by, lead_id=lead.id, task=task, details=details)
     db.commit()
@@ -347,8 +356,8 @@ def change_stage(lead_id: int, data: schemas.LeadStageChange, db: Session = Depe
 
 @router.post("/{lead_id}/lost", response_model=schemas.LeadDetail)
 def mark_lost(lead_id: int, data: schemas.MarkLost, db: Session = Depends(get_db)):
-    """Close the lead as Lost from any open stage. A lost reason is required."""
-    lead = get_or_404(db, Lead, lead_id, "Lead")
+    """Close the lead as Lost from any open stage. A lost reason and notes are required (no new task)."""
+    lead = get_for_update(db, Lead, lead_id, "Lead")
     ensure_open(lead)
     require_edit(lead.owner_id, "lead")
     lead.untouched = False  # someone is working on it now
@@ -360,9 +369,7 @@ def mark_lost(lead_id: int, data: schemas.MarkLost, db: Session = Depends(get_db
     lead.closed_at = now()
     record_stage_change(db, lead_id=lead.id, from_stage=old, to_stage="Lost", changed_by_id=by, note=data.lost_notes)
     auto_close_open_tasks(db, lead_id=lead.id)
-    details = [f"Lost at stage: {old}", f"Reason: {data.lost_reason}"]
-    if data.lost_notes:
-        details.append(f"Notes: {data.lost_notes}")
+    details = [f"Lost at stage: {old}", f"Reason: {data.lost_reason}", f"Notes: {data.lost_notes}"]
     stage_notice(db, kind="Lead", stage="Lost", record_name=lead.name, owner_id=lead.owner_id,
                  actor_id=by, lead_id=lead.id, details=details)
     if data.notify_customer:
@@ -376,14 +383,16 @@ def mark_lost(lead_id: int, data: schemas.MarkLost, db: Session = Depends(get_db
 # ---------- Convert ----------
 
 @router.post("/{lead_id}/convert", response_model=schemas.ConvertResult)
-def convert_lead(lead_id: int, data: schemas.ConvertLead | None = None, db: Session = Depends(get_db)):
+def convert_lead(lead_id: int, data: schemas.ConvertLead, db: Session = Depends(get_db)):
     """Convert an open lead, like Salesforce: creates (or reuses) the Account, creates the Contact
-    and the Opportunity. Lead tasks are auto-closed and a 'Send proposal' task is created on the deal."""
+    and the Opportunity. Lead tasks are auto-closed. The note is required (saved in the stage history of the lead and
+    of the new opportunity), and so is the user's new task: it is linked to the new opportunity, instead of the
+    system's 'Send proposal' task."""
     forbid_admin_create("opportunities")
-    data = data or schemas.ConvertLead()
-    lead = get_or_404(db, Lead, lead_id, "Lead")
+    lead = get_for_update(db, Lead, lead_id, "Lead")
     ensure_open(lead)
     require_edit(lead.owner_id, "lead")
+    task_owner = stage_task_owner(db, data.task, lead.owner_id)  # the new opportunity's owner is the lead's
     lead.untouched = False  # someone is working on it now
     # Convert comes after Demo: New -> Nurturing -> Demo must be done (or confirmed as done)
     lead.stage = confirm_skipped(db, flow=LEAD_FLOW, current=lead.stage, target_index=len(LEAD_FLOW),
@@ -440,16 +449,17 @@ def convert_lead(lead_id: int, data: schemas.ConvertLead | None = None, db: Sess
     old = lead.stage
     lead.stage = "Converted"
     lead.converted_at = now()
-    record_stage_change(db, lead_id=lead.id, from_stage=old, to_stage="Converted", changed_by_id=by)
-    record_stage_change(db, opportunity_id=opportunity.id, from_stage=None, to_stage="Opportunity", changed_by_id=by)
-    task = create_auto_task(
-        db, stage="Opportunity", owner_id=lead.owner_id, record_name=opportunity.name, opportunity_id=opportunity.id
-    )
+    record_stage_change(db, lead_id=lead.id, from_stage=old, to_stage="Converted", changed_by_id=by, note=data.note)
+    record_stage_change(db, opportunity_id=opportunity.id, from_stage=None, to_stage="Opportunity", changed_by_id=by,
+                        note=data.note)
+    task = add_stage_task(db, data.task, owner_id=task_owner, record_owner_id=opportunity.owner_id, actor_id=by,
+                          opportunity_id=opportunity.id)
     details = [f"Converted from lead: {lead.name}", f"Account: {account.name}"]
     if opportunity.expected_value is not None:
         details.append(f"Amount: ${opportunity.expected_value:,.2f}")
     details.append(f"Close date: {opportunity.expected_close_date:%d %b %Y}")
     details += task_line("Close date reminder", schedule_close_date_task(db, opportunity))
+    details.append(f"Note: {data.note}")
     stage_notice(db, kind="Opportunity", stage="Opportunity", record_name=opportunity.name, owner_id=lead.owner_id,
                  actor_id=by, opportunity_id=opportunity.id, task=task, details=details)
     db.commit()
