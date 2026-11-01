@@ -1,16 +1,21 @@
 """Allowed values. They match the ENUM lists in database/schema.sql."""
 
-LEAD_STAGES = ["New", "Nurturing", "Demo", "Converted", "Lost"]
-LEAD_OPEN_STAGES = ["New", "Nurturing", "Demo"]
-# The order a deal must follow to be won: no stage can be skipped. A salesperson may confirm that a stage
+# Lead path: Unqualified -> New -> Nurturing -> Revisit -> Demo -> Converted (becomes an Opportunity); Lost from any
+# open stage. Leads start at Unqualified (created by hand, uploaded or from the assistant).
+LEAD_STAGES = ["Unqualified", "New", "Nurturing", "Revisit", "Demo", "Converted", "Lost"]
+LEAD_OPEN_STAGES = ["Unqualified", "New", "Nurturing", "Revisit", "Demo"]
+LEAD_START = "Unqualified"
+# The order a lead or deal must follow: no required stage can be skipped. A salesperson may confirm that a stage
 # was already done (for example the demo happened outside the CRM); that is saved in the stage history.
-# Lost is allowed from any open stage.
-LEAD_FLOW = ["New", "Nurturing", "Demo"]          # then Convert
-OPPORTUNITY_FLOW = ["Opportunity", "Proposal"]     # then Won
+# Optional stages (Revisit: only when a lead asks to be contacted again later) may be passed over.
+LEAD_FLOW = ["Unqualified", "New", "Nurturing", "Revisit", "Demo"]   # then Convert
+LEAD_OPTIONAL_STAGES = ["Revisit"]
 LEAD_SOURCES = ["Website", "Referral", "Phone", "Email", "Event", "Social Media", "Other", "Upload"]  # Upload: bulk upload
 
-OPPORTUNITY_STAGES = ["Opportunity", "Proposal", "Won", "Lost"]
-OPPORTUNITY_OPEN_STAGES = ["Opportunity", "Proposal"]
+# Opportunity path: Opportunity -> Discovery -> Proposal -> Won; Lost from any open stage
+OPPORTUNITY_STAGES = ["Opportunity", "Discovery", "Proposal", "Won", "Lost"]
+OPPORTUNITY_OPEN_STAGES = ["Opportunity", "Discovery", "Proposal"]
+OPPORTUNITY_FLOW = ["Opportunity", "Discovery", "Proposal"]           # then Won
 
 LOST_REASONS = ["Price", "Competitor", "No response", "No budget", "Not interested", "Other"]
 
@@ -21,14 +26,17 @@ USER_ROLES = ["Salesperson", "Manager", "Admin"]
 SALUTATIONS = ["Mr.", "Ms.", "Mrs.", "Dr.", "Prof."]
 
 # Win probability (%) per opportunity stage, like Salesforce
-STAGE_PROBABILITY = {"Opportunity": 20, "Proposal": 75, "Won": 100, "Lost": 0}
+STAGE_PROBABILITY = {"Opportunity": 20, "Discovery": 40, "Proposal": 75, "Won": 100, "Lost": 0}
 
 # Follow-up task the system creates when a record reaches a stage:  stage -> (title, days until due, priority)
 AUTO_TASKS = {
+    "Unqualified": ("Qualify lead", 1, "High"),
     "New": ("Make first contact", 1, "High"),
     "Nurturing": ("Follow-up call", 2, "Normal"),
+    "Revisit": ("Revisit lead", 7, "Normal"),
     "Demo": ("Conduct demo", 3, "High"),
-    "Opportunity": ("Send proposal", 3, "Normal"),
+    "Opportunity": ("Schedule discovery call", 2, "Normal"),
+    "Discovery": ("Send proposal", 3, "Normal"),
     "Proposal": ("Follow up on proposal", 3, "High"),
 }
 

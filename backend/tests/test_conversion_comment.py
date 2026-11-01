@@ -14,7 +14,7 @@ from test_opportunity_attachments import ASHA, PRIYA, add_salesperson
 TASK = {"title": "Synthetic follow-up task", "due_date": "2030-01-15T10:00:00"}  # every stage change needs one
 
 COMMENT_REQUIRED = "Enter a conversion comment."
-DONE = {"completed_stages": ["Nurturing", "Demo"], "expected_value": 2500}
+DONE = {"completed_stages": ["New", "Nurturing", "Demo"], "expected_value": 2500}
 
 
 def convert(client, lead_id, **body):
@@ -31,7 +31,7 @@ def test_a_missing_or_blank_conversion_comment_is_refused_and_nothing_is_created
     assert [(e["loc"], e["msg"]) for e in res.json()["detail"]] == [(["body", "note"], COMMENT_REQUIRED)]
     assert snapshot() == before  # no account, contact, opportunity, history, task, notification or file
     assert len(sent) == mails  # no email
-    assert client.get(f"/api/leads/{lead['id']}").json()["stage"] == "New"
+    assert client.get(f"/api/leads/{lead['id']}").json()["stage"] == "Unqualified"
 
 
 @pytest.mark.parametrize("note", [7, ["a comment"], {"text": "a comment"}, False])
@@ -51,14 +51,14 @@ def test_the_comment_is_saved_in_both_histories(client, sent):
     assert history(client, "leads", lead["id"])[-1] == ("Demo", "Converted", saved)
     assert history(client, "opportunities", res.json()["opportunity"]["id"]) == [(None, "Opportunity", saved)]
     # skipped stages keep their own confirmation rows; the comment goes only on the conversion
-    assert [note for *_, note in history(client, "leads", lead["id"])[1:-1]] == ["Confirmed as completed"] * 2
+    assert [note for *_, note in history(client, "leads", lead["id"])[1:-1]] == ["Confirmed as completed"] * 3  # New, Nurturing, Demo
 
 
 def test_conversion_rules_and_permissions_are_unchanged(client):
     lead = new_lead(client)  # Ravi's, at New
     before = snapshot()
     skipped = client.post(f"/api/leads/{lead['id']}/convert", json={"task": TASK, "note": "Ready to buy"})
-    assert skipped.status_code == 409 and "Complete Nurturing and Demo" in skipped.json()["detail"]
+    assert skipped.status_code == 409 and "Complete New and Nurturing and Demo" in skipped.json()["detail"]
     assert snapshot() == before
     sam = add_salesperson(client)
     before = snapshot()
@@ -74,7 +74,7 @@ def test_conversion_rules_and_permissions_are_unchanged(client):
 
 def test_other_stage_notes_keep_their_own_message(client):
     lead = new_lead(client)
-    res = client.put(f"/api/leads/{lead['id']}/stage", json={"task": TASK, "stage": "Nurturing", "note": " "})
+    res = client.put(f"/api/leads/{lead['id']}/stage", json={"task": TASK, "stage": "Nurturing", "completed_stages": ["New"], "note": " "})
     assert res.status_code == 422 and message(res) == "Enter a note to change the stage."
     res = client.post(f"/api/leads/{lead['id']}/lost", json={"lost_reason": "Price", "lost_notes": ""})
     assert res.status_code == 422 and message(res) == "Enter a note to change the stage."
@@ -91,7 +91,7 @@ def test_assistant_asks_for_the_comment_instead_of_converting(client, ai):
     script, seen = ai
     lead = new_lead(client)
     before = snapshot()
-    script += [[call("convert_lead", lead_id=lead["id"], completed_stages=["Nurturing", "Demo"], note="  ")],
+    script += [[call("convert_lead", lead_id=lead["id"], completed_stages=["New", "Nurturing", "Demo"], note="  ")],
                "What is your conversion comment?"]
     reply = client.post("/api/assistant/chat", json={"message": "Convert it"}).json()
     assert reply["pending"] is None and COMMENT_REQUIRED in json.loads(seen[-1][-1]["content"])["error"]

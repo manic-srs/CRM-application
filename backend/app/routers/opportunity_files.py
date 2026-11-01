@@ -83,7 +83,7 @@ def parse(header, rows):
             continue
         stage = STAGES.get((raw.get("stage") or "Opportunity").strip().lower())
         if stage is None:
-            errors.append({"row": row_no, "reason": f"Stage '{raw.get('stage')}' is not Opportunity, Proposal, Won or Lost"})
+            errors.append({"row": row_no, "reason": f"Stage '{raw.get('stage')}' is not {', '.join(OPPORTUNITY_STAGES[:-1])} or Lost"})
             continue
         try:
             amount = number(raw.get("amount", ""))

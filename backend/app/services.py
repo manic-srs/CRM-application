@@ -7,7 +7,7 @@
 - schedule_demo_tasks / schedule_close_date_task:
                          reminder tasks that follow the demo date and the expected close date
                          (created, moved when the date changes, closed when no longer needed)
-- stage_notice:          at every step (lead created, Nurturing, Demo, converted, Proposal, Won, Lost)
+- stage_notice:          at every step (lead created, each stage, converted, Discovery, Proposal, Won, Lost)
                          the owner gets a bell notification and an email with the next follow-up task
 """
 import re
@@ -260,11 +260,14 @@ def task_line(label: str, task: Task | None) -> list[str]:
 # Title of the notification / email subject for each step. Titles start with "Lead" or "Opportunity"
 # so the bell shows the matching icon.
 STAGE_TITLES = {
-    ("Lead", "New"): "Lead created",
+    ("Lead", "Unqualified"): "Lead created",
+    ("Lead", "New"): "Lead moved to New",
     ("Lead", "Nurturing"): "Lead moved to Nurturing",
+    ("Lead", "Revisit"): "Lead moved to Revisit",
     ("Lead", "Demo"): "Lead moved to Demo",
     ("Lead", "Lost"): "Lead lost",
     ("Opportunity", "Opportunity"): "Opportunity created",
+    ("Opportunity", "Discovery"): "Opportunity moved to Discovery",
     ("Opportunity", "Proposal"): "Opportunity moved to Proposal",
     ("Opportunity", "Won"): "Opportunity won",
     ("Opportunity", "Lost"): "Opportunity lost",
@@ -312,52 +315,51 @@ def stage_notice(
 
 # ---------- emails to the customer (the lead / contact), no-reply ----------
 
+# A usable email address (also used by the Apollo lookup)
 CUSTOMER_EMAIL_RE = re.compile(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$")
 
 
-def customer_email(db: Session, kind: str, *, to: str | None, first_name: str, owner_id: int,
-                   after_proposal: bool = True) -> bool:
-    """No-reply email to the customer at the important moments (sent only after the save succeeds):
-      welcome  a new lead: their details were received, who will contact them
-      won      the deal is won (proposal accepted): thank you, next steps
-      lost     the lead / deal is closed: a polite thank-you. The lost reason and notes are internal
-               and are never included.
-    Returns False when there is no valid email address."""
-    if not to or not CUSTOMER_EMAIL_RE.match(to.strip()):
-        return False
-    company = mailer.company_name()
-    owner = db.get(User, owner_id)
-    contact = f"{owner.full_name} ({owner.email})"
-    subject, text = {
-        "welcome": (f"Thank you for your interest in {company}",
-                    "We have received your details and created your profile.\n\n"
-                    f"{owner.full_name} will contact you soon. If you have any questions, you can reach {contact}."),
-        "won": (f"Thank you for choosing {company}",
-                "Thank you for accepting our proposal. We're excited to work with you.\n\n"
-                f"{owner.full_name} will contact you shortly about the next steps. You can reach {contact} at any time."),
-        "lost": (f"Thank you for considering {company}",
-                 f"Thank you for taking the time to consider {'our proposal' if after_proposal else 'our services'}. "
-                 "We understand this isn't the right time, and we respect your decision.\n\n"
-                 f"If anything changes or you'd like to talk again, please contact {contact}. We'd be glad to help."),
-    }[kind]
-    body = (f"Hi {first_name},\n\n{text}\n\nBest regards,\n{company}\n\n"
-            "This is an automatic email. Please don't reply to it.")
-    mailer.queue(db, to.strip(), subject, body, sender_name=f"{company} (no-reply)")  # customers see the company
-    return True
+# ---------- a lead's email must belong to its company ----------
+
+def website_host(url: str | None) -> str:
+    """'https://www.Acme.com/about' -> 'acme.com' ('' when there is no website)."""
+    host = re.sub(r"^[a-z][a-z0-9+.-]*://", "", (url or "").strip().lower()).split("/")[0].split("?")[0].split(":")[0]
+    return host[4:] if host.startswith("www.") else host
+
+
+def email_domain(email: str | None) -> str:
+    return (email or "").strip().lower().rpartition("@")[2]
+
+
+def email_matches_website(email: str | None, website: str | None) -> bool:
+    """The email's domain is the company website's domain (or a subdomain of it, either way), so personal addresses
+    like gmail.com are refused for a company lead. True when either is missing: nothing to compare."""
+    domain, host = email_domain(email), website_host(website)
+    if not (email or "").strip() or not domain or not host:
+        return True
+    return domain == host or domain.endswith("." + host) or host.endswith("." + domain)
+
+
+def email_website_problem(email: str | None, website: str | None) -> str | None:
+    if email_matches_website(email, website):
+        return None
+    return (f"The email must use the company's domain: @{email_domain(email)} doesn't match the company website "
+            f"({website_host(website)}). Use the lead's work email, e.g. name@{website_host(website)}.")
 
 
 # ---------- stage order: no skipping ----------
 
 def confirm_skipped(db: Session, *, flow: list[str], current: str, target_index: int, completed: list[str],
                     note: str | None, by: int, lead_id: int | None = None, opportunity_id: int | None = None,
-                    what: str) -> str:
+                    what: str, optional: list[str] | tuple = ()) -> str:
     """Checks the stage order before moving forward to flow[target_index] (or past the end: Convert / Won).
 
-    Every stage between the current one and the target must have been done. A stage that was skipped in the CRM
-    must be in `completed` (the salesperson confirms it was done); it is then saved in the stage history.
+    Every required stage between the current one and the target must have been done. A stage that was skipped in
+    the CRM must be in `completed` (the salesperson confirms it was done); it is then saved in the stage history.
+    Optional stages (e.g. Revisit) may be passed over; they are recorded only when confirmed.
     Returns the stage the record is at after the confirmed stages."""
     start = flow.index(current)
-    skipped = flow[start + 1:target_index]
+    skipped = [stage for stage in flow[start + 1:target_index] if stage not in optional or stage in completed]
     missing = [stage for stage in skipped if stage not in completed]
     if missing:
         raise HTTPException(status_code=409, detail=(

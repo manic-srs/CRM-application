@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.constants import LEAD_OPEN_STAGES, LEAD_STAGES, OPPORTUNITY_OPEN_STAGES, OPPORTUNITY_STAGES
 from app.database import get_db
 from app.security import acting_user
 from app.models import Account, Contact, Lead, Opportunity, Task
@@ -20,8 +21,8 @@ from app.services import now
 router = APIRouter(prefix="/api", tags=["Home"])
 
 PIPELINE = [
-    ("New", "leads"), ("Nurturing", "leads"), ("Demo", "leads"),
-    ("Opportunity", "opportunities"), ("Proposal", "opportunities"),
+    *((stage, "leads") for stage in LEAD_OPEN_STAGES),
+    *((stage, "opportunities") for stage in OPPORTUNITY_OPEN_STAGES),
     ("Won", "closed deals"), ("Lost", "closed deals"),
 ]
 
@@ -65,8 +66,8 @@ def home_page(owner_id: int | None = Query(None, description="Only this salesper
 
     leads_q = owned(select(Lead), Lead)
     opps_q = owned(select(Opportunity), Opportunity)
-    lead_count = {s: count(leads_q.where(Lead.stage == s)) for s in ("New", "Nurturing", "Demo", "Converted", "Lost")}
-    opp_count = {s: count(opps_q.where(Opportunity.stage == s)) for s in ("Opportunity", "Proposal", "Won", "Lost")}
+    lead_count = {s: count(leads_q.where(Lead.stage == s)) for s in LEAD_STAGES}
+    opp_count = {s: count(opps_q.where(Opportunity.stage == s)) for s in OPPORTUNITY_STAGES}
 
     # ----- today's tasks (open, due today or overdue), like v_todays_tasks -----
     tomorrow = datetime.combine(date.today() + timedelta(days=1), datetime.min.time())
@@ -91,11 +92,11 @@ def home_page(owner_id: int | None = Query(None, description="Only this salesper
     def amount(stage_names, field="expected_value") -> float:
         return float(sum(getattr(o, field) or 0 for o in quarter_opps if o.stage in stage_names))
 
-    quarter_open = amount(("Opportunity", "Proposal"))
+    quarter_open = amount(OPPORTUNITY_OPEN_STAGES)
     quarter_won = amount(("Won",), "final_value")
     quarter_lost = amount(("Lost",))
     key_deals = sorted(
-        (o for o in my_opps if o.stage in ("Opportunity", "Proposal")),
+        (o for o in my_opps if o.stage in OPPORTUNITY_OPEN_STAGES),
         key=lambda o: float(o.expected_value or 0), reverse=True,
     )[:5]
 
@@ -132,7 +133,7 @@ def home_page(owner_id: int | None = Query(None, description="Only this salesper
     return {
         "summary": {
             "total_leads": sum(lead_count.values()),
-            "open_opportunities": opp_count["Opportunity"] + opp_count["Proposal"],
+            "open_opportunities": sum(opp_count[s] for s in OPPORTUNITY_OPEN_STAGES),
             "won_deals": opp_count["Won"],
             "tasks_due_today": sum(1 for t in todays_tasks if not t.is_overdue),
         },

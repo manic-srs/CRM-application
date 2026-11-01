@@ -143,7 +143,7 @@ def test_lead_created_notifies_owner_on_bell_and_email(client, outbox):
     assert len(outbox) == 1  # one email per step (the follow-up task is inside it)
     mail = outbox[0]
     assert mail["to"] == ["ravi@crm.test"] and mail["subject"] == "[SalesTrack] Lead created"
-    assert "Next follow-up: Make first contact - Maria Lopez" in mail["body"]
+    assert "Next follow-up: Qualify lead - Maria Lopez" in mail["body"]
 
 
 def test_every_step_sends_one_notification_and_email(client, outbox):
@@ -151,11 +151,11 @@ def test_every_step_sends_one_notification_and_email(client, outbox):
     lead = new_lead(client)
     lid = lead["id"]
     demo = (datetime.now() + timedelta(days=2)).replace(microsecond=0, second=0).isoformat()
-    assert client.put(f"/api/leads/{lid}/stage", json={"task": TASK, "stage": "Nurturing", "note": "Synthetic test note"}).status_code == 200
-    assert client.put(f"/api/leads/{lid}/stage", json={"task": TASK, "completed_stages": ["Nurturing"], "stage": "Demo", "demo_date": demo, "note": "Synthetic test note"}).status_code == 200
-    opp = client.post(f"/api/leads/{lid}/convert", json={"task": TASK, "completed_stages": ["Nurturing", "Demo"], "expected_value": 25000, "note": "Synthetic test note"}).json()["opportunity"]
-    assert client.put(f"/api/opportunities/{opp['id']}/stage", json={"task": TASK, "stage": "Proposal", "note": "Synthetic test note"}).status_code == 200
-    assert client.post(f"/api/opportunities/{opp['id']}/won", json={"task": TASK, "completed_stages": ["Proposal"], "notify_customer": False, "note": "Synthetic test note"}).status_code == 200
+    assert client.put(f"/api/leads/{lid}/stage", json={"task": TASK, "stage": "Nurturing", "completed_stages": ["New"], "note": "Synthetic test note"}).status_code == 200
+    assert client.put(f"/api/leads/{lid}/stage", json={"task": TASK, "completed_stages": ["New", "Nurturing"], "stage": "Demo", "demo_date": demo, "note": "Synthetic test note"}).status_code == 200
+    opp = client.post(f"/api/leads/{lid}/convert", json={"task": TASK, "completed_stages": ["New", "Nurturing", "Demo"], "expected_value": 25000, "note": "Synthetic test note"}).json()["opportunity"]
+    assert client.put(f"/api/opportunities/{opp['id']}/stage", json={"task": TASK, "stage": "Proposal", "completed_stages": ["Discovery"], "note": "Synthetic test note"}).status_code == 200
+    assert client.post(f"/api/opportunities/{opp['id']}/won", json={"task": TASK, "completed_stages": ["Discovery", "Proposal"], "notify_customer": False, "note": "Synthetic test note"}).status_code == 200
 
     subjects = [m["subject"].removeprefix("[SalesTrack] ") for m in outbox]
     assert subjects == ["Lead created", "Lead moved to Nurturing", "Lead moved to Demo",
@@ -174,7 +174,7 @@ def test_lost_steps_notify_owner(client, outbox):
     assert outbox[-1]["subject"] == "[SalesTrack] Lead lost"
     assert "Reason: No budget" in outbox[-1]["body"] and "Notes: Next year" in outbox[-1]["body"]
     other = new_lead(client, last_name="Diaz")
-    opp = client.post(f"/api/leads/{other['id']}/convert", json={"task": TASK, "completed_stages": ["Nurturing", "Demo"], "expected_value": 1000, "note": "Synthetic test note"}).json()["opportunity"]
+    opp = client.post(f"/api/leads/{other['id']}/convert", json={"task": TASK, "completed_stages": ["New", "Nurturing", "Demo"], "expected_value": 1000, "note": "Synthetic test note"}).json()["opportunity"]
     client.post(f"/api/opportunities/{opp['id']}/lost", json={"lost_reason": "Competitor", "notify_customer": False, "lost_notes": "Synthetic test note"})
     assert outbox[-1]["subject"] == "[SalesTrack] Opportunity lost" and "Reason: Competitor" in outbox[-1]["body"]
 
@@ -242,7 +242,7 @@ def test_lead_emails_move_to_opportunity_on_convert(client, outbox):
     lead = new_lead(client)
     client.post("/api/emails", data={"to": "maria@bluebird.example", "subject": "Intro", "body": "Hi",
                                      "sent_by_id": "2", "lead_id": str(lead["id"])})
-    result = client.post(f"/api/leads/{lead['id']}/convert", json={"task": TASK, "completed_stages": ["Nurturing", "Demo"], "note": "Synthetic test note"}).json()
+    result = client.post(f"/api/leads/{lead['id']}/convert", json={"task": TASK, "completed_stages": ["New", "Nurturing", "Demo"], "note": "Synthetic test note"}).json()
     for field, record in (("opportunity_id", "opportunity"), ("contact_id", "contact"), ("account_id", "account")):
         assert [e["subject"] for e in client.get("/api/emails", params={field: result[record]["id"]}).json()] == ["Intro"]
     assert client.get("/api/emails", params={"lead_id": lead["id"]}).json()[0]["subject"] == "Intro"
@@ -251,7 +251,7 @@ def test_lead_emails_move_to_opportunity_on_convert(client, outbox):
 def test_demo_reminder_is_sent_before_the_demo(client, outbox):
     lead = new_lead(client)
     demo = (datetime.now() + timedelta(minutes=30)).replace(microsecond=0)  # reminder time (1 hour before) has passed
-    client.put(f"/api/leads/{lead['id']}/stage", json={"task": TASK, "completed_stages": ["Nurturing"], "stage": "Demo", "demo_date": demo.isoformat(), "note": "Synthetic test note"})
+    client.put(f"/api/leads/{lead['id']}/stage", json={"task": TASK, "completed_stages": ["New", "Nurturing"], "stage": "Demo", "demo_date": demo.isoformat(), "note": "Synthetic test note"})
     outbox.clear()
     db = db_session()
     assert scheduler.run_checks(db)["reminders"] == 1

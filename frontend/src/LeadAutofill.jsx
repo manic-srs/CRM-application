@@ -20,7 +20,6 @@ export default function LinkedInField({ autofill, defaultValue, form, onCompany 
   const pending = useRef(new Map()); // profile address -> the lookup in progress
   const current = useRef(""); // the profile address now in the field ("" = none or not valid)
   const filled = useRef({}); // values Apollo filled that the user hasn't changed
-  const welcome = useRef({ unticked: false, touched: false });
   const timer = useRef(null);
   const alive = useRef(true);
 
@@ -34,11 +33,10 @@ export default function LinkedInField({ autofill, defaultValue, form, onCompany 
         if (alive.current && !res.enabled) setStatus((s) => (s.kind === "idle" ? { kind: "off" } : s));
       })
       .catch(() => {});
-    // A field the user changes is theirs from then on; ticking the welcome email again is respected.
+    // A field the user changes is theirs from then on.
     const element = form();
     const onEdit = (event) => {
       const { name } = event.target;
-      if (name === "welcome_email") welcome.current.touched = true;
       if (name in filled.current && event.target.value !== filled.current[name]) {
         delete filled.current[name];
         event.target.classList.remove("autofilled");
@@ -65,12 +63,6 @@ export default function LinkedInField({ autofill, defaultValue, form, onCompany 
     for (const name of Object.keys(AUTOFILL_FIELDS)) fields[name]?.classList.toggle("autofilled", name in plan.autofilled);
     filled.current = plan.autofilled;
     if ("company" in plan.set) onCompany(plan.set.company); // show other records for this company, as when typed
-    // Apollo leads are outbound prospects: no welcome email unless the user ticks it again
-    if (plan.filled.length && !welcome.current.touched && fields.welcome_email?.checked) {
-      fields.welcome_email.checked = false;
-      welcome.current.unticked = true;
-      plan.unticked = true;
-    }
     return plan;
   };
 
@@ -82,7 +74,7 @@ export default function LinkedInField({ autofill, defaultValue, form, onCompany 
       return setStatus({ kind: "unverified", text: answer.message || "The profile could not be verified. Nothing was filled." });
     }
     const plan = apply(answer.fields);
-    setStatus({ kind: "matched", filled: plan.filled, kept: plan.kept, unavailable: answer.unavailable || {}, unticked: plan.unticked });
+    setStatus({ kind: "matched", filled: plan.filled, kept: plan.kept, unavailable: answer.unavailable || {} });
   };
 
   const lookup = async (url) => {
@@ -190,7 +182,6 @@ export default function LinkedInField({ autofill, defaultValue, form, onCompany 
                     ? `Filled by Apollo: ${names(status.filled)}. Check them before saving.`
                     : "Apollo found this profile; the fields already had your entries."}
                   {status.kept.length > 0 && ` Kept your entries for ${names(status.kept)}.`}
-                  {status.unticked && " The welcome email was unticked (outbound prospect); tick it again if needed."}
                 </p>
                 {Object.keys(status.unavailable).length > 0 && (
                   <ul>

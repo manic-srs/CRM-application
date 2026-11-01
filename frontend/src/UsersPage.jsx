@@ -4,6 +4,7 @@
 // Also the "Change password" and "My Profile" dialogs every user can open from their profile menu.
 import React, { useEffect, useRef, useState } from "react";
 import { api } from "./api";
+import { LEAD_OPEN_STAGES } from "./domain";
 import { can } from "./permissions";
 import PermissionsTab from "./PermissionsPage";
 import { dateTime } from "./format";
@@ -464,8 +465,8 @@ function PeopleTab({ user, data, reload, notify, onSelfChanged }) {
     load();
   }, []);
 
-  // Open Leads: leads this user owns that are still New, Nurturing or Demo
-  const owned = (id) => data.leads.filter((r) => r.owner_id === id && ["New", "Nurturing", "Demo"].includes(r.stage)).length;
+  // Open Leads: leads this user owns that are still open (not Converted or Lost)
+  const owned = (id) => data.leads.filter((r) => r.owner_id === id && LEAD_OPEN_STAGES.includes(r.stage)).length;
 
   const run = async (work, message) => {
     try {

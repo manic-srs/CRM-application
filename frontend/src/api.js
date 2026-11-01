@@ -73,8 +73,6 @@ export function leadPayload(values, editing = false) {
     owner_id: numeric(values.owner_id),
   };
   if (editing) payload.demo_date = optional(values.demo_date);
-  else payload.welcome_email = values.welcome_email === "on";
-  if (!editing && values.confirm_duplicate) payload.confirm_duplicate = true; // returning customer
   return payload;
 }
 export function taskPayload(values, editing = false) {
@@ -339,11 +337,15 @@ export const api = {
     apiRequest(`/leads/company-matches?${new URLSearchParams({ company, ...(excludeId ? { exclude_id: excludeId } : {}) })}`),
   // Bulk upload: dryRun=true only checks the file and returns what would happen
   importLeads: (file, options) => api.importData("leads", file, options),
-  importData: (object, file, { ownerId, dryRun }) => {
+  // assign (leads): "one" (all to ownerId), "column" (the file's Lead Owner column, ownerId for the rest) or
+  // "even" (shared round-robin between ownerIds)
+  importData: (object, file, { ownerId, dryRun, assign, ownerIds }) => {
     const form = new FormData();
     form.append("file", file);
     form.append("dry_run", dryRun ? "true" : "false");
     if (ownerId) form.append("owner_id", ownerId);
+    if (assign) form.append("assign", assign);
+    for (const id of ownerIds || []) form.append("owner_ids", id);
     return upload(`/${object}/import`, form, { timeout: 10 * 60 * 1000, failed: "The file could not be uploaded.", tooLarge: "The file is too large." });
   },
   // Download leads to Excel / CSV; the reason is recorded in the Activity Log
@@ -399,7 +401,9 @@ export const api = {
   // Change Stage popup with files: the stage change and the files are saved together, or nothing is saved
   stageWithFiles: (opportunityId, values, files) =>
     saveWithFiles(`/opportunities/${opportunityId}/stage-with-files`, [["stage", values.stage], ["note", values.note],
-      ["task", values.task && JSON.stringify(values.task)]], files, {
+      ["task", values.task && JSON.stringify(values.task)],
+      ...(values.completed_stages || []).map((stage) => ["completed_stages", stage]),
+      ["completed_note", values.completed_note]], files, {
       failed: "The stage could not be changed.",
       what: "the stage changed",
     }),
@@ -411,7 +415,6 @@ export const api = {
         ["final_value", values.final_value],
         ["note", values.note],
         ["task", values.task && JSON.stringify(values.task)], // the New Task as JSON, as the server reads it
-        ["notify_customer", values.notify_customer ? "true" : "false"],
         ...(values.completed_stages || []).map((stage) => ["completed_stages", stage]),
         ["completed_note", values.completed_note],
       ],

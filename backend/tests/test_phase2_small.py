@@ -93,11 +93,11 @@ def test_role_change_is_dated_logged_and_resets_team_access(client):
 def test_cancel_demo(client):
     lead = new_lead(client)
     client.put(f"/api/leads/{lead['id']}/stage",
-               json={"task": TASK, "stage": "Demo", "demo_date": "2026-12-01T11:00:00", "completed_stages": ["Nurturing"], "note": "Synthetic test note"})
+               json={"task": TASK, "stage": "Demo", "demo_date": "2026-12-01T11:00:00", "completed_stages": ["New", "Nurturing"], "note": "Synthetic test note"})
     res = client.post(f"/api/leads/{lead['id']}/cancel-demo", json={"task": TASK, "reason": "Client travelling"})
     assert res.status_code == 200, res.text
     out = res.json()
-    assert out["stage"] == "Nurturing" and out["demo_date"] is None
+    assert out["stage"] == "Revisit" and out["demo_date"] is None  # a cancelled demo goes back to Revisit
     open_titles = [t["title"] for t in out["tasks"] if t["status"] == "Open"]
     assert open_titles == [TASK["title"]]  # demo reminders closed; the user's new task (not a system follow-up call)
     assert out["history"][-1]["note"] == "Demo cancelled: Client travelling"
@@ -124,7 +124,7 @@ def test_reschedule_demo_instead_of_cancelling(client):
     lead = new_lead(client)
     first = (datetime.now() + timedelta(days=3)).replace(hour=11, minute=0, second=0, microsecond=0)
     client.put(f"/api/leads/{lead['id']}/stage",
-               json={"task": TASK, "stage": "Demo", "demo_date": first.isoformat(), "completed_stages": ["Nurturing"], "note": "Synthetic test note"})
+               json={"task": TASK, "stage": "Demo", "demo_date": first.isoformat(), "completed_stages": ["New", "Nurturing"], "note": "Synthetic test note"})
     new = first + timedelta(days=2, hours=3)
     res = client.post(f"/api/leads/{lead['id']}/cancel-demo", json={"reason": "Client asked", "reschedule_to": new.isoformat()})
     assert res.status_code == 200, res.text

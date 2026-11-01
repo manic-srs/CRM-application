@@ -2,14 +2,14 @@ import { DownloadLeads, TransferHistory, UploadLeads } from "./LeadFiles";
 import { can, canCreateSales } from "./permissions";
 import LeadsTable from "./LeadsTable";
 import { applyFilters, filterSummary, opts, ownerOptions, Th, useFilters } from "./Filters";
-import { LEAD_SOURCES, LEAD_STAGES, OPPORTUNITY_STAGES, UPLOAD_SOURCE } from "./domain";
+import { LEAD_OPEN_STAGES, LEAD_SOURCES, LEAD_STAGES, OPPORTUNITY_OPEN_STAGES, OPPORTUNITY_STAGES, UPLOAD_SOURCE } from "./domain";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { amount, compact, maskPhone, shortDate } from "./format";
 import { DateCell, Icon, ObjectIcon, Pagination, StageBadge, usePaged } from "./ui";
 
-const OPEN_LEAD = ["New", "Nurturing", "Demo"];
-const OPEN_OPP = ["Opportunity", "Proposal"];
-const KANBAN_STAGES = ["Opportunity", "Proposal", "Won", "Lost"];
+const OPEN_LEAD = LEAD_OPEN_STAGES;
+const OPEN_OPP = OPPORTUNITY_OPEN_STAGES;
+const KANBAN_STAGES = OPPORTUNITY_STAGES;
 
 const ownerName = (data, id) => data.users.find((u) => u.id === id)?.full_name || "";
 

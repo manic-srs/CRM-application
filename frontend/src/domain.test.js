@@ -37,6 +37,11 @@ import {
   stageTaskNeeded,
   stageTaskPayload,
   stageTaskProblems,
+  LEAD_FLOW,
+  LEAD_OPTIONAL_STAGES,
+  OPPORTUNITY_FLOW,
+  skippedStages,
+  emailWebsiteProblem,
 } from "./domain.js";
 
 test("lead form uses backend fields and only requires last name and company", () => {
@@ -64,15 +69,13 @@ test("lead form uses backend fields and only requires last name and company", ()
       location: null,
       source: "Phone",
       owner_id: 3,
-      welcome_email: false, // the "welcome email to the lead" box was not ticked
     },
   );
-  assert.equal(leadPayload({ last_name: "A", company: "B", welcome_email: "on" }).welcome_email, true);
+  assert.ok(!("welcome_email" in leadPayload({ last_name: "A", company: "B" }))); // leads are never emailed automatically
   const links = leadPayload({ last_name: "A", company: "B", linkedin_url: " linkedin.com/in/a ", employees: "250", annual_revenue: "" });
   assert.equal(links.linkedin_url, "linkedin.com/in/a"); // the backend adds https://
   assert.equal(links.employees, 250);
   assert.equal(links.annual_revenue, null);
-  assert.ok(!("welcome_email" in leadPayload({ last_name: "A", company: "B" }, true))); // editing: not sent
   assert.ok(!LEAD_STAGES.includes("Won"));
   assert.ok(LEAD_SOURCES.includes("Social Media"));
   assert.deepEqual(PRIORITIES, ["Low", "Normal", "High"]);
@@ -242,20 +245,30 @@ test("every stage change popup has a required note; creating and editing records
     assert.equal(stageNoteField(type), null);
   assert.equal(STAGE_NOTE_REQUIRED, "Enter a note to change the stage.");
 });
-test("the Leads board has five columns in order; Converted and Lost are closed; the list view decides which can fill", () => {
+test("the Leads board has seven columns in order; Converted and Lost are closed; the list view decides which can fill", () => {
   const all = leadBoardColumns("all", null);
-  assert.deepEqual(all.map((c) => c.stage), ["New", "Nurturing", "Demo", "Converted", "Lost"]);
+  assert.deepEqual(all.map((c) => c.stage), ["Unqualified", "New", "Nurturing", "Revisit", "Demo", "Converted", "Lost"]);
   assert.deepEqual(all.filter((c) => c.closed).map((c) => c.stage), ["Converted", "Lost"]);
   assert.ok(all.every((c) => c.excluded === ""));
   const excluded = (view, stage) => leadBoardColumns(view, stage).filter((c) => c.excluded).map((c) => c.stage);
+  const open = ["Unqualified", "New", "Nurturing", "Revisit", "Demo"];
   assert.deepEqual(excluded("all_open"), ["Converted", "Lost"]);
   assert.deepEqual(excluded("my_open"), ["Converted", "Lost"]);
-  assert.deepEqual(excluded("converted"), ["New", "Nurturing", "Demo", "Lost"]);
-  assert.deepEqual(excluded("lost"), ["New", "Nurturing", "Demo", "Converted"]);
+  assert.deepEqual(excluded("converted"), [...open, "Lost"]);
+  assert.deepEqual(excluded("lost"), [...open, "Converted"]);
   assert.deepEqual(excluded("uploaded"), []);
-  assert.deepEqual(excluded("all", "Demo"), ["New", "Nurturing", "Converted", "Lost"]); // the Lead Status filter
+  assert.deepEqual(excluded("all", "Demo"), ["Unqualified", "New", "Nurturing", "Revisit", "Converted", "Lost"]); // the Lead Status filter
   assert.equal(leadBoardColumns("all_open", "Demo").find((c) => c.stage === "New").excluded, "Hidden by the Lead Status filter");
   assert.equal(leadBoardColumns("all_open", null).find((c) => c.stage === "Lost").excluded, "Not in this list view");
+});
+test("stage order: skipped stages must be confirmed, Revisit is optional, going back skips nothing", () => {
+  assert.deepEqual(skippedStages(LEAD_FLOW, "Unqualified", "Nurturing", LEAD_OPTIONAL_STAGES), ["New"]);
+  assert.deepEqual(skippedStages(LEAD_FLOW, "Nurturing", "Demo", LEAD_OPTIONAL_STAGES), []); // Revisit may be passed over
+  assert.deepEqual(skippedStages(LEAD_FLOW, "Unqualified", LEAD_FLOW.length, LEAD_OPTIONAL_STAGES), ["New", "Nurturing", "Demo"]);
+  assert.deepEqual(skippedStages(LEAD_FLOW, "Demo", "New", LEAD_OPTIONAL_STAGES), []);
+  assert.deepEqual(skippedStages(OPPORTUNITY_FLOW, "Opportunity", "Proposal"), ["Discovery"]);
+  assert.deepEqual(skippedStages(OPPORTUNITY_FLOW, "Opportunity", OPPORTUNITY_FLOW.length), ["Discovery", "Proposal"]);
+  assert.deepEqual(skippedStages(OPPORTUNITY_FLOW, "Proposal", OPPORTUNITY_FLOW.length), []);
 });
 test("a lead card opens the existing popups and only for moves the lead page allows", () => {
   const lead = { id: 7, stage: "Nurturing" };
@@ -308,7 +321,7 @@ test("the popups with files send the New Task as one JSON form field", async (t)
   const task = { title: "Handover", due_date: "2030-01-20T10:00", priority: "Normal", reminder_at: null, description: null, owner_id: null };
   const file = new File(["%PDF-1.4"], "quote.pdf", { type: "application/pdf" });
   await api.stageWithFiles("5", { stage: "Proposal", note: "Sent", task }, [file]);
-  await api.wonWithFiles("5", { final_value: 10, note: "Signed", notify_customer: false, task }, [file]);
+  await api.wonWithFiles("5", { final_value: 10, note: "Signed", task }, [file]);
   for (const form of forms) assert.deepEqual(JSON.parse(form.get("task")), task);
 });
 test("a blank stage note is caught; a real one keeps its formatting inside", () => {
@@ -498,10 +511,10 @@ test("Mark as Won with files is one request with the amount, note, email choice 
   const files = [new File(["%PDF-"], "signed.pdf"), new File(["png"], "photo.png")];
   setToken("secret-token");
   try {
-    await api.wonWithFiles("6", { final_value: 1500.5, note: "Signed", notify_customer: true, completed_stages: ["Proposal"],
+    await api.wonWithFiles("6", { final_value: 1500.5, note: "Signed", completed_stages: ["Proposal"],
                                   completed_note: "Sent by email" }, files);
-    await api.wonWithFiles("6", { final_value: 0, note: null, notify_customer: false }, files.slice(0, 1));
-    await api.won("6", { final_value: null, note: null, notify_customer: true }); // without files: unchanged JSON call
+    await api.wonWithFiles("6", { final_value: 0, note: null }, files.slice(0, 1));
+    await api.won("6", { final_value: null, note: null }); // without files: unchanged JSON call
   } finally {
     setToken("");
   }
@@ -516,16 +529,16 @@ test("Mark as Won with files is one request with the amount, note, email choice 
   const form = calls[0].options.body;
   assert.deepEqual(
     [...form.entries()].map(([name, value]) => [name, typeof value === "string" ? value : value.name]),
-    [["final_value", "1500.5"], ["note", "Signed"], ["notify_customer", "true"], ["completed_stages", "Proposal"],
+    [["final_value", "1500.5"], ["note", "Signed"], ["completed_stages", "Proposal"],
      ["completed_note", "Sent by email"], ["files", "signed.pdf"], ["files", "photo.png"]],
   );
   const second = calls[1].options.body;
   assert.equal(second.get("final_value"), "0"); // 0 is an amount, not "empty"
-  assert.equal(second.get("notify_customer"), "false");
+  assert.equal(second.get("notify_customer"), null); // customers are never emailed automatically
   assert.equal(second.get("note"), null);
   assert.equal(calls[0].options.headers.Authorization, "Bearer secret-token");
   assert.ok(!calls[0].url.includes("secret-token"));
-  assert.deepEqual(JSON.parse(calls[2].options.body), { final_value: null, note: null, notify_customer: true });
+  assert.deepEqual(JSON.parse(calls[2].options.body), { final_value: null, note: null });
 
   reply = () => new Response(JSON.stringify({ detail: "final_value: Input should be greater than or equal to 0" }), { status: 422 });
   await assert.rejects(api.wonWithFiles("6", { final_value: -5 }, files), /final_value: Input should be greater/);
@@ -636,4 +649,14 @@ test("LinkedIn autofill calls only the backend, with the login header, and keeps
     assert.ok(call.url.startsWith("/api/") && !call.url.includes("apollo") && !call.url.includes("secret-token"));
     assert.equal(call.options.headers.Authorization, "Bearer secret-token");
   }
+});
+
+test("a lead's email must use the company website's domain", () => {
+  assert.equal(emailWebsiteProblem("asha@acme.com", "https://www.acme.com/about"), null);
+  assert.equal(emailWebsiteProblem("asha@mail.acme.com", "acme.com"), null);
+  assert.equal(emailWebsiteProblem("asha@acme.com", "shop.acme.com"), null);
+  assert.equal(emailWebsiteProblem("", "acme.com"), null); // nothing to compare
+  assert.equal(emailWebsiteProblem("asha@acme.com", ""), null);
+  assert.match(emailWebsiteProblem("asha@gmail.com", "acme.com"), /@gmail\.com doesn't match the company website \(acme\.com\)/);
+  assert.match(emailWebsiteProblem("asha@notacme.com", "acme.com"), /doesn't match/);
 });

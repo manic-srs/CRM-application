@@ -2,8 +2,8 @@
 
 Every upload and download is recorded in the Activity Log (who, when, what, how many, and the reason for downloads),
 and the Admin is notified of downloads.
-Uploaded leads start at New. They get no welcome email, no notification each and no automatic task, so a file of
-100,000 leads doesn't flood customers, the bell or the task list. Duplicates of open leads are skipped.
+Uploaded leads start at Unqualified. They get no welcome email, no notification each and no automatic task, so a file of
+100,000 leads doesn't flood the bell or the task list. Rows whose email is already in the CRM are skipped.
 """
 import csv
 import io
@@ -17,12 +17,12 @@ from sqlalchemy import func, insert, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app import schemas
-from app.constants import LEAD_OPEN_STAGES, LEAD_SOURCES, LEAD_STAGES
+from app.constants import LEAD_OPEN_STAGES, LEAD_SOURCES, LEAD_STAGES, LEAD_START
 from app.database import get_db
-from app.models import Account, ActivityLog, Lead, StageHistory, User
+from app.models import Account, ActivityLog, Contact, Lead, StageHistory, User
 from app.security import acting_user, can_view, owner_for_new, require, visible
 from app.serializers import lead_out
-from app.services import log_activity, notify
+from app.services import email_matches_website, log_activity, notify, website_host
 
 router = APIRouter(prefix="/api/leads", tags=["Leads: upload and download"])
 
@@ -38,6 +38,7 @@ COLUMNS = {
     "full_name": ("name", "fullname", "contactname", "leadname"),
     "title": ("title", "jobtitle", "designation", "position"),
     "company": ("company", "companyname", "account", "accountname", "organization", "organisation"),
+    "owner": ("leadowner", "owner", "owneremail", "assignedto", "assignto", "salesperson", "salesrep"),
     "email": ("email", "emailaddress", "workemail", "businessemail"),
     "phone": ("phone", "workdirectphone", "mobilephone", "mobile", "corporatephone", "phonenumber", "directphone",
               "companyphone", "otherphone"),
@@ -184,23 +185,28 @@ def parse(header: list[str], rows: list[list]):
             if value is not None and value >= (Decimal("1e14") if field == "annual_revenue" else 10_000_000):
                 value = None
             lead[field] = int(value) if field == "employees" and value is not None else value
+        if lead["email"] and not email_matches_website(lead["email"], lead.get("company_website")):
+            blank.append(f"email '{lead['email']}' isn't on the company's domain ({website_host(lead['company_website'])})")
+            lead["email"] = None
         if blank:
             warnings.append({"row": number_in_file, "reason": "Uploaded; left blank: " + "; ".join(blank)})
+        lead["_owner"] = (raw.get("owner") or "").strip()
         lead["_row"] = number_in_file
         leads.append(lead)
     return leads, errors, warnings, mapped, ignored
 
 
 def drop_duplicates(db: Session, leads: list[dict], errors: list[dict]) -> list[dict]:
-    """Skips rows whose email or LinkedIn profile is already on an open lead, or earlier in the same file."""
+    """Skips rows whose email is already in the CRM (any lead or contact: emails are unique), whose LinkedIn profile
+    is on an open lead, or that repeat an earlier row of the same file."""
     emails = {l["email"] for l in leads if l.get("email")}
     profiles = {l["linkedin_url"].lower().rstrip("/") for l in leads if l.get("linkedin_url")}
     taken_emails, taken_profiles = set(), set()
     open_leads = Lead.stage.in_(LEAD_OPEN_STAGES)
-    # one pass over the open leads (fast even with 100,000s of them), then compare in memory
+    # one pass over the leads and contacts (fast even with 100,000s of them), then compare in memory
     if emails:
-        taken_emails = emails & set(db.scalars(select(func.lower(Lead.email)).where(
-            open_leads, Lead.email.is_not(None))).all())
+        taken_emails = emails & (set(db.scalars(select(func.lower(Lead.email)).where(Lead.email.is_not(None))).all())
+                                 | set(db.scalars(select(func.lower(Contact.email)).where(Contact.email.is_not(None))).all()))
     if profiles:
         for url in db.scalars(select(Lead.linkedin_url).where(open_leads, Lead.linkedin_url.is_not(None))).all():
             if url.lower().rstrip("/") in profiles:
@@ -209,8 +215,11 @@ def drop_duplicates(db: Session, leads: list[dict], errors: list[dict]) -> list[
     for lead in leads:
         email = lead.get("email")
         profile = (lead.get("linkedin_url") or "").lower().rstrip("/")
-        if email and email in taken_emails or profile and profile in taken_profiles:
-            errors.append({"row": lead["_row"], "reason": "Already an open lead (duplicate)", "duplicate": True})
+        if email and email in taken_emails:
+            errors.append({"row": lead["_row"], "reason": f"Email {email} is already in the CRM (duplicate)", "duplicate": True})
+        elif profile and profile in taken_profiles:
+            errors.append({"row": lead["_row"], "reason": "LinkedIn profile is already on an open lead (duplicate)",
+                           "duplicate": True})
         elif email and email in seen_emails or profile and profile in seen_profiles:
             errors.append({"row": lead["_row"], "reason": "Repeated in this file (duplicate)", "duplicate": True})
         else:
@@ -220,25 +229,51 @@ def drop_duplicates(db: Session, leads: list[dict], errors: list[dict]) -> list[
     return keep
 
 
+ASSIGN_MODES = ("one", "column", "even")
+
+
+def assignable(db: Session, user_id: int | None) -> User:
+    """Leads go to active Managers and Salespeople (the Admin doesn't own leads)."""
+    user = db.get(User, user_id) if user_id is not None else None
+    if user is None or not user.is_active or user.role == "Admin":
+        raise HTTPException(status_code=400, detail="Leads can only be assigned to active Managers and Salespeople.")
+    return user
+
+
 @router.post("/import")
 async def import_leads(
     file: UploadFile = File(...),
-    owner_id: int | None = Form(None),
+    owner_id: int | None = Form(None, description="assign=one: the owner. assign=column: owner of rows without one"),
+    assign: str = Form("one", description="one: all to owner_id; column: the file's Lead Owner column (email or name); "
+                                          "even: shared round-robin among owner_ids"),
+    owner_ids: list[int] = Form([], description="assign=even: the people to share the leads between"),
     dry_run: bool = Form(True),
     db: Session = Depends(get_db),
 ):
-    """Upload leads from Excel / CSV. dry_run=true (default) only checks the file and shows what would happen."""
+    """Upload leads from Excel / CSV. dry_run=true (default) only checks the file and shows what would happen.
+
+    Who owns the leads, as in Salesforce's Data Import Wizard: everyone to one person, the file's Lead Owner column,
+    or shared evenly (round-robin) between chosen people. Assigning to others needs the Reassign owner permission
+    (Managers); the Admin always chooses an owner."""
     me = require("import_leads")
-    if me.role == "Admin":
-        # the Admin doesn't own leads: the uploaded leads go to a Manager or Salesperson
-        if owner_id is None or owner_id == me.id:
-            raise HTTPException(status_code=400, detail="Choose who will own the uploaded leads.")
-        target = db.get(User, owner_id)
+    if assign not in ASSIGN_MODES:
+        raise HTTPException(status_code=400, detail="assign must be one, column or even")
+    may_assign = me.is_admin or me.can("reassign_owner")
+    people: list[User] = []
+    if assign == "even":
+        ids = list(dict.fromkeys(owner_ids))
+        if not ids:
+            raise HTTPException(status_code=400, detail="Choose the people to share the leads between.")
+        if not may_assign and ids != [me.id]:
+            raise HTTPException(status_code=403, detail="You can't assign leads to other people (Reassign owner).")
+        people = [assignable(db, i) for i in ids]
+        default = people[0]
     else:
-        owner_id = owner_for_new(owner_id)
-        target = db.get(User, owner_id)
-    if target is None or not target.is_active or target.role == "Admin":
-        raise HTTPException(status_code=400, detail="The owner must be an active Manager or Salesperson.")
+        if me.is_admin and (owner_id is None or owner_id == me.id):
+            raise HTTPException(status_code=400, detail="Choose who will own the uploaded leads.")
+        if assign == "column" and not may_assign:
+            raise HTTPException(status_code=403, detail="You can't assign leads to other people (Reassign owner).")
+        default = assignable(db, owner_id if me.is_admin else owner_for_new(owner_id))
     content = await file.read(MAX_FILE_BYTES + 1)
     if len(content) > MAX_FILE_BYTES:
         raise HTTPException(status_code=413, detail="The file is larger than 50 MB. Split it into smaller files.")
@@ -248,46 +283,77 @@ async def import_leads(
     if len(rows) > MAX_ROWS:
         raise HTTPException(status_code=400, detail=f"Upload up to {MAX_ROWS:,} rows per file. Split the file and upload each part.")
     leads, errors, warnings, mapped, ignored = parse(header, rows)
+    if assign == "column" and "owner" not in {LOOKUP.get(key(h)) for h in header}:
+        raise HTTPException(status_code=400, detail="The file has no Lead Owner column (the owner's email or name). "
+                                                    "Add one, or choose another way to assign the leads.")
     leads = drop_duplicates(db, leads, errors)
+
+    # ----- who owns each lead -----
+    if assign == "even":
+        for i, lead in enumerate(leads):
+            lead["_owner_user"] = people[i % len(people)]
+    elif assign == "column":
+        users = db.scalars(select(User).where(User.is_active.is_(True), User.role != "Admin")).all()
+        lookup = {u.email.lower(): u for u in users} | {u.full_name.lower(): u for u in users}
+        for lead in leads:
+            named = lead["_owner"]
+            lead["_owner_user"] = lookup.get(named.lower(), default)
+            if named and named.lower() not in lookup:
+                warnings.append({"row": lead["_row"], "reason": f"Owner '{named[:60]}' isn't an active Manager or "
+                                                                f"Salesperson; assigned to {default.full_name}"})
+    else:
+        for lead in leads:
+            lead["_owner_user"] = default
+    counts: dict[int, list] = {}
+    for lead in leads:
+        user = lead["_owner_user"]
+        counts.setdefault(user.id, [user, 0])[1] += 1
+    owners = sorted(({"id": u.id, "name": u.full_name, "count": n} for u, n in counts.values()),
+                    key=lambda o: (-o["count"], o["name"]))
+
     kept = {l["_row"] for l in leads}
-    warnings = [w for w in warnings if w["row"] in kept]
+    warnings = sorted((w for w in warnings if w["row"] in kept), key=lambda w: w["row"])
     errors.sort(key=lambda e: e["row"])
     skipped = sum(1 for e in errors if e.get("duplicate"))
+    owner_text = ", ".join(f"{o['name']} ({o['count']:,})" for o in owners) or default.full_name
     result = {
         "file": file.filename,
         "rows": len(rows),
         "ready": len(leads),
         "duplicates": skipped,
         "invalid": len(errors) - skipped,
-        "owner": target.full_name,
+        "owner": owner_text,
+        "owners": owners,
         "columns_used": mapped,
         "columns_ignored": ignored,
         "errors": [{"row": e["row"], "reason": e["reason"]} for e in errors[:500]],
-        "with_blanks": len(warnings),  # uploaded, but a wrong value was left blank
+        "with_blanks": len({w["row"] for w in warnings}),  # uploaded, with a note (a wrong value left blank, owner...)
         "warnings": warnings[:500],
         "preview": [{k: (float(v) if isinstance(v, Decimal) else v) for k, v in l.items() if not k.startswith("_")}
-                    for l in leads[:5]],
+                    | {"owner_name": l["_owner_user"].full_name} for l in leads[:5]],
         "created": 0,
     }
     if dry_run or not leads:
         return result
     note = f"Uploaded from {file.filename}"
     for i in range(0, len(leads), CHUNK):
-        batch = [{k: v for k, v in l.items() if not k.startswith("_")} | {"owner_id": owner_id, "stage": "New", "untouched": True,
-                                                    "uploaded_from": (file.filename or "file")[:255]}
+        batch = [{k: v for k, v in l.items() if not k.startswith("_")}
+                 | {"owner_id": l["_owner_user"].id, "stage": LEAD_START, "untouched": True,
+                    "uploaded_from": (file.filename or "file")[:255]}
                  for l in leads[i:i + CHUNK]]
         ids = db.scalars(insert(Lead).returning(Lead.id), batch).all()
-        db.execute(insert(StageHistory), [{"lead_id": lead_id, "from_stage": None, "to_stage": "New",
+        db.execute(insert(StageHistory), [{"lead_id": lead_id, "from_stage": None, "to_stage": LEAD_START,
                                            "changed_by_id": me.id, "note": note} for lead_id in ids])
         result["created"] += len(ids)
     log_activity(db, me.id, "Leads uploaded", file.filename or "file",
-                 f"{result['created']:,} created ({len(warnings):,} with fields left blank) • {skipped:,} duplicates skipped"
-                 f" • {result['invalid']:,} invalid rows"
-                 f" • Owner: {target.full_name}")
-    if owner_id != me.id:
-        notify(db, owner_id, "Leads assigned to you",
-               f"{me.full_name} uploaded {result['created']:,} leads and assigned them to you ({file.filename}).",
-               link="/leads", category="assignment")
+                 f"{result['created']:,} created ({len(warnings):,} with notes) • {skipped:,} duplicates skipped"
+                 f" • {result['invalid']:,} invalid rows • Owners: {owner_text}")
+    for owner in owners:
+        if owner["id"] != me.id:
+            notify(db, owner["id"], "Leads assigned to you",
+                   f"{me.full_name} uploaded {owner['count']:,} lead{'s' if owner['count'] != 1 else ''} "
+                   f"and assigned {'them' if owner['count'] != 1 else 'it'} to you ({file.filename}).",
+                   link="/leads", category="assignment")
     db.commit()
     return result
 

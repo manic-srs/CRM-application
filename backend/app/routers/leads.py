@@ -1,6 +1,7 @@
 """Lead APIs: the first half of the lifecycle.
 
-New -> Nurturing -> Demo -> Converted (becomes an Opportunity), or Lost at any open stage.
+Unqualified -> New -> Nurturing -> Revisit (optional) -> Demo -> Converted (becomes an Opportunity), or Lost at any
+open stage.
 At each stage the system closes the old follow-up ("Auto-closed") and creates the next one.
 """
 from datetime import date, timedelta
@@ -10,34 +11,35 @@ from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from app import schemas
-from app.constants import AUTO_TASKS, LEAD_FLOW, LEAD_OPEN_STAGES, LEAD_SOURCES, LEAD_STAGES, STAGE_PROBABILITY
+from app.constants import (AUTO_TASKS, LEAD_FLOW, LEAD_OPEN_STAGES, LEAD_OPTIONAL_STAGES, LEAD_SOURCES, LEAD_STAGES,
+                           LEAD_START, STAGE_PROBABILITY)
 from app.database import get_db
-from app.security import (acting_user, acting_user_id, check_owner_change, forbid_admin_create, owner_for_new, require_edit,
+from app.security import (acting_user, acting_user_id, forbid_admin_create, owner_for_new, require_edit,
                           require_transfer, require_view, visible)
 from app.models import (Account, Contact, Email, EmailAttachment, Lead, LeadTransfer, Note, Notification, Opportunity,
                         StageHistory, Task, User)
 from app.serializers import account_out, contact_out, history_out, lead_detail, lead_out, opportunity_out, task_out
 from app.services import (
     add_stage_task,
-    confirm_skipped,
-    customer_email,
     assignment_notice,
     auto_close_open_tasks,
+    confirm_skipped,
     create_auto_task,
+    email_website_problem,
     get_for_update,
     get_or_404,
-    stage_task_owner,
     log_activity,
+    notify,
     now,
     open_system_task,
-    record_stage_change,
-    notify,
     reassign_system_tasks,
     record_link,
+    record_stage_change,
     resolve_user_id,
     schedule_close_date_task,
     schedule_demo_tasks,
     stage_notice,
+    stage_task_owner,
     task_line,
 )
 
@@ -53,7 +55,7 @@ def ensure_open(lead: Lead):
 
 @router.get("", response_model=list[schemas.LeadOut])
 def list_leads(
-    stage: str | None = Query(None, description="New, Nurturing, Demo, Converted or Lost"),
+    stage: str | None = Query(None, description=", ".join(LEAD_STAGES)),
     source: str | None = Query(None),
     owner_id: int | None = Query(None),
     search: str | None = Query(None, description="Name, company or email"),
@@ -108,52 +110,54 @@ def find_duplicates(db: Session, email: str | None, exclude_lead_id: int | None 
 @router.get("/duplicates")
 def check_duplicates(email: str = Query(..., min_length=3), exclude_lead_id: int | None = Query(None),
                      db: Session = Depends(get_db)):
-    """Before saving a lead: is this email already in the CRM? (open lead = can't create another one)"""
+    """Before saving a lead: is this email already in the CRM? Every email belongs to one lead or contact only."""
     matches = find_duplicates(db, email, exclude_lead_id)
     return {"email": email.strip().lower(), "matches": matches, "has_open_lead": any(m["open"] for m in matches)}
 
 
-def check_email_free(db: Session, email: str | None, *, confirmed: bool, exclude_lead_id: int | None = None) -> list[dict]:
+def check_email_free(db: Session, email: str | None, *, exclude_lead_id: int | None = None) -> None:
+    """Email is unique: no other lead (any stage) or contact may have it. Records the user can't open are named
+    only by their owner."""
     matches = find_duplicates(db, email, exclude_lead_id)
-    open_lead = next((m for m in matches if m["open"]), None)
-    if open_lead:
-        raise HTTPException(status_code=409, detail=(
-            f'An open lead with this email already exists: {open_lead["name"]} ({open_lead["company"]}), '
-            f'owner {open_lead["owner_name"]}. Use that lead instead.'))
-    if matches and not confirmed:
+    if matches:
         first = matches[0]
+        what = (f'{first["type"].lower()} {first["name"]} ({first["company"]}, {first["stage"] or "contact"})'
+                if first["can_open"] else f'a {first["type"].lower()}')
         raise HTTPException(status_code=409, detail=(
-            f'This email already exists: {first["type"].lower()} {first["name"]} ({first["company"]}). '
-            "Confirm to create a new lead for the returning customer, or use a different email."))
-    return matches
+            f'This email is already in the CRM: {what}, owner {first["owner_name"]}. '
+            "Each email can belong to one lead only: use that record, or ask its owner or a Manager."))
+
+
+def check_lead_email(db: Session, email: str | None, website: str | None, *, exclude_lead_id: int | None = None) -> None:
+    """A lead's email is unique in the CRM and uses the company's domain (as its Company Website)."""
+    problem = email_website_problem(email, website)
+    if problem:
+        raise HTTPException(status_code=400, detail=problem)
+    check_email_free(db, email, exclude_lead_id=exclude_lead_id)
 
 
 @router.post("", response_model=schemas.LeadDetail, status_code=status.HTTP_201_CREATED)
 def create_lead(data: schemas.LeadCreate, db: Session = Depends(get_db)):
-    """Create a lead at stage New. The system adds a 'Make first contact' task for the owner.
+    """Create a lead at stage Unqualified. The system adds a 'Qualify lead' task for the owner.
     Admins can create leads too, and choose who owns them."""
     owner_id = resolve_user_id(db, owner_for_new(data.owner_id))
     actor_id = acting_user_id()
-    previous = check_email_free(db, data.email, confirmed=data.confirm_duplicate)
-    lead = Lead(**data.model_dump(exclude={"owner_id", "created_by_id", "welcome_email", "confirm_duplicate"}),
-                owner_id=owner_id, stage="New")
+    check_lead_email(db, data.email, data.company_website)
+    lead = Lead(**data.model_dump(exclude={"owner_id", "created_by_id"}),
+                owner_id=owner_id, stage=LEAD_START)
     db.add(lead)
     db.flush()
     db.refresh(lead)  # loads "name", which the database builds from first + last name
-    record_stage_change(db, lead_id=lead.id, from_stage=None, to_stage="New", changed_by_id=actor_id,
-                        note=(f"Returning customer (already in the CRM as {previous[0]['type'].lower()} "
-                              f"{previous[0]['name']}, {previous[0]['stage'] or 'contact'})") if previous else None)
-    task = create_auto_task(db, stage="New", owner_id=owner_id, record_name=lead.name, lead_id=lead.id)
+    record_stage_change(db, lead_id=lead.id, from_stage=None, to_stage=LEAD_START, changed_by_id=actor_id)
+    task = create_auto_task(db, stage=LEAD_START, owner_id=owner_id, record_name=lead.name, lead_id=lead.id)
     # one notification for the new lead; it says so when someone else created it for the owner
     assigned = actor_id != owner_id
     stage_notice(
-        db, kind="Lead", stage="New", record_name=lead.name, owner_id=owner_id,
+        db, kind="Lead", stage=LEAD_START, record_name=lead.name, owner_id=owner_id,
         actor_id=actor_id, lead_id=lead.id, task=task,
         title="Lead assigned to you" if assigned else None,
         details=[f"Company: {lead.company}", f"Source: {lead.source}"],
     )
-    if data.welcome_email:
-        customer_email(db, "welcome", to=lead.email, first_name=lead.first_name or lead.name, owner_id=owner_id)
     db.commit()
     db.refresh(lead)
     return lead_detail(lead)
@@ -178,9 +182,14 @@ def update_lead(lead_id: int, data: schemas.LeadUpdate, db: Session = Depends(ge
     actor = acting_user_id()
     new_owner = changes.pop("owner_id", None)  # a new owner is a transfer (same rules and history as Transfer)
     old_demo = lead.demo_date
-    if changes.get("email") and (changes["email"] or "").strip().lower() != (lead.email or "").strip().lower():
-        if any(m["open"] for m in find_duplicates(db, changes["email"], exclude_lead_id=lead.id)):
-            raise HTTPException(status_code=409, detail="An open lead with this email already exists. Use that lead instead.")
+    if "email" in changes or "company_website" in changes:  # the email stays unique and on the company's domain
+        email = changes.get("email", lead.email)
+        website = changes.get("company_website", lead.company_website)
+        problem = email_website_problem(email, website)
+        if problem:
+            raise HTTPException(status_code=400, detail=problem)
+        if email and email.strip().lower() != (lead.email or "").strip().lower():
+            check_email_free(db, email, exclude_lead_id=lead.id)
     for field in ("last_name", "company", "source"):  # required, like Salesforce
         if field in changes and not changes[field]:
             raise HTTPException(status_code=400, detail=f"{field} can't be empty")
@@ -256,7 +265,7 @@ def transfer(lead_id: int, data: schemas.LeadTransfer, db: Session = Depends(get
 def cancel_demo(lead_id: int, data: schemas.CancelDemo, db: Session = Depends(get_db)):
     """Cancel a booked demo, with two choices:
     - reschedule_to: the demo moves to the new date, the lead stays at Demo and the demo reminders move with it
-    - no new date: the lead goes back to Nurturing and the demo reminders are removed. That is a stage change, so a
+    - no new date: the lead goes back to Revisit and the demo reminders are removed. That is a stage change, so a
       reason (saved in the stage history) and the user's new task (instead of the system's follow-up call) are
       required."""
     lead = get_for_update(db, Lead, lead_id, "Lead")
@@ -292,16 +301,16 @@ def cancel_demo(lead_id: int, data: schemas.CancelDemo, db: Session = Depends(ge
         db.commit()
         db.refresh(lead)
         return lead_detail(lead)
-    lead.stage, lead.demo_date = "Nurturing", None
+    lead.stage, lead.demo_date = "Revisit", None
     note = "Demo cancelled" + (f": {reason}" if reason else "")
-    record_stage_change(db, lead_id=lead.id, from_stage="Demo", to_stage="Nurturing", changed_by_id=by, note=note)
+    record_stage_change(db, lead_id=lead.id, from_stage="Demo", to_stage="Revisit", changed_by_id=by, note=note)
     auto_close_open_tasks(db, lead_id=lead.id)  # closes "Conduct demo" and "Prepare for demo"
     task = add_stage_task(db, data.task, owner_id=task_owner, record_owner_id=lead.owner_id, actor_id=by,
                           lead_id=lead.id)
     details = [f"Cancelled demo: {was:%d %b %Y %I:%M %p}" if was else "No demo date was set"]
     if reason:
         details.append(f"Reason: {reason}")
-    stage_notice(db, kind="Lead", stage="Nurturing", record_name=lead.name, owner_id=lead.owner_id, actor_id=by,
+    stage_notice(db, kind="Lead", stage="Revisit", record_name=lead.name, owner_id=lead.owner_id, actor_id=by,
                  lead_id=lead.id, task=task, details=details, title="Lead demo cancelled")
     db.commit()
     db.refresh(lead)
@@ -312,7 +321,7 @@ def cancel_demo(lead_id: int, data: schemas.CancelDemo, db: Session = Depends(ge
 
 @router.put("/{lead_id}/stage", response_model=schemas.LeadDetail)
 def change_stage(lead_id: int, data: schemas.LeadStageChange, db: Session = Depends(get_db)):
-    """Move to New, Nurturing or Demo (also to correct a wrong stage). A note (saved in the history) and the user's
+    """Move to any open stage (Unqualified, New, Nurturing, Revisit, Demo), also to correct a wrong stage. A note (saved in the history) and the user's
     new task are required. Old follow-ups are auto-closed; the new task takes the place of the system follow-up for
     the new stage. The demo reminders ("Conduct demo" at the demo and the day-before prep task) are still created
     and kept in step with the demo date when one is given."""
@@ -328,7 +337,7 @@ def change_stage(lead_id: int, data: schemas.LeadStageChange, db: Session = Depe
     if LEAD_FLOW.index(data.stage) > LEAD_FLOW.index(lead.stage):  # forward: no skipping (going back is allowed)
         lead.stage = confirm_skipped(db, flow=LEAD_FLOW, current=lead.stage, target_index=LEAD_FLOW.index(data.stage),
                                      completed=data.completed_stages, note=data.completed_note, by=by,
-                                     lead_id=lead.id, what=data.stage)
+                                     lead_id=lead.id, what=data.stage, optional=LEAD_OPTIONAL_STAGES)
     old = lead.stage
     lead.stage = data.stage
     if data.stage == "Demo" and data.demo_date:
@@ -372,9 +381,6 @@ def mark_lost(lead_id: int, data: schemas.MarkLost, db: Session = Depends(get_db
     details = [f"Lost at stage: {old}", f"Reason: {data.lost_reason}", f"Notes: {data.lost_notes}"]
     stage_notice(db, kind="Lead", stage="Lost", record_name=lead.name, owner_id=lead.owner_id,
                  actor_id=by, lead_id=lead.id, details=details)
-    if data.notify_customer:
-        customer_email(db, "lost", to=lead.email, first_name=lead.first_name or lead.name, owner_id=lead.owner_id,
-                       after_proposal=False)  # a lead never got a proposal
     db.commit()
     db.refresh(lead)
     return lead_detail(lead)
@@ -394,10 +400,10 @@ def convert_lead(lead_id: int, data: schemas.ConvertLead, db: Session = Depends(
     require_edit(lead.owner_id, "lead")
     task_owner = stage_task_owner(db, data.task, lead.owner_id)  # the new opportunity's owner is the lead's
     lead.untouched = False  # someone is working on it now
-    # Convert comes after Demo: New -> Nurturing -> Demo must be done (or confirmed as done)
+    # Convert comes after Demo: every required stage up to Demo must be done (or confirmed as done)
     lead.stage = confirm_skipped(db, flow=LEAD_FLOW, current=lead.stage, target_index=len(LEAD_FLOW),
                                  completed=data.completed_stages, note=data.completed_note, by=acting_user_id(),
-                                 lead_id=lead.id, what="converting")
+                                 lead_id=lead.id, what="converting", optional=LEAD_OPTIONAL_STAGES)
     require_edit(lead.owner_id, "lead")
     by = acting_user_id()
 

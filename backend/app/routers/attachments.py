@@ -1,6 +1,6 @@
 """Files kept on an opportunity: PDF, Word (.docx), JPEG and PNG, up to 20 MB each, stored in the database.
 
-- Upload: one file per request, only while the deal is at Opportunity or Proposal. The server checks what the file
+- Upload: one file per request, only while the deal is open (Opportunity, Discovery or Proposal). The server checks what the file
   really is (its content, not the browser's file type) and saves the stage the deal is at.
 - Files keep their stage when the deal moves on. After Won / Lost they can still be viewed and downloaded,
   but no file can be added or deleted.
@@ -263,7 +263,7 @@ def list_attachments(opportunity_id: int, db: Session = Depends(get_db)):
              status_code=status.HTTP_201_CREATED, openapi_extra=UPLOAD_FORM)
 async def upload_attachment(opportunity_id: int, request: Request, db: Session = Depends(get_db)):
     """Add one file (form field "file"): PDF, Word (.docx), JPG or PNG, up to 20 MB.
-    Only at the Opportunity or Proposal stage, by someone who can edit the opportunity."""
+    Only while the deal is open (Opportunity, Discovery or Proposal), by someone who can edit the opportunity."""
     opp = get_or_404(db, Opportunity, opportunity_id, "Opportunity")
     me = require_edit(opp.owner_id, "opportunity")
     ensure_files_open(opp, "added")

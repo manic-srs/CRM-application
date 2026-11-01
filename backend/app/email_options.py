@@ -41,12 +41,15 @@ OPTIONS = {
 }
 
 STAGE_OPTIONS = {
+    "Unqualified": ("introduce", "discover_needs", "share_information", "schedule_call"),
     "New": ("introduce", "discover_needs", "share_information", "schedule_call"),
     "Nurturing": ("check_interest", "share_information", "answer_questions", "schedule_follow_up"),
+    "Revisit": ("check_interest", "share_information", "schedule_follow_up", "schedule_call"),
     "Demo": ("invite_demo", "confirm_demo", "demo_follow_up", "demo_questions"),
     "Converted": ("thank_interest", "introduce_team", "confirm_next_steps", "schedule_follow_up"),
     "Lost": ("thank_time", "request_feedback", "stay_in_touch", "close_conversation"),
     "Opportunity": ("discover_needs", "discuss_solution", "confirm_next_steps", "schedule_call"),
+    "Discovery": ("discover_needs", "discuss_solution", "confirm_next_steps", "schedule_call"),
     "Proposal": ("proposal_overview", "proposal_follow_up", "proposal_questions", "proposal_review"),
     "Won": ("thank_business", "welcome_customer", "onboarding_steps", "schedule_kickoff"),
 }

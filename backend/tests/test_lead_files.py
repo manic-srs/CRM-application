@@ -52,7 +52,7 @@ def test_lead_links_are_saved_cleaned_and_copied_on_convert(client, outbox):
     assert lead["annual_revenue"] == 5000000 and lead["employees"] == 120
     bad = client.post("/api/leads", json={"last_name": "X", "company": "Y", "linkedin_url": "twitter.com/x"})
     assert bad.status_code == 422
-    res = client.post(f"/api/leads/{lead['id']}/convert", json={"task": TASK, "completed_stages": ["Nurturing", "Demo"], "note": "Synthetic test note"}).json()
+    res = client.post(f"/api/leads/{lead['id']}/convert", json={"task": TASK, "completed_stages": ["New", "Nurturing", "Demo"], "note": "Synthetic test note"}).json()
     assert res["account"]["website"] == "https://brightline.example" and res["account"]["employees"] == 120
     assert res["contact"]["linkedin_url"] == "https://linkedin.com/in/priya"
 
@@ -71,7 +71,7 @@ def test_delete_lead_by_owner_manager_admin_only(client, outbox):
     assert client.delete(f"/api/leads/{other['id']}").status_code == 200  # the Admin can delete anyone's
     # converted leads stay
     conv = new_lead(login_as(client, 2), email="c@x.example")
-    client.post(f"/api/leads/{conv['id']}/convert", json={"task": TASK, "completed_stages": ["Nurturing", "Demo"], "note": "Synthetic test note"})
+    client.post(f"/api/leads/{conv['id']}/convert", json={"task": TASK, "completed_stages": ["New", "Nurturing", "Demo"], "note": "Synthetic test note"})
     assert client.delete(f"/api/leads/{conv['id']}").status_code == 400
 
 
@@ -95,11 +95,11 @@ def test_upload_preview_then_import(client, outbox):
     assert asha["uploaded_from"] == "apollo.csv"
     # uploaded leads are in the normal open-leads list too
     assert {l["last_name"] for l in client.get("/api/leads/page").json()["items"]} == {"Menon", "Iyer", "Diaz"}
-    assert asha["linkedin_url"] == "https://linkedin.com/in/asha" and asha["owner_id"] == 2 and asha["stage"] == "New"
+    assert asha["linkedin_url"] == "https://linkedin.com/in/asha" and asha["owner_id"] == 2 and asha["stage"] == "Unqualified"
     assert len(outbox) == sent  # no welcome emails for uploaded leads
     assert client.get(f"/api/leads/{asha['id']}").json()["tasks"] == []  # and no automatic tasks
     log = login_as(client, 3).get("/api/activity-log").json()[0]
-    assert log["action"] == "Leads uploaded" and log["by"] == "Ravi Kumar" and "2 created (1 with fields left blank)" in log["details"]
+    assert log["action"] == "Leads uploaded" and log["by"] == "Ravi Kumar" and "2 created (1 with notes)" in log["details"]
 
 
 def test_upload_excel_and_admin_must_pick_owner(client, outbox):
@@ -154,8 +154,8 @@ def test_leads_list_page_views_search_and_sort(client, outbox):
     names = [l["last_name"] for l in client.get("/api/leads/page", params={"sort": "name", "direction": "asc"}).json()["items"]]
     assert names == sorted(names)
     first = client.get("/api/leads/page", params={"view": "uploaded"}).json()["items"][0]["id"]
-    client.put(f"/api/leads/{first}/stage", json={"task": TASK, "stage": "Nurturing", "note": "Synthetic test note"})
-    assert client.get("/api/leads/page", params={"stage": "Nurturing"}).json()["total"] == 1
+    client.put(f"/api/leads/{first}/stage", json={"task": TASK, "stage": "Nurturing", "completed_stages": ["New"], "note": "Synthetic test note"})
+    assert client.get("/api/leads/page", params={"stage": "Nurturing", "completed_stages": ["New"]}).json()["total"] == 1
     # filters: Lead Source, Owner and Created date
     assert client.get("/api/leads/page", params={"source": "Upload"}).json()["total"] == 5
     assert client.get("/api/leads/page", params={"owner": "me"}).json()["total"] == 6

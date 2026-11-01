@@ -502,7 +502,23 @@ p {
   background: currentColor;
   flex: none;
 }
-/* Lead: New → Nurturing → Demo → Converted / Lost. Opportunity: Opportunity → Proposal → Won / Lost */
+/* Lead: Unqualified → New → Nurturing → Revisit → Demo → Converted / Lost.
+   Opportunity: Opportunity → Discovery → Proposal → Won / Lost */
+.s-unqualified {
+  background: #f3f4f6;
+  border-color: #d5d9de;
+  color: #4b5563;
+}
+.s-revisit {
+  background: #e9f8f8;
+  border-color: #b4e3e3;
+  color: #0b6b6b;
+}
+.s-discovery {
+  background: #e8f4fd;
+  border-color: #b5dbf7;
+  color: #0a5a8f;
+}
 .s-new,
 .s-opportunity {
   background: #eef4ff;
@@ -3703,4 +3719,134 @@ a.pill:hover {
 /* On the AI Assistant page, corner pop-ups sit above the message box (so they never cover Send) */
 body:has(.ai-page) .popups {
   bottom: 96px;
+}
+
+/* top right: avatar, full name and role (opens the profile menu) */
+.header-user {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 260px;
+  padding: 4px 10px 4px 4px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: none;
+  color: var(--text-weak);
+  cursor: pointer;
+}
+.header-user:hover,
+.header-user[aria-expanded="true"] {
+  border-color: var(--border);
+  background: #f3f6fb;
+}
+.header-user-text {
+  display: grid;
+  min-width: 0;
+  line-height: 1.2;
+  text-align: left;
+}
+.header-user-text b {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.header-user-text small {
+  color: var(--text-weak);
+  font-size: 12px;
+}
+@media (max-width: 760px) {
+  .header-user-text,
+  .header-user > svg {
+    display: none;
+  }
+}
+
+/* Upload Leads: how the leads are assigned (one person, Lead Owner column, shared evenly) */
+.assign-box {
+  display: grid;
+  gap: 6px;
+  margin: 14px 0 0;
+  padding: 0;
+  border: 0;
+}
+.assign-box legend {
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+.assign-option {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.assign-option.on {
+  border-color: var(--brand);
+  background: #f5f9ff;
+}
+.assign-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.assign-detail {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 2px 24px;
+}
+.assign-detail small {
+  color: var(--text-weak);
+}
+.assign-detail select {
+  height: 34px;
+  max-width: 340px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--white);
+  font: inherit;
+}
+.assign-people {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.person-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--white);
+  cursor: pointer;
+}
+.person-chip.on {
+  border-color: var(--brand);
+  background: var(--brand-light);
+  color: var(--brand-dark);
+}
+.person-chip input {
+  margin: 0;
+}
+.assign-people small {
+  flex-basis: 100%;
+}
+.owner-split {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 6px;
+  color: var(--text-weak);
+  font-size: 13px;
+}
+.owner-pill {
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: #eef4ff;
+  color: #0b5cab;
 }

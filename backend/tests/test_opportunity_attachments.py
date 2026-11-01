@@ -97,7 +97,7 @@ def new_opportunity(client, owner=RAVI) -> dict:
                                           "company": "Synthetic Co", "email": f"buyer{next(LEADS)}@example.test",
                                           "welcome_email": False})
     assert res.status_code == 201, res.text
-    res = client.post(f"/api/leads/{res.json()['id']}/convert", json={"task": TASK, "completed_stages": ["Nurturing", "Demo"],
+    res = client.post(f"/api/leads/{res.json()['id']}/convert", json={"task": TASK, "completed_stages": ["New", "Nurturing", "Demo"],
                                                                       "expected_value": 1000, "note": "Synthetic test note"})
     assert res.status_code == 200, res.text
     return res.json()["opportunity"]
@@ -124,7 +124,8 @@ def stored_rows():
 
 
 def move(client, opp_id, stage):
-    res = client.put(f"/api/opportunities/{opp_id}/stage", json={"task": TASK, "stage": stage, "note": "Synthetic test note"})
+    res = client.put(f"/api/opportunities/{opp_id}/stage", json={"task": TASK, "stage": stage, "note": "Synthetic test note",
+                                                                 "completed_stages": ["Discovery"]})  # not about the order
     assert res.status_code == 200, res.text
 
 
@@ -384,7 +385,7 @@ def test_files_keep_their_stage_and_are_read_only_after_won(client):
         "brief.pdf": "Opportunity", "proposal.docx": "Proposal"}
     assert client.get(url(opp["id"], proposal["id"], "/file")).content == DOCX_SAMPLE
     history = [h["to_stage"] for h in client.get(f"/api/opportunities/{opp['id']}/history").json()]
-    assert history == ["Opportunity", "Proposal", "Opportunity", "Proposal", "Won"]  # stage flow unchanged
+    assert history == ["Opportunity", "Discovery", "Proposal", "Opportunity", "Discovery", "Proposal", "Won"]  # Discovery confirmed each time
 
 
 def test_files_are_read_only_after_lost(client):

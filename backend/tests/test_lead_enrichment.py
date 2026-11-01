@@ -507,7 +507,7 @@ def test_autofilled_company_details_are_saved_and_conversion_copies_them_to_the_
     lead = res.json()
     company = ("Synthetic Co", "information technology & services", SITE, PAGE)
     assert (lead["company"], lead["industry"], lead["company_website"], lead["company_linkedin_url"]) == company
-    converted = client.post(f"/api/leads/{lead['id']}/convert", json={"task": TASK, "completed_stages": ["Nurturing", "Demo"],
+    converted = client.post(f"/api/leads/{lead['id']}/convert", json={"task": TASK, "completed_stages": ["New", "Nurturing", "Demo"],
                                                                         "note": "Synthetic test: converting"})
     assert converted.status_code == 200, converted.text
     account = converted.json()["account"]
@@ -520,7 +520,7 @@ def test_a_new_lead_keeps_the_profile_in_one_form_and_conversion_copies_it(clien
     assert res.status_code == 201, res.text
     lead = res.json()
     assert lead["linkedin_url"] == JANE
-    converted = client.post(f"/api/leads/{lead['id']}/convert", json={"task": TASK, "completed_stages": ["Nurturing", "Demo"], "note": "Synthetic test note"})
+    converted = client.post(f"/api/leads/{lead['id']}/convert", json={"task": TASK, "completed_stages": ["New", "Nurturing", "Demo"], "note": "Synthetic test note"})
     assert converted.status_code == 200, converted.text
     with next(app.dependency_overrides[get_db]()) as db:
         contact = db.get(Contact, converted.json()["contact"]["id"])

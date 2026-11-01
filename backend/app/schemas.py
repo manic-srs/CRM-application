@@ -17,6 +17,8 @@ LostReason = Literal["Price", "Competitor", "No response", "No budget", "Not int
 Priority = Literal["Low", "Normal", "High"]
 Salutation = Literal["Mr.", "Ms.", "Mrs.", "Dr.", "Prof."]
 UserRole = Literal["Salesperson", "Manager", "Admin"]
+LeadOpenStage = Literal["Unqualified", "New", "Nurturing", "Revisit", "Demo"]      # constants.LEAD_FLOW
+OpportunityOpenStage = Literal["Opportunity", "Discovery", "Proposal"]            # constants.OPPORTUNITY_FLOW
 
 
 class Out(BaseModel):
@@ -277,8 +279,6 @@ class LeadCreate(LeadLinks):
     source: LeadSource = "Other"
     owner_id: int | None = None  # default: the logged-in user
     created_by_id: int | None = None  # ignored: the logged-in user creates it
-    welcome_email: bool = True  # email the lead (no-reply) that their details were received; needs an email
-    confirm_duplicate: bool = False  # the email already exists on a closed lead / contact: create a new lead anyway
 
     @field_validator("linkedin_url")
     @classmethod
@@ -473,7 +473,7 @@ class NeedsTask(BaseModel):
 
 
 class LeadStageChange(NeedsTask):
-    stage: Literal["New", "Nurturing", "Demo"]
+    stage: LeadOpenStage
     demo_date: datetime | None = None  # used when moving to Demo: the demo task is due then
     note: StageNote
     changed_by_id: int | None = None  # default: the lead owner
@@ -485,7 +485,6 @@ class MarkLost(BaseModel):
     lost_reason: LostReason
     lost_notes: StageNote  # the note for this stage change; internal: never sent to the customer
     changed_by_id: int | None = None
-    notify_customer: bool = True  # polite no-reply email to the customer (no reason or notes)
 
 
 class ConvertLead(NeedsTask):
@@ -616,9 +615,11 @@ class OpportunityUpdate(BaseModel):
 
 
 class OpportunityStageChange(NeedsTask):
-    stage: Literal["Opportunity", "Proposal"]
+    stage: OpportunityOpenStage
     note: StageNote
     changed_by_id: int | None = None
+    completed_stages: list[str] = []  # stages skipped on the way (e.g. Discovery), confirmed as already done
+    completed_note: str | None = Field(None, max_length=500)
 
 
 class MarkWon(NeedsTask):
@@ -626,7 +627,6 @@ class MarkWon(NeedsTask):
     final_value: float | None = Field(None, ge=0)  # default: the expected value
     note: StageNote  # the closing note
     changed_by_id: int | None = None
-    notify_customer: bool = True  # thank-you no-reply email to the deal's contact
     completed_stages: list[str] = []  # stages skipped on the way, confirmed as already done by the salesperson
     completed_note: str | None = Field(None, max_length=500)  # e.g. "Demo was done on a call"
 

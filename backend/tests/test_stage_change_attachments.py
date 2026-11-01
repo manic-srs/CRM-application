@@ -38,6 +38,7 @@ def stage_url(opp_id):
 
 def change(client, opp_id, stage, files, note="Synthetic test note", task=TASK):
     form = {"stage": stage} | ({"note": note} if note is not None else {}) | ({"task": json.dumps(task)} if task else {})
+    form |= {"completed_stages": "Discovery"}  # these tests are not about the stage order
     return client.post(stage_url(opp_id), data=form, files=[("files", f) for f in files])
 
 
@@ -87,9 +88,9 @@ def test_files_are_saved_with_the_stage_change_and_get_the_new_stage(client, sen
 
     # the stage change itself is the same as PUT /stage without files
     other = new_opportunity(client)
-    assert client.put(f"/api/opportunities/{other['id']}/stage", json={"task": TASK, "stage": "Proposal", "note": "Sent the proposal"}).status_code == 200
+    assert client.put(f"/api/opportunities/{other['id']}/stage", json={"task": TASK, "stage": "Proposal", "completed_stages": ["Discovery"], "note": "Sent the proposal"}).status_code == 200
     assert summary(client, opp["id"]) == summary(client, other["id"])
-    assert summary(client, opp["id"])[3][-1] == ("Opportunity", "Proposal", "Sent the proposal")
+    assert summary(client, opp["id"])[3][-1] == ("Discovery", "Proposal", "Sent the proposal")  # Discovery confirmed
 
 
 def test_moving_back_to_opportunity_labels_the_new_files_opportunity(client):
@@ -155,7 +156,7 @@ def test_a_failed_save_can_be_retried_without_duplicates(client, sent):
     again = change(client, opp["id"], "Proposal", [("quote.pdf", pdf_file(), PDF)], note="Retry")  # e.g. a double click
     assert again.status_code == 400 and "already at Proposal" in again.json()["detail"]
     after = state(opp["id"])
-    assert after["files"] == 1 and len(after["history"]) == len(before["history"]) + 1
+    assert after["files"] == 1 and len(after["history"]) == len(before["history"]) + 2  # Discovery (confirmed) + Proposal
     assert after["notifications"] == before["notifications"] + 1 and len(sent) == 1
     assert len([t for t in after["tasks"] if t[2] == "Open" and t[1] == TASK["title"]]) == 1  # one new task
 
@@ -175,9 +176,9 @@ def test_the_form_is_checked(client):
     assert change(client, opp["id"], "Won", [pdf]).status_code == 422  # Won / Lost have their own popups
     assert client.post(stage_url(opp["id"]), files=[("files", pdf)]).status_code == 422  # no stage
     assert change(client, opp["id"], "Opportunity", [pdf]).status_code == 400  # already there
-    extra = client.post(stage_url(opp["id"]), data={"stage": "Proposal", "owner_id": "1"}, files=[("files", pdf)])
+    extra = client.post(stage_url(opp["id"]), data={"stage": "Proposal", "completed_stages": ["Discovery"], "owner_id": "1"}, files=[("files", pdf)])
     assert extra.status_code == 400
-    other_name = client.post(stage_url(opp["id"]), data={"stage": "Proposal"}, files=[("file", pdf)])
+    other_name = client.post(stage_url(opp["id"]), data={"stage": "Proposal", "completed_stages": ["Discovery"]}, files=[("file", pdf)])
     assert other_name.status_code == 400 and "Unknown form field: file" in other_name.json()["detail"]
 
     def chunked():
@@ -201,7 +202,7 @@ def test_only_people_who_can_edit_the_deal_can_save(client):
     before = state(opp["id"])
     token = client.headers.pop("Authorization").split(" ", 1)[1]
     assert change(client, opp["id"], "Proposal", pdf).status_code == 401
-    assert client.post(stage_url(opp["id"]), params={"token": token}, data={"stage": "Proposal"},
+    assert client.post(stage_url(opp["id"]), params={"token": token}, data={"stage": "Proposal", "completed_stages": ["Discovery"]},
                        files=[("files", pdf[0])]).status_code == 401  # never a token in the address
 
     sam = add_salesperson(client)
@@ -223,7 +224,7 @@ def test_only_people_who_can_edit_the_deal_can_save(client):
 
 
 @pytest.mark.parametrize("close", [
-    lambda client, opp_id: client.post(f"/api/opportunities/{opp_id}/won", json={"task": TASK, "completed_stages": ["Proposal"], "note": "Synthetic test note"}),
+    lambda client, opp_id: client.post(f"/api/opportunities/{opp_id}/won", json={"task": TASK, "completed_stages": ["Discovery", "Proposal"], "note": "Synthetic test note"}),
     lambda client, opp_id: client.post(f"/api/opportunities/{opp_id}/lost", json={"lost_reason": "Price", "lost_notes": "Synthetic test note"}),
 ])
 def test_closed_deals_take_no_stage_change_or_files(client, close):
@@ -237,10 +238,10 @@ def test_closed_deals_take_no_stage_change_or_files(client, close):
 
 def test_stage_changes_without_files_are_unchanged(client):
     opp = new_opportunity(client)
-    res = client.put(f"/api/opportunities/{opp['id']}/stage", json={"task": TASK, "stage": "Proposal", "note": "No files"})
+    res = client.put(f"/api/opportunities/{opp['id']}/stage", json={"task": TASK, "stage": "Proposal", "completed_stages": ["Discovery"], "note": "No files"})
     assert res.status_code == 200 and res.json()["stage"] == "Proposal"
     assert stored_rows() == []
-    assert client.put(f"/api/opportunities/{opp['id']}/stage", json={"task": TASK, "stage": "Proposal", "note": "Synthetic test note"}).status_code == 400
+    assert client.put(f"/api/opportunities/{opp['id']}/stage", json={"task": TASK, "stage": "Proposal", "completed_stages": ["Discovery"], "note": "Synthetic test note"}).status_code == 400
 
 
 # ---------- Mark as Won with files (POST /api/opportunities/{id}/won-with-files) ----------
@@ -284,8 +285,8 @@ def test_mark_as_won_saves_the_amount_note_files_and_email_together(client, sent
     assert saved_status(client, opp["id"]) == 409
     assert client.delete(url(opp["id"], files[0]["id"])).status_code == 409
 
-    # one thank-you email to the deal's contact, sent after the save; the owner hears about Won as before
-    assert customer_emails(sent) == [[contact_email(opp)]]
+    # no email to the customer (the CRM never emails customers itself); the owner hears about Won as before
+    assert customer_emails(sent) == []
     assert [to for to, subject in sent if subject.startswith("[SalesTrack]")] == [["ravi@crm.test"]]
 
     # the Won change itself is the same as POST /won without files
@@ -308,14 +309,14 @@ def test_won_from_opportunity_needs_proposal_confirmed_and_files_stay_proposal(c
     before = state(opp["id"])
     sent.clear()
     refused = win(client, opp["id"], [("quote.pdf", pdf_file(), PDF)], notify_customer="true")
-    assert refused.status_code == 409 and "Complete Proposal" in refused.json()["detail"]
+    assert refused.status_code == 409 and "Complete Discovery and Proposal" in refused.json()["detail"]
     assert state(opp["id"]) == before and sent == []
 
-    res = win(client, opp["id"], [("quote.pdf", pdf_file(), PDF)], completed_stages=["Proposal"],
+    res = win(client, opp["id"], [("quote.pdf", pdf_file(), PDF)], completed_stages=["Discovery", "Proposal"],
               completed_note="Sent by email", notify_customer="false")
     assert res.status_code == 200, res.text
-    assert [(h["from_stage"], h["to_stage"]) for h in res.json()["history"]][-2:] == [("Opportunity", "Proposal"),
-                                                                                     ("Proposal", "Won")]
+    assert [(h["from_stage"], h["to_stage"]) for h in res.json()["history"]][-3:] == [
+        ("Opportunity", "Discovery"), ("Discovery", "Proposal"), ("Proposal", "Won")]
     assert res.json()["final_value"] == 1000  # no amount given: the expected value
     assert [(f["filename"], f["stage"]) for f in client.get(url(opp["id"])).json()] == [("quote.pdf", "Proposal")]
     assert customer_emails(sent) == []  # not chosen
@@ -339,7 +340,7 @@ def test_a_deal_without_an_amount_needs_one(client, sent):
     login_as(client, RAVI)
     lead = client.post("/api/leads", json={"last_name": "NoAmount", "company": "Synthetic Co",
                                            "email": "no.amount@example.test", "welcome_email": False}).json()
-    opp = client.post(f"/api/leads/{lead['id']}/convert", json={"task": TASK, "completed_stages": ["Nurturing", "Demo"], "note": "Synthetic test note"}).json()["opportunity"]
+    opp = client.post(f"/api/leads/{lead['id']}/convert", json={"task": TASK, "completed_stages": ["New", "Nurturing", "Demo"], "note": "Synthetic test note"}).json()["opportunity"]
     move(client, opp["id"], "Proposal")
     before = state(opp["id"])
     sent.clear()
@@ -389,12 +390,12 @@ def test_a_failed_won_save_can_be_retried_without_duplicates(client, sent):
     after = state(opp["id"])
     assert (after["stage"], after["final_value"], after["files"]) == ("Won", 900, 1)
     assert len(after["history"]) == len(before["history"]) + 1
-    assert len(customer_emails(sent)) == 1
+    assert customer_emails(sent) == []
 
 
 @pytest.mark.parametrize("save", [
     lambda client, opp_id: change(client, opp_id, "Proposal", [("quote.pdf", pdf_file(), PDF)]),
-    lambda client, opp_id: win(client, opp_id, [("quote.pdf", pdf_file(), PDF)], completed_stages=["Proposal"],
+    lambda client, opp_id: win(client, opp_id, [("quote.pdf", pdf_file(), PDF)], completed_stages=["Discovery", "Proposal"],
                                notify_customer="true"),
 ])
 def test_a_failure_after_the_files_are_added_saves_nothing(client, sent, save):
@@ -455,7 +456,7 @@ def test_only_people_who_can_edit_the_deal_can_mark_it_won_with_files(client):
 
 
 @pytest.mark.parametrize("close", [
-    lambda client, opp_id: client.post(f"/api/opportunities/{opp_id}/won", json={"task": TASK, "completed_stages": ["Proposal"], "note": "Synthetic test note"}),
+    lambda client, opp_id: client.post(f"/api/opportunities/{opp_id}/won", json={"task": TASK, "completed_stages": ["Discovery", "Proposal"], "note": "Synthetic test note"}),
     lambda client, opp_id: client.post(f"/api/opportunities/{opp_id}/lost", json={"lost_reason": "Price", "lost_notes": "Synthetic test note"}),
 ])
 def test_closed_deals_cant_be_won_with_files(client, sent, close):
@@ -463,7 +464,7 @@ def test_closed_deals_cant_be_won_with_files(client, sent, close):
     assert close(client, opp["id"]).status_code == 200
     before = state(opp["id"])
     sent.clear()
-    res = win(client, opp["id"], [("late.pdf", pdf_file(), PDF)], completed_stages=["Proposal"], notify_customer="true")
+    res = win(client, opp["id"], [("late.pdf", pdf_file(), PDF)], completed_stages=["Discovery", "Proposal"], notify_customer="true")
     assert res.status_code == 400 and "closed" in res.json()["detail"]
     assert state(opp["id"]) == before and sent == []
     assert saved_status(client, opp["id"]) == 409  # the Attachments card stays closed too

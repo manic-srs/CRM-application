@@ -7,16 +7,16 @@
 CREATE OR REPLACE VIEW v_home_summary AS
 SELECT
   (SELECT COUNT(*) FROM leads)                                                   AS total_leads,
-  (SELECT COUNT(*) FROM opportunities WHERE stage IN ('Opportunity','Proposal')) AS open_opportunities,
+  (SELECT COUNT(*) FROM opportunities WHERE stage IN ('Opportunity','Discovery','Proposal')) AS open_opportunities,
   (SELECT COUNT(*) FROM opportunities WHERE stage = 'Won')                       AS won_deals,
   (SELECT COUNT(*) FROM tasks
      WHERE status = 'Open' AND due_date::date = CURRENT_DATE)                    AS tasks_due_today;
 
--- 2. Sales pipeline: New | Nurturing | Demo | Opportunity | Proposal | Won | Lost
+-- 2. Sales pipeline: Unqualified | New | Nurturing | Revisit | Demo | Opportunity | Discovery | Proposal | Won | Lost
 CREATE OR REPLACE VIEW v_sales_pipeline AS
 SELECT s.sort_order, s.stage, s.unit,
        CASE
-         WHEN s.stage IN ('New','Nurturing','Demo')
+         WHEN s.stage IN ('Unqualified','New','Nurturing','Revisit','Demo')
            THEN (SELECT COUNT(*) FROM leads l WHERE l.stage = s.stage)
          WHEN s.stage = 'Lost'
            THEN (SELECT COUNT(*) FROM leads l WHERE l.stage = 'Lost')
@@ -24,13 +24,16 @@ SELECT s.sort_order, s.stage, s.unit,
          ELSE (SELECT COUNT(*) FROM opportunities o WHERE o.stage = s.stage)
        END AS total
 FROM (VALUES
-  (1, 'New',         'leads'),
-  (2, 'Nurturing',   'leads'),
-  (3, 'Demo',        'leads'),
-  (4, 'Opportunity', 'opportunities'),
-  (5, 'Proposal',    'opportunities'),
-  (6, 'Won',         'closed deals'),
-  (7, 'Lost',        'closed deals')
+  (1,  'Unqualified', 'leads'),
+  (2,  'New',         'leads'),
+  (3,  'Nurturing',   'leads'),
+  (4,  'Revisit',     'leads'),
+  (5,  'Demo',        'leads'),
+  (6,  'Opportunity', 'opportunities'),
+  (7,  'Discovery',   'opportunities'),
+  (8,  'Proposal',    'opportunities'),
+  (9,  'Won',         'closed deals'),
+  (10, 'Lost',        'closed deals')
 ) AS s(sort_order, stage, unit);
 
 -- 3. Today's tasks: open tasks due today, plus overdue ones (flagged)

@@ -24,6 +24,7 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
 from app import schemas
+from app.constants import LEAD_FLOW, LEAD_STAGES, OPPORTUNITY_FLOW, OPPORTUNITY_STAGES
 from app.models import User
 from app.routers import activity, home, leads, opportunities, tasks
 from app.security import acting_user
@@ -85,12 +86,12 @@ TOOLS = [
     _tool("search", "Find leads, opportunities, accounts, contacts and tasks by name, company or email. "
           "Use it to get ids before acting on a record.", {"query": S}, ["query"]),
     _tool("list_leads", "List leads the user can see.", {
-        "stage": {"type": "string", "enum": ["New", "Nurturing", "Demo", "Converted", "Lost"]},
+        "stage": {"type": "string", "enum": LEAD_STAGES},
         "search": S, "owner_name": {"type": "string", "description": "Only this user's leads"}}),
     _tool("get_lead", "Full details of one lead: fields, open tasks, notes, stage and transfer history.",
           {"lead_id": I}, ["lead_id"]),
     _tool("list_opportunities", "List opportunities (deals) the user can see.", {
-        "stage": {"type": "string", "enum": ["Opportunity", "Proposal", "Won", "Lost"]}, "search": S,
+        "stage": {"type": "string", "enum": OPPORTUNITY_STAGES}, "search": S,
         "owner_name": S}),
     _tool("get_opportunity", "Full details of one opportunity.", {"opportunity_id": I}, ["opportunity_id"]),
     _tool("list_tasks", "List open tasks (follow-ups, demos, reminders).", {
@@ -99,21 +100,21 @@ TOOLS = [
     _tool("list_users", "Active users (for owners and transfers)."),
     _tool("pipeline_summary", "Numbers for the dashboard: leads per stage, open deals, won and lost, today's tasks.", {
         "mine_only": {"type": "boolean", "description": "Default false: the whole team the user can see"}}),
-    _tool("create_lead", "Create a lead at stage New. Last name and company are required.", {
-        **LEAD_FIELDS, "owner_name": {"type": "string", "description": "Only when the user names another owner"},
-        "send_welcome_email": {"type": "boolean", "description": "Default false. True only if the user asks to email the lead"}},
+    _tool("create_lead", "Create a lead at stage Unqualified. Last name and company are required.", {
+        **LEAD_FIELDS, "owner_name": {"type": "string", "description": "Only when the user names another owner"}},
         ["last_name", "company"]),
     _tool("update_lead", "Change details of a lead (not its stage or owner).", {"lead_id": I, **LEAD_FIELDS}, ["lead_id"]),
-    _tool("move_lead_stage", "Move a lead to New, Nurturing or Demo. Demo needs demo_date.", {
-        "lead_id": I, "stage": {"type": "string", "enum": ["New", "Nurturing", "Demo"]}, "demo_date": DATE_TIME,
+    _tool("move_lead_stage", "Move a lead to Unqualified, New, Nurturing, Revisit or Demo. Demo needs demo_date.", {
+        "lead_id": I, "stage": {"type": "string", "enum": LEAD_FLOW}, "demo_date": DATE_TIME,
         "note": NOTE, "completed_stages": COMPLETED, **TASK_ARGS}, ["lead_id", "stage", "note", *TASK_REQUIRED]),
     _tool("reschedule_demo", "Move a booked demo to a new date and time (the lead stays at Demo).", {
         "lead_id": I, "new_date": DATE_TIME, "reason": S}, ["lead_id", "new_date"]),
     _tool("convert_lead", "Convert a lead into an account, contact and opportunity.", {
         "lead_id": I, "note": CONVERSION_COMMENT, "opportunity_name": S, "amount": N, "close_date": DATE,
         "completed_stages": COMPLETED, **TASK_ARGS}, ["lead_id", "note", *TASK_REQUIRED]),
-    _tool("move_opportunity_stage", "Move an opportunity to Opportunity or Proposal.", {
-        "opportunity_id": I, "stage": {"type": "string", "enum": ["Opportunity", "Proposal"]}, "note": NOTE,
+    _tool("move_opportunity_stage", "Move an opportunity to Opportunity, Discovery or Proposal.", {
+        "opportunity_id": I, "stage": {"type": "string", "enum": OPPORTUNITY_FLOW}, "note": NOTE,
+        "completed_stages": COMPLETED,
         **TASK_ARGS}, ["opportunity_id", "stage", "note", *TASK_REQUIRED]),
     _tool("create_task", "Create a follow-up task, optionally on a lead or an opportunity.", {
         "title": S, "due_date": DATE_TIME, "priority": {"type": "string", "enum": ["Low", "Normal", "High"]},
@@ -122,20 +123,18 @@ TOOLS = [
     _tool("add_note", "Add a note to a lead or an opportunity.", {"body": S, "lead_id": I, "opportunity_id": I}, ["body"]),
     # the user confirms these in the app before they run
     _tool("mark_lead_lost", "Close a lead as Lost (needs the user's confirmation).", {
-        "lead_id": I, "reason": LOST, "notes": NOTE,
-        "notify_customer": {"type": "boolean", "description": "Default false. True only if the user asks to email the customer"}},
+        "lead_id": I, "reason": LOST, "notes": NOTE},
         ["lead_id", "reason", "notes"]),
-    _tool("cancel_demo", "Cancel a demo and move the lead back to Nurturing (needs confirmation). "
+    _tool("cancel_demo", "Cancel a demo and move the lead back to Revisit (needs confirmation). "
           "To change the date instead, use reschedule_demo.", {"lead_id": I, "reason": NOTE, **TASK_ARGS},
           ["lead_id", "reason", *TASK_REQUIRED]),
     _tool("transfer_lead", "Give a lead to another user (needs confirmation).", {
         "lead_id": I, "to_user_name": S, "note": S}, ["lead_id", "to_user_name"]),
     _tool("mark_opportunity_won", "Close a deal as Won (needs confirmation).", {
-        "opportunity_id": I, "final_amount": N, "note": NOTE, "completed_stages": COMPLETED,
-        "notify_customer": {"type": "boolean", "description": "Default false"}, **TASK_ARGS},
+        "opportunity_id": I, "final_amount": N, "note": NOTE, "completed_stages": COMPLETED, **TASK_ARGS},
         ["opportunity_id", "note", *TASK_REQUIRED]),
     _tool("mark_opportunity_lost", "Close a deal as Lost (needs confirmation).", {
-        "opportunity_id": I, "reason": LOST, "notes": NOTE, "notify_customer": {"type": "boolean"}},
+        "opportunity_id": I, "reason": LOST, "notes": NOTE},
         ["opportunity_id", "reason", "notes"]),
     _tool("delete_lead", "Delete a lead (needs confirmation).", {"lead_id": I}, ["lead_id"]),
 ]
@@ -253,8 +252,7 @@ def run_tool(db: Session, name: str, args: dict) -> tuple[dict, dict | None]:
         return {k: data.get(k) for k in ("summary", "pipeline", "won_vs_lost")}, None
     if name == "create_lead":
         fields = {k: a[k] for k in LEAD_FIELDS if k in a}
-        data = schemas.LeadCreate(**fields, owner_id=_user_id(db, a.get("owner_name")),
-                                  welcome_email=bool(a.get("send_welcome_email")))
+        data = schemas.LeadCreate(**fields, owner_id=_user_id(db, a.get("owner_name")))
         out = _plain(leads.create_lead(data=data, db=db))
         return _lead_row(out), _link("Lead", out)
     if name == "update_lead":
@@ -278,7 +276,8 @@ def run_tool(db: Session, name: str, args: dict) -> tuple[dict, dict | None]:
         opp = out.get("opportunity") or {}
         return {"opportunity": _opp_row(opp), "account": (out.get("account") or {}).get("name")}, _link("Opportunity", opp)
     if name == "move_opportunity_stage":
-        data = schemas.OpportunityStageChange(stage=a["stage"], note=a.get("note"), task=stage_task(a))
+        data = schemas.OpportunityStageChange(stage=a["stage"], note=a.get("note"), task=stage_task(a),
+                                              completed_stages=a.get("completed_stages", []))
         out = _plain(opportunities.change_stage(opportunity_id=a["opportunity_id"], data=data, db=db))
         return _opp_row(out), _link("Opportunity", out)
     if name == "create_task":
@@ -296,8 +295,7 @@ def run_tool(db: Session, name: str, args: dict) -> tuple[dict, dict | None]:
         target = ("Lead", {"id": a["lead_id"]}) if a.get("lead_id") else ("Opportunity", {"id": a.get("opportunity_id")})
         return {"note_added": True, "id": out.get("id")}, _link(*target) if target[1]["id"] else None
     if name == "mark_lead_lost":
-        data = schemas.MarkLost(lost_reason=a["reason"], lost_notes=a.get("notes"),
-                                notify_customer=bool(a.get("notify_customer")))
+        data = schemas.MarkLost(lost_reason=a["reason"], lost_notes=a.get("notes"))
         out = _plain(leads.mark_lost(lead_id=a["lead_id"], data=data, db=db))
         return _lead_row(out), _link("Lead", out)
     if name == "cancel_demo":
@@ -310,13 +308,11 @@ def run_tool(db: Session, name: str, args: dict) -> tuple[dict, dict | None]:
         return _lead_row(out), _link("Lead", out)
     if name == "mark_opportunity_won":
         data = schemas.MarkWon(final_value=a.get("final_amount"), note=a.get("note"),
-                               completed_stages=a.get("completed_stages", []),
-                               notify_customer=bool(a.get("notify_customer")), task=stage_task(a))
+                               completed_stages=a.get("completed_stages", []), task=stage_task(a))
         out = _plain(opportunities.mark_won(opportunity_id=a["opportunity_id"], data=data, db=db))
         return _opp_row(out), _link("Opportunity", out)
     if name == "mark_opportunity_lost":
-        data = schemas.MarkLost(lost_reason=a["reason"], lost_notes=a.get("notes"),
-                                notify_customer=bool(a.get("notify_customer")))
+        data = schemas.MarkLost(lost_reason=a["reason"], lost_notes=a.get("notes"))
         out = _plain(opportunities.mark_lost(opportunity_id=a["opportunity_id"], data=data, db=db))
         return _opp_row(out), _link("Opportunity", out)
     if name == "delete_lead":
@@ -347,14 +343,13 @@ def describe(db: Session, name: str, a: dict) -> str:
     opp = db.get(Opportunity, a["opportunity_id"]) if a.get("opportunity_id") else None
     lname = f'"{lead.name}" ({lead.company})' if lead else f"lead {a.get('lead_id')}"
     oname = f'"{opp.name}"' if opp else f"opportunity {a.get('opportunity_id')}"
-    mail = " The customer will be emailed." if a.get("notify_customer") else ""
     line = {
-        "mark_lead_lost": f"Mark lead {lname} as Lost (reason: {a.get('reason')}).{mail}",
-        "cancel_demo": f"Cancel the demo with {lname} and move it back to Nurturing.",
+        "mark_lead_lost": f"Mark lead {lname} as Lost (reason: {a.get('reason')}).",
+        "cancel_demo": f"Cancel the demo with {lname} and move it back to Revisit.",
         "transfer_lead": f"Transfer lead {lname} to {a.get('to_user_name')}.",
         "mark_opportunity_won": f"Mark {oname} as Won"
-                                + (f" for {a['final_amount']:,.0f}" if a.get("final_amount") is not None else "") + f".{mail}",
-        "mark_opportunity_lost": f"Mark {oname} as Lost (reason: {a.get('reason')}).{mail}",
+                                + (f" for {a['final_amount']:,.0f}" if a.get("final_amount") is not None else "") + ".",
+        "mark_opportunity_lost": f"Mark {oname} as Lost (reason: {a.get('reason')}).",
         "delete_lead": f"Delete lead {lname}. This can't be undone.",
     }.get(name, name)
     note = user_note(name, a)  # the user sees the note that will be saved in the stage history
@@ -378,7 +373,8 @@ def system_prompt() -> str:
         "- Use tools for every fact and action. Never invent ids, names or numbers: search or list first.\n"
         "- If several records match, ask which one. If required details are missing (lead: last name and company; "
         "demo: date and time), ask for them in one short question.\n"
-        "- Lead stages go New -> Nurturing -> Demo -> Convert; deals go Opportunity -> Proposal -> Won. Stages can't be "
+        "- Lead stages go Unqualified -> New -> Nurturing -> Revisit (optional) -> Demo -> Convert; deals go Opportunity "
+        "-> Discovery -> Proposal -> Won. Stages can't be "
         "skipped: if a tool says a stage is missing, ask the user whether it was already done, and only then pass it "
         "in completed_stages.\n"
         "- Every stage change (move, convert, Won, Lost, cancel demo) needs the user's own note explaining it (for a "
@@ -388,7 +384,7 @@ def system_prompt() -> str:
         "post-sale task such as handover or onboarding). Ask for them; never make them up.\n"
         "- Closing actions (Lost, Won, transfer, cancel demo, delete) are confirmed by the user in the app: call the "
         "tool, then tell the user to press Confirm.\n"
-        "- Don't email customers unless the user asks.\n"
+        "- The CRM never emails leads or customers automatically; only the salesperson sends emails, from Send Email.\n"
         "- If a tool returns an error, explain it plainly (e.g. missing permission) and suggest what to do.\n"
         "- Answer briefly. Use short lists for several records. Dates like 5 Nov 2026, 3:00 PM. Amounts like 25,000."
     )

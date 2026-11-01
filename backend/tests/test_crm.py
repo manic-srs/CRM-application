@@ -23,7 +23,7 @@ def new_lead(client, name=None, **extra):
 
 
 def convert(client, lead_id, **body):
-    body.setdefault("completed_stages", ["Nurturing", "Demo"])  # these tests are not about the stage order
+    body.setdefault("completed_stages", ["New", "Nurturing", "Demo"])  # these tests are not about the stage order
     body.setdefault("note", "Synthetic test: converting")
     body.setdefault("task", TASK)
     res = client.post(f"/api/leads/{lead_id}/convert", json=body)
@@ -47,14 +47,14 @@ def test_login(client):
 
 # ---------- leads ----------
 
-def test_create_lead_starts_new_with_first_task(client):
+def test_create_lead_starts_unqualified_with_first_task(client):
     lead = new_lead(client)
-    assert lead["stage"] == "New" and lead["owner_name"] == "Ravi Kumar"
+    assert lead["stage"] == "Unqualified" and lead["owner_name"] == "Ravi Kumar"
     assert (lead["salutation"], lead["first_name"], lead["last_name"], lead["name"]) == ("Mr.", "Arjun", "Mehta", "Arjun Mehta")
     assert (lead["title"], lead["industry"]) == ("Owner", "Education")
-    assert [t["title"] for t in lead["tasks"]] == ["Make first contact - Arjun Mehta"]
+    assert [t["title"] for t in lead["tasks"]] == ["Qualify lead - Arjun Mehta"]
     assert lead["tasks"][0]["is_auto"] is True
-    assert [h["to_stage"] for h in lead["history"]] == ["New"]
+    assert [h["to_stage"] for h in lead["history"]] == ["Unqualified"]
 
 
 def test_lead_validation(client):
@@ -70,9 +70,9 @@ def test_lead_validation(client):
 def test_list_filter_search_and_edit(client):
     a = new_lead(client)
     new_lead(client, name="Neha Gupta", company="UrbanNest", email="neha@un.in")
-    client.put(f"/api/leads/{a['id']}/stage", json={"task": TASK, "stage": "Nurturing", "note": "Synthetic test note"})
+    client.put(f"/api/leads/{a['id']}/stage", json={"task": TASK, "stage": "Nurturing", "completed_stages": ["New"], "note": "Synthetic test note"})
     assert len(client.get("/api/leads").json()) == 2
-    assert [l["name"] for l in client.get("/api/leads", params={"stage": "Nurturing"}).json()] == ["Arjun Mehta"]
+    assert [l["name"] for l in client.get("/api/leads", params={"stage": "Nurturing", "completed_stages": ["New"]}).json()] == ["Arjun Mehta"]
     assert [l["name"] for l in client.get("/api/leads", params={"search": "urban"}).json()] == ["Neha Gupta"]
     assert client.get("/api/leads", params={"stage": "Won"}).status_code == 400
     edited = client.put(f"/api/leads/{a['id']}", json={"phone": "+91 90000 00000"}).json()
@@ -82,20 +82,20 @@ def test_list_filter_search_and_edit(client):
 def test_stage_change_closes_old_task_and_creates_next(client):
     lead = new_lead(client)
     demo_at = "2026-12-01T11:00:00"
-    nurt = client.put(f"/api/leads/{lead['id']}/stage", json={"task": TASK, "stage": "Nurturing", "note": "call in 2 weeks"}).json()
+    nurt = client.put(f"/api/leads/{lead['id']}/stage", json={"task": TASK, "stage": "Nurturing", "completed_stages": ["New"], "note": "call in 2 weeks"}).json()
     assert [t["title"] for t in open_tasks(nurt)] == [TASK["title"]]  # the user's new task, not a system follow-up
     assert any(t["status"] == "Auto-closed" for t in nurt["tasks"])
-    demo = client.put(f"/api/leads/{lead['id']}/stage", json={"task": TASK, "completed_stages": ["Nurturing"], "stage": "Demo", "demo_date": demo_at, "note": "Synthetic test note"}).json()
+    demo = client.put(f"/api/leads/{lead['id']}/stage", json={"task": TASK, "completed_stages": ["New", "Nurturing"], "stage": "Demo", "demo_date": demo_at, "note": "Synthetic test note"}).json()
     assert demo["demo_date"] == demo_at
     # the demo reminder is due at the demo; a prep task is due at 9 AM the day before; and the user's new task
     assert sorted((t["title"], t["due_date"]) for t in open_tasks(demo)) == [
         ("Conduct demo - Arjun Mehta", demo_at), ("Prepare for demo - Arjun Mehta", "2026-11-30T09:00:00"),
         (TASK["title"], TASK["due_date"])]
-    assert [h["to_stage"] for h in demo["history"]] == ["New", "Nurturing", "Demo"]
-    assert demo["history"][1]["note"] == "call in 2 weeks"
+    assert [h["to_stage"] for h in demo["history"]] == ["Unqualified", "New", "Nurturing", "Demo"]
+    assert demo["history"][2]["note"] == "call in 2 weeks"
     # manual correction back is allowed; same stage is not
-    assert client.put(f"/api/leads/{lead['id']}/stage", json={"task": TASK, "stage": "Nurturing", "note": "Synthetic test note"}).status_code == 200
-    assert client.put(f"/api/leads/{lead['id']}/stage", json={"task": TASK, "stage": "Nurturing", "note": "Synthetic test note"}).status_code == 400
+    assert client.put(f"/api/leads/{lead['id']}/stage", json={"task": TASK, "stage": "Nurturing", "completed_stages": ["New"], "note": "Synthetic test note"}).status_code == 200
+    assert client.put(f"/api/leads/{lead['id']}/stage", json={"task": TASK, "stage": "Nurturing", "completed_stages": ["New"], "note": "Synthetic test note"}).status_code == 400
     assert client.put(f"/api/leads/{lead['id']}/stage", json={"task": TASK, "stage": "Converted", "note": "Synthetic test note"}).status_code == 422
 
 
@@ -107,7 +107,7 @@ def test_mark_lead_lost(client):
     assert lost["stage"] == "Lost" and lost["lost_reason"] == "No budget" and lost["closed_at"]
     assert open_tasks(lost) == []
     assert client.put(f"/api/leads/{lead['id']}/stage", json={"task": TASK, "stage": "New", "note": "Synthetic test note"}).status_code == 400
-    assert client.post(f"/api/leads/{lead['id']}/convert", json={"task": TASK, "completed_stages": ["Nurturing", "Demo"], "note": "Synthetic test note"}).status_code == 400
+    assert client.post(f"/api/leads/{lead['id']}/convert", json={"task": TASK, "completed_stages": ["New", "Nurturing", "Demo"], "note": "Synthetic test note"}).status_code == 400
 
 
 # ---------- convert ----------
@@ -130,7 +130,7 @@ def test_convert_creates_account_contact_opportunity(client):
     new_task = res["new_task"]  # the user's task, on the new opportunity (instead of "Send proposal")
     assert (new_task["title"], new_task["opportunity_id"], new_task["lead_id"], new_task["is_auto"]) == (
         TASK["title"], opp["id"], None, False)
-    assert client.post(f"/api/leads/{lead['id']}/convert", json={"task": TASK, "completed_stages": ["Nurturing", "Demo"], "note": "Synthetic test note"}).status_code == 400
+    assert client.post(f"/api/leads/{lead['id']}/convert", json={"task": TASK, "completed_stages": ["New", "Nurturing", "Demo"], "note": "Synthetic test note"}).status_code == 400
 
 
 def test_convert_into_existing_account(client):
@@ -145,22 +145,22 @@ def test_convert_into_existing_account(client):
 
 def test_opportunity_proposal_won(client):
     oid = convert(client, new_lead(client)["id"], expected_value=180000)["opportunity"]["id"]
-    prop = client.put(f"/api/opportunities/{oid}/stage", json={"task": TASK, "stage": "Proposal", "note": "Synthetic test note"}).json()
+    prop = client.put(f"/api/opportunities/{oid}/stage", json={"task": TASK, "stage": "Proposal", "completed_stages": ["Discovery"], "note": "Synthetic test note"}).json()
     # the close-date reminder stays open across Opportunity -> Proposal
     assert sorted(t["title"] for t in open_tasks(prop)) == ["Close date coming up - Bright Future Coaching - Opportunity",
                                                             TASK["title"]]
     assert prop["probability"] == 75
-    won = client.post(f"/api/opportunities/{oid}/won", json={"task": TASK, "completed_stages": ["Proposal"], "note": "Synthetic test note"}).json()
+    won = client.post(f"/api/opportunities/{oid}/won", json={"task": TASK, "completed_stages": ["Discovery", "Proposal"], "note": "Synthetic test note"}).json()
     assert won["stage"] == "Won" and won["final_value"] == 180000 and won["closed_at"] and won["probability"] == 100
     assert [t["title"] for t in open_tasks(won)] == [TASK["title"]]  # only the post-sale task stays open
-    assert [h["to_stage"] for h in won["history"]] == ["Opportunity", "Proposal", "Won"]
+    assert [h["to_stage"] for h in won["history"]] == ["Opportunity", "Discovery", "Proposal", "Won"]
     assert client.post(f"/api/opportunities/{oid}/lost", json={"lost_reason": "Price", "lost_notes": "Synthetic test note"}).status_code == 400
 
 
 def test_won_needs_a_value(client):
     oid = convert(client, new_lead(client)["id"])["opportunity"]["id"]
-    assert client.post(f"/api/opportunities/{oid}/won", json={"task": TASK, "completed_stages": ["Proposal"], "note": "Synthetic test note"}).status_code == 400
-    assert client.post(f"/api/opportunities/{oid}/won", json={"task": TASK, "completed_stages": ["Proposal"], "final_value": 5000, "note": "Synthetic test note"}).json()["final_value"] == 5000
+    assert client.post(f"/api/opportunities/{oid}/won", json={"task": TASK, "completed_stages": ["Discovery", "Proposal"], "note": "Synthetic test note"}).status_code == 400
+    assert client.post(f"/api/opportunities/{oid}/won", json={"task": TASK, "completed_stages": ["Discovery", "Proposal"], "final_value": 5000, "note": "Synthetic test note"}).json()["final_value"] == 5000
 
 
 def test_opportunity_lost_list_and_edit(client):
@@ -217,18 +217,19 @@ def test_home_page(client):
     lost = new_lead(client, name="B")
     client.post(f"/api/leads/{lost['id']}/lost", json={"lost_reason": "Price", "lost_notes": "Synthetic test note"})
     won = convert(client, new_lead(client, name="C", company="Won Co")["id"], expected_value=100000)["opportunity"]["id"]
-    client.post(f"/api/opportunities/{won}/won", json={"task": TASK, "completed_stages": ["Proposal"], "final_value": 90000, "note": "Synthetic test note"})
+    client.post(f"/api/opportunities/{won}/won", json={"task": TASK, "completed_stages": ["Discovery", "Proposal"], "final_value": 90000, "note": "Synthetic test note"})
     today = datetime.now().date().isoformat()
     convert(client, new_lead(client, name="D", company="Open Co")["id"], expected_value=40000, expected_close_date=today)
     later = (datetime.now() + timedelta(days=200)).date().isoformat()  # next quarter or later: not in Close Deals
     convert(client, new_lead(client, name="F", company="Later Co")["id"], expected_value=5000, expected_close_date=later)
     demo = new_lead(client, name="E", company="Demo Co")
-    client.put(f"/api/leads/{demo['id']}/stage", json={"task": TASK, "completed_stages": ["Nurturing"], "stage": "Demo", "demo_date": f"{today}T23:30:00", "note": "Synthetic test note"})
+    client.put(f"/api/leads/{demo['id']}/stage", json={"task": TASK, "completed_stages": ["New", "Nurturing"], "stage": "Demo", "demo_date": f"{today}T23:30:00", "note": "Synthetic test note"})
 
     home = client.get("/api/home").json()
     assert home["summary"]["total_leads"] == 6 and home["summary"]["won_deals"] == 1
     assert {p["stage"]: p["total"] for p in home["pipeline"]} == {
-        "New": 1, "Nurturing": 0, "Demo": 1, "Opportunity": 2, "Proposal": 0, "Won": 1, "Lost": 1}
+        "Unqualified": 1, "New": 0, "Nurturing": 0, "Revisit": 0, "Demo": 1, "Opportunity": 2, "Discovery": 0,
+        "Proposal": 0, "Won": 1, "Lost": 1}
     assert home["won_vs_lost"][0] == {"outcome": "Won", "deals": 1, "value": 90000}
     cards = home["seller_home"]
     deals = cards["close_deals"]
@@ -279,7 +280,7 @@ def test_contacts_and_probability_edit(client):
 def test_demo_reminders_follow_the_demo_date(client):
     lead = new_lead(client)
     lid = lead["id"]
-    client.put(f"/api/leads/{lid}/stage", json={"task": TASK, "completed_stages": ["Nurturing"], "stage": "Demo", "demo_date": "2026-12-01T11:00:00", "note": "Synthetic test note"})
+    client.put(f"/api/leads/{lid}/stage", json={"task": TASK, "completed_stages": ["New", "Nurturing"], "stage": "Demo", "demo_date": "2026-12-01T11:00:00", "note": "Synthetic test note"})
     # reschedule from the Edit form: both demo reminders move and are re-armed; the user's own task keeps its date
     client.put(f"/api/leads/{lid}", json={"demo_date": "2026-12-10T15:30:00"})
     tasks = {t["title"].split(" - ")[0]: t for t in open_tasks(client.get(f"/api/leads/{lid}").json())}
@@ -292,14 +293,14 @@ def test_demo_reminders_follow_the_demo_date(client):
     assert "Lead demo rescheduled" in bell
     # moving back to Nurturing closes both demo reminders
     back = client.put(f"/api/leads/{lid}/stage", json={"task": {**TASK, "title": "Call back after the demo"},
-                                                       "stage": "Nurturing", "note": "Synthetic test note"}).json()
+                                                       "stage": "Nurturing", "completed_stages": ["New"], "note": "Synthetic test note"}).json()
     assert [t["title"] for t in open_tasks(back)] == ["Call back after the demo"]
 
 
 def test_no_prep_task_when_demo_is_too_soon(client):
     lead = new_lead(client)
     soon = (datetime.now() + timedelta(hours=3)).replace(microsecond=0, second=0)
-    demo = client.put(f"/api/leads/{lead['id']}/stage", json={"task": TASK, "completed_stages": ["Nurturing"], "stage": "Demo", "demo_date": soon.isoformat(), "note": "Synthetic test note"}).json()
+    demo = client.put(f"/api/leads/{lead['id']}/stage", json={"task": TASK, "completed_stages": ["New", "Nurturing"], "stage": "Demo", "demo_date": soon.isoformat(), "note": "Synthetic test note"}).json()
     titles = [t["title"] for t in open_tasks(demo)]
     if soon.date() == datetime.now().date():  # prep time (9 AM yesterday) is already past
         assert sorted(titles) == ["Conduct demo - Arjun Mehta", TASK["title"]]
@@ -325,7 +326,7 @@ def test_close_date_reminder(client):
 
 def test_new_owner_gets_the_reminders(client):
     lead = new_lead(client)
-    client.put(f"/api/leads/{lead['id']}/stage", json={"task": TASK, "completed_stages": ["Nurturing"], "stage": "Demo", "demo_date": "2026-12-01T11:00:00", "note": "Synthetic test note"})
+    client.put(f"/api/leads/{lead['id']}/stage", json={"task": TASK, "completed_stages": ["New", "Nurturing"], "stage": "Demo", "demo_date": "2026-12-01T11:00:00", "note": "Synthetic test note"})
     login_as(client, 3).put(f"/api/leads/{lead['id']}", json={"owner_id": 1})  # the Admin transfers it to Priya
     tasks = open_tasks(client.get(f"/api/leads/{lead['id']}").json())
     assert {t["owner_id"] for t in tasks if t["is_auto"]} == {1}  # system reminders follow the new owner

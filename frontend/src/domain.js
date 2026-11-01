@@ -1,6 +1,11 @@
-export const LEAD_STAGES = ["New", "Nurturing", "Demo", "Converted", "Lost"];
+// Lead path (same as backend/app/constants.py): Unqualified -> New -> Nurturing -> Revisit -> Demo -> Converted,
+// or Lost from any open stage. New leads start at Unqualified. Revisit is optional (only when a lead asks to be
+// contacted again later), so it can be passed over; every other stage must be done or confirmed as done.
+export const LEAD_STAGES = ["Unqualified", "New", "Nurturing", "Revisit", "Demo", "Converted", "Lost"];
 // Leads Kanban: the open stages, then Converted and Lost as two separate closed (terminal) columns
-export const LEAD_OPEN_STAGES = ["New", "Nurturing", "Demo"];
+export const LEAD_OPEN_STAGES = ["Unqualified", "New", "Nurturing", "Revisit", "Demo"];
+export const LEAD_FLOW = LEAD_OPEN_STAGES; // then Convert
+export const LEAD_OPTIONAL_STAGES = ["Revisit"];
 export const LEAD_CLOSED_STAGES = ["Converted", "Lost"];
 // the stages each Leads list view contains (the same rule as LIST_VIEWS in backend/app/routers/lead_files.py)
 const LEAD_VIEW_STAGES = { all_open: LEAD_OPEN_STAGES, my_open: LEAD_OPEN_STAGES, converted: ["Converted"], lost: ["Lost"] };
@@ -25,7 +30,19 @@ export function leadStageAction(lead, stage, { canEdit, canConvert }) {
   if (LEAD_OPEN_STAGES.includes(stage)) return { type: "stage", collection: "leads", record: lead, stage };
   return null;
 }
-export const OPPORTUNITY_STAGES = ["Opportunity", "Proposal", "Won", "Lost"];
+// Opportunity path: Opportunity -> Discovery -> Proposal -> Won, or Lost from any open stage
+export const OPPORTUNITY_STAGES = ["Opportunity", "Discovery", "Proposal", "Won", "Lost"];
+export const OPPORTUNITY_OPEN_STAGES = ["Opportunity", "Discovery", "Proposal"];
+export const OPPORTUNITY_FLOW = OPPORTUNITY_OPEN_STAGES; // then Won
+
+// Stages a forward move passes over that must be confirmed as done (as the backend's confirm_skipped):
+// everything between the current stage and the target, except optional stages. to = flow.length means
+// past the end (Convert / Won). Going back skips nothing.
+export function skippedStages(flow, from, to, optional = []) {
+  const start = flow.indexOf(from), end = typeof to === "number" ? to : flow.indexOf(to);
+  if (start < 0 || end <= start) return [];
+  return flow.slice(start + 1, end).filter((stage) => !optional.includes(stage));
+}
 export const LEAD_SOURCES = [
   "Website",
   "Referral",
@@ -129,7 +146,7 @@ export const localInput = (value) => (value ? value.slice(0, 16) : "");
 
 // Every stage change needs the user's note, saved in the Stage History (the backend refuses a blank one too).
 // The popup field that holds it: Note (Change Stage, Convert), Closing Note (Won), Lost Notes (Lost), and the Reason
-// when a cancelled demo moves the lead back to Nurturing. Rescheduling keeps the stage, so its reason stays optional.
+// when a cancelled demo moves the lead back to Revisit. Rescheduling keeps the stage, so its reason stays optional.
 export const STAGE_NOTE_REQUIRED = "Enter a note to change the stage.";
 // Convert uses the same note, labelled "Conversion Comment", with its own message (as the backend says)
 export const CONVERSION_COMMENT_REQUIRED = "Enter a conversion comment.";
@@ -170,7 +187,7 @@ export function stageTaskPayload(values) {
 // Opportunity attachments. The backend checks the same rules again, and the real file content.
 export const ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024; // shown as "20 MB per file"
 export const ATTACHMENT_EXTENSIONS = [".pdf", ".docx", ".jpg", ".jpeg", ".png"];
-export const ATTACHMENT_STAGES = ["Opportunity", "Proposal"]; // files can't be added or deleted after Won / Lost
+export const ATTACHMENT_STAGES = OPPORTUNITY_OPEN_STAGES; // files can't be added or deleted after Won / Lost
 export const WON_FILES_STAGE = "Proposal"; // files added in the Mark as Won popup close the Proposal stage
 export const PREVIEW_TYPES = ["application/pdf", "image/jpeg", "image/png"]; // open in a new tab; Word files download
 const extension = (name) => {
@@ -229,15 +246,7 @@ export function salesOverview(data) {
     lostValue: result("Lost")?.value,
     stages: (
       home?.pipeline ||
-      [
-        "New",
-        "Nurturing",
-        "Demo",
-        "Opportunity",
-        "Proposal",
-        "Won",
-        "Lost",
-      ].map((stage) => ({ stage, total: 0 }))
+      [...LEAD_OPEN_STAGES, ...OPPORTUNITY_OPEN_STAGES, "Won", "Lost"].map((stage) => ({ stage, total: 0 }))
     ).map((item) => ({ stage: item.stage, count: item.total })),
     activeCount: (home?.pipeline || [])
       .filter((item) => !["Won", "Lost"].includes(item.stage))
@@ -251,4 +260,18 @@ export function salesOverview(data) {
         ? Math.round((wonCount / (wonCount + lostCount)) * 100)
         : 0,
   };
+}
+
+// A lead's email must use the company's domain, as its Company Website (the same rule as the backend's
+// services.email_matches_website): "name@acme.com" for acme.com; a subdomain either way is fine.
+export const websiteHost = (url) => {
+  const host = (url || "").trim().toLowerCase().replace(/^[a-z][a-z0-9+.-]*:\/\//, "").split(/[/?:#]/)[0];
+  return host.startsWith("www.") ? host.slice(4) : host;
+};
+export function emailWebsiteProblem(email, website) {
+  const domain = (email || "").trim().toLowerCase().split("@").pop();
+  const host = websiteHost(website);
+  if (!(email || "").includes("@") || !domain || !host) return null;
+  if (domain === host || domain.endsWith(`.${host}`) || host.endsWith(`.${domain}`)) return null;
+  return `The email must use the company's domain: @${domain} doesn't match the company website (${host}). Use the lead's work email, e.g. name@${host}.`;
 }

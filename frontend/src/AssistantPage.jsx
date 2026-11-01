@@ -16,7 +16,7 @@ const QUICK = [
 
 // Example questions, grouped like the menu (click to ask)
 const EXAMPLES = [
-  ["Leads", ["Show my new leads", "Which leads have a demo this week?", "Move the newest lead to Nurturing"]],
+  ["Leads", ["Show my new leads", "Which leads have a demo this week?", "Move the newest lead to New"]],
   ["Opportunities", ["Show my open opportunities", "Which deals close this month?", "Move the biggest open deal to Proposal"]],
   ["Tasks & demos", ["What is overdue?", "What do I have today?", "Reschedule my next demo to Friday 3 PM"]],
   ["Team & pipeline", ["Give me a pipeline summary", "How many deals did we win and lose?", "Who owns the most open leads?"]],

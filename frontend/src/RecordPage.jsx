@@ -5,8 +5,10 @@ import { can, canCreateSales, canTransferLead } from "./permissions";
 import { amount, dateTime, formatPhone, shortDate } from "./format";
 import { ActionMenu, Card, Icon, ObjectIcon, PathBar, StageBadge } from "./ui";
 
-const LEAD_PATH = ["New", "Nurturing", "Demo", "Converted"];
-const OPP_PATH = ["Opportunity", "Proposal", "Won"];
+import { LEAD_FLOW, LEAD_OPTIONAL_STAGES, OPPORTUNITY_FLOW } from "./domain";
+
+const LEAD_PATH = [...LEAD_FLOW, "Converted"];
+const OPP_PATH = [...OPPORTUNITY_FLOW, "Won"];
 
 // A research link (LinkedIn, website) that opens in a new tab
 export function ExternalLink({ href, children }) {
@@ -174,7 +176,8 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
 
   const path = lead ? LEAD_PATH : OPP_PATH;
   const pathStages = item.stage === "Lost" ? [...path.slice(0, -1), "Lost"] : path;
-  const nextStage = path[path.indexOf(item.stage) + 1];
+  // "Mark as Complete" goes to the next required stage: an optional one (Revisit) is chosen on the path itself
+  const nextStage = path.slice(path.indexOf(item.stage) + 1).find((stage) => !LEAD_OPTIONAL_STAGES.includes(stage));
   const selectStage = (stage) => {
     if (stage === "Converted") return canConvert ? convert(item.id) : undefined;
     if (stage === "Won") return setModal({ type: "won", record: item });

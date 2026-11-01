@@ -3,12 +3,13 @@
 // Uploads and downloads are recorded in the Activity Log.
 import React, { useEffect, useRef, useState } from "react";
 import { api } from "./api";
+import { LEAD_STAGES, OPPORTUNITY_STAGES } from "./domain";
 import { can } from "./permissions";
 import { Icon } from "./ui";
 
 const SAMPLE_LEADS = [
-  "First Name,Last Name,Title,Company,Email,Phone,Person Linkedin Url,Website,Company Linkedin Url,Annual Revenue,# Employees,City,State,Country,Lead Source",
-  "Priya,Menon,Head of Operations,Brightline Logistics,priya.menon@brightline.example,+1 512 555 0100,https://www.linkedin.com/in/priya-menon,https://brightline.example,https://www.linkedin.com/company/brightline,12500000,250,Austin,Texas,United States,Website",
+  "First Name,Last Name,Title,Company,Email,Phone,Person Linkedin Url,Website,Company Linkedin Url,Annual Revenue,# Employees,City,State,Country,Lead Source,Lead Owner",
+  "Priya,Menon,Head of Operations,Brightline Logistics,priya.menon@brightline.example,+1 512 555 0100,https://www.linkedin.com/in/priya-menon,https://brightline.example,https://www.linkedin.com/company/brightline,12500000,250,Austin,Texas,United States,Website,",
 ].join("\n");
 const SAMPLE_OPPS = [
   "Opportunity Name,Company,Amount,Close Date,Stage,Contact Name,Contact Email,Lost Reason",
@@ -21,7 +22,7 @@ const OBJECTS = {
     one: "lead",
     sample: SAMPLE_LEADS,
     intro: "Import leads from an Excel (.xlsx) or CSV file.",
-    rules: ["Required: Last Name, Company", "Duplicates of open leads are skipped", "Leads start at New", "No emails are sent"],
+    rules: ["Required: Last Name, Company", "Email must match the company website", "Emails already in the CRM are skipped", "Leads start at Unqualified"],
     columns: [
       ["Name", (l) => [l.first_name, l.last_name].filter(Boolean).join(" ")],
       ["Title", (l) => l.title],
@@ -29,15 +30,16 @@ const OBJECTS = {
       ["Email", (l) => l.email],
       ["Location", (l) => l.location],
       ["LinkedIn", (l) => (l.linkedin_url ? "Yes" : "")],
+      ["Owner", (l) => l.owner_name || ""],
     ],
-    stages: [["all", "All leads I can see"], ["open", "Open leads"], ["new", "New"], ["nurturing", "Nurturing"], ["demo", "Demo"], ["converted", "Converted"], ["lost", "Lost"]],
+    stages: [["all", "All leads I can see"], ["open", "Open leads"], ...LEAD_STAGES.map((s) => [s.toLowerCase(), s])],
   },
   opportunities: {
     label: "Opportunities",
     one: "opportunity",
     sample: SAMPLE_OPPS,
     intro: "Import opportunities from an Excel (.xlsx) or CSV file.",
-    rules: ["Required: Opportunity Name or Company", "Stage: Opportunity, Proposal, Won or Lost", "Won requires an Amount", "Existing deals are skipped"],
+    rules: ["Required: Opportunity Name or Company", "Stage: Opportunity, Discovery, Proposal, Won or Lost", "Won requires an Amount", "Existing deals are skipped"],
     columns: [
       ["Opportunity", (o) => o.name],
       ["Company", (o) => o.company],
@@ -46,7 +48,7 @@ const OBJECTS = {
       ["Close Date", (o) => o.close_date],
       ["Contact", (o) => o.contact],
     ],
-    stages: [["all", "All opportunities I can see"], ["open", "Open opportunities"], ["opportunity", "Opportunity"], ["proposal", "Proposal"], ["won", "Won"], ["lost", "Lost"]],
+    stages: [["all", "All opportunities I can see"], ["open", "Open opportunities"], ...OPPORTUNITY_STAGES.map((s) => [s.toLowerCase(), s])],
   },
 };
 
@@ -90,6 +92,11 @@ export function UploadLeads({ object = "leads", user, data, onClose, onDone, not
   const owners = (data.users || []).filter((u) => u.is_active !== false && u.role !== "Admin");
   const [file, setFile] = useState(null);
   const [owner, setOwner] = useState(admin ? "" : String(user.id));
+  // Leads only: who owns them, as in Salesforce's Data Import Wizard
+  const [assign, setAssign] = useState("one");
+  const [team, setTeam] = useState([]); // "even": the people to share between
+  const leads = object === "leads";
+  const changed = (fn) => (...args) => (fn(...args), setCheck(null));
   const [check, setCheck] = useState(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -102,11 +109,19 @@ export function UploadLeads({ object = "leads", user, data, onClose, onDone, not
   };
   const send = async (dryRun) => {
     if (!file) return setError("Choose an Excel (.xlsx) or CSV file.");
-    if (admin && !owner) return setError(`Choose who will own the uploaded ${info.label.toLowerCase()}.`);
+    if (assign === "even" && team.length < 1) return setError("Choose the people to share the leads between.");
+    if (assign !== "even" && admin && !owner)
+      return setError(assign === "column"
+        ? "Choose who gets the rows without a Lead Owner."
+        : `Choose who will own the uploaded ${info.label.toLowerCase()}.`);
     setBusy(dryRun ? "check" : "upload");
     setError("");
     try {
-      const result = await api.importData(object, file, { ownerId: owner, dryRun });
+      const result = await api.importData(object, file, {
+        ownerId: assign === "even" ? "" : owner,
+        dryRun,
+        ...(leads ? { assign, ownerIds: assign === "even" ? team : [] } : {}),
+      });
       if (dryRun) setCheck(result);
       else {
         const word = result.created === 1 ? info.one : info.label.toLowerCase();
@@ -171,7 +186,7 @@ export function UploadLeads({ object = "leads", user, data, onClose, onDone, not
       <button type="button" className="link sample-link" onClick={() => saveText(`SalesTrack-${object}-upload-sample.csv`, info.sample)}>
         Download sample file
       </button>
-      {canAssign && (
+      {canAssign && !leads && (
         <label className="field">
           <span>
             Owner <i>*</i>
@@ -186,6 +201,54 @@ export function UploadLeads({ object = "leads", user, data, onClose, onDone, not
           </select>
         </label>
       )}
+      {canAssign && leads && (
+        <fieldset className="assign-box" disabled={!!busy}>
+          <legend>Assign leads</legend>
+          {[
+            ["one", "Assign all to one person"],
+            ["column", "Use the Lead Owner column in the file", "The owner's email or full name. Rows without one go to:"],
+            ["even", "Share evenly between people (round-robin)"],
+          ].map(([value, label, hint]) => (
+            <div key={value} className={`assign-option ${assign === value ? "on" : ""}`}>
+              <label className="assign-choice">
+                <input type="radio" name="assign" value={value} checked={assign === value} onChange={changed(() => setAssign(value))} />
+                <span>{label}</span>
+              </label>
+              {assign === value && value !== "even" && (
+                <div className="assign-detail">
+                  {hint && <small>{hint}</small>}
+                  <select value={owner} onChange={changed((e) => setOwner(e.target.value))} aria-label={value === "one" ? "Owner" : "Default owner"}>
+                    {admin && <option value="">Choose a Manager or Salesperson</option>}
+                    {owners.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.full_name} ({u.role})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {assign === value && value === "even" && (
+                <div className="assign-detail assign-people">
+                  {owners.map((u) => (
+                    <label key={u.id} className={`person-chip ${team.includes(String(u.id)) ? "on" : ""}`}>
+                      <input
+                        type="checkbox"
+                        checked={team.includes(String(u.id))}
+                        onChange={changed((e) =>
+                          setTeam((t) => (e.target.checked ? [...t, String(u.id)] : t.filter((id) => id !== String(u.id)))),
+                        )}
+                      />
+                      {u.full_name}
+                    </label>
+                  ))}
+                  <small>{team.length ? `${team.length} selected · leads are shared in turn` : "Pick two or more people"}</small>
+                </div>
+              )}
+            </div>
+          ))}
+        </fieldset>
+      )}
+      {!canAssign && leads && <p className="field-hint">The uploaded leads will be assigned to you.</p>}
       {check && (
         <div className="upload-check">
           <div className="upload-counts">
@@ -207,8 +270,18 @@ export function UploadLeads({ object = "leads", user, data, onClose, onDone, not
               </span>
             )}
           </div>
+          {check.owners?.length > 0 && (
+            <div className="owner-split" aria-label="Owners">
+              <span>Assigned to</span>
+              {check.owners.map((o) => (
+                <span key={o.id} className="owner-pill">
+                  {o.name} <b>{n(o.count)}</b>
+                </span>
+              ))}
+            </div>
+          )}
           <p className="field-hint">
-            Owner: <b>{check.owner}</b> • Matched columns: {check.columns_used.join(", ")}
+            {!check.owners?.length && <>Owner: <b>{check.owner}</b> • </>}Matched columns: {check.columns_used.join(", ")}
             {check.columns_ignored.length > 0 && <> • Ignored: {check.columns_ignored.join(", ")}</>}
           </p>
           {check.preview.length > 0 && (

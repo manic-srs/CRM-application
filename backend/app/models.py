@@ -127,7 +127,7 @@ class Lead(Base):
     untouched: Mapped[bool] = mapped_column(default=False, server_default="false")
     uploaded_from: Mapped[str | None] = mapped_column(String(255))  # file name, for leads created by an upload
     source: Mapped[str] = mapped_column(String(20), default="Other")
-    stage: Mapped[str] = mapped_column(String(20), default="New")   # New/Nurturing/Demo/Converted/Lost
+    stage: Mapped[str] = mapped_column(String(20), default="Unqualified")   # constants.LEAD_STAGES
     demo_date: Mapped[datetime | None]
     lost_reason: Mapped[str | None] = mapped_column(String(20))
     lost_notes: Mapped[str | None] = mapped_column(Text)
@@ -169,7 +169,7 @@ class Opportunity(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
-    stage: Mapped[str] = mapped_column(String(20), default="Opportunity")   # Opportunity/Proposal/Won/Lost
+    stage: Mapped[str] = mapped_column(String(20), default="Opportunity")   # constants.OPPORTUNITY_STAGES
     expected_value: Mapped[Decimal | None]
     final_value: Mapped[Decimal | None]
     expected_close_date: Mapped[date | None]

@@ -30,7 +30,7 @@ test(
     };
     const stageTask = { title: "Integration follow-up", due_date: "2030-01-15T10:00:00" }; // stage changes need one
     const lead = await api.saveLead(values);
-    assert.equal(lead.stage, "New");
+    assert.equal(lead.stage, "Unqualified"); // new leads start at Unqualified
     assert.ok(lead.id);
     assert.equal(lead.tasks[0].status, "Open");
     assert.ok(lead.tasks[0].is_auto);
@@ -48,7 +48,7 @@ test(
       api.stage("leads", lead.id, { stage: "Nurturing", note: "Integration check: first call done" }),
       /Add a new task for this stage change/,
     );
-    let detail = await api.stage("leads", lead.id, { stage: "Nurturing", note: "Integration check: first call done", task: stageTask });
+    let detail = await api.stage("leads", lead.id, { stage: "Nurturing", note: "Integration check: first call done", task: stageTask, completed_stages: ["New"] });
     assert.ok(detail.tasks.some((task) => task.status === "Auto-closed"));
     const demo = await api.stage("leads", lead.id, {
       stage: "Demo",
@@ -97,6 +97,7 @@ test(
       stage: "Proposal",
       note: "Integration check: proposal sent",
       task: stageTask,
+      completed_stages: ["Discovery"],
     });
     assert.equal(proposal.probability, 75);
     const won = await api.won(opp.id, { final_value: 1200, note: "Integration check: signed", task: { ...stageTask, title: "Integration handover" } });

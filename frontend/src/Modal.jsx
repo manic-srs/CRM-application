@@ -6,12 +6,17 @@ import { StageFiles } from "./Attachments";
 import LinkedInField from "./LeadAutofill";
 import {
   ATTACHMENT_STAGES,
+  LEAD_FLOW,
+  LEAD_OPTIONAL_STAGES,
   LEAD_SOURCES,
   LOST_REASONS,
   PRIORITIES,
   SALUTATIONS,
+  OPPORTUNITY_FLOW,
   WON_FILES_STAGE,
+  emailWebsiteProblem,
   localInput,
+  skippedStages,
   stageNote,
   stageNoteField,
   stageNoteMessage,
@@ -106,8 +111,7 @@ export default function Modal({ modal, close, data, run, notify, user }) {
         <small className="field-hint">You can still save. Check with the owner so two people don't work the same company.</small>
       </div>
     );
-  const confirmDuplicate = useRef(false);
-  // Cancel Demo: "reschedule" (pick a new date, stay at Demo) or "nurturing" (cancel, back to Nurturing)
+  // Cancel Demo: "reschedule" (pick a new date, stay at Demo) or "nurturing" (cancel, back to Revisit)
   const [demoChoice, setDemoChoice] = useState("reschedule");
   const [relatedType, setRelatedType] = useState(
     record?.relatedType || modal.relatedType || "general",
@@ -202,30 +206,29 @@ export default function Modal({ modal, close, data, run, notify, user }) {
       />
     </label>
   );
-  // Stage order: a deal can't skip a stage. Stages skipped on the way must be confirmed as done (saved in history).
-  const LEAD_FLOW = ["New", "Nurturing", "Demo"];
-  const skippedStages = (() => {
+  // Stage order: a record can't skip a stage. Stages skipped on the way must be confirmed as done (saved in history);
+  // optional stages (Revisit) may be passed over.
+  const skipped = (() => {
     if (!record) return [];
-    if (type === "stage" && modal.collection === "leads") {
-      const from = LEAD_FLOW.indexOf(record.stage), to = LEAD_FLOW.indexOf(modal.stage);
-      return to > from ? LEAD_FLOW.slice(from + 1, to) : [];
-    }
-    if (type === "convert") return LEAD_FLOW.slice(LEAD_FLOW.indexOf(record.stage) + 1);
-    if (type === "won") return record.stage === "Opportunity" ? ["Proposal"] : [];
+    if (type === "stage" && modal.collection === "leads")
+      return skippedStages(LEAD_FLOW, record.stage, modal.stage, LEAD_OPTIONAL_STAGES);
+    if (type === "stage" && modal.collection === "opportunities") return skippedStages(OPPORTUNITY_FLOW, record.stage, modal.stage);
+    if (type === "convert") return skippedStages(LEAD_FLOW, record.stage, LEAD_FLOW.length, LEAD_OPTIONAL_STAGES);
+    if (type === "won") return skippedStages(OPPORTUNITY_FLOW, record.stage, OPPORTUNITY_FLOW.length);
     return [];
   })();
   const skipPayload = (v) =>
-    skippedStages.length
-      ? { completed_stages: skippedStages.filter((stage) => v[`done_${stage}`] === "on"), completed_note: v.completed_note || null }
+    skipped.length
+      ? { completed_stages: skipped.filter((stage) => v[`done_${stage}`] === "on"), completed_note: v.completed_note || null }
       : {};
   const skippedChecklist = () =>
-    skippedStages.length > 0 && (
+    skipped.length > 0 && (
       <div className="skip-box" role="group" aria-label="Skipped stages">
         <p>
           <Icon name="warn" size={14} /> Stages can't be skipped. Confirm that{" "}
-          {skippedStages.length > 1 ? "these stages were" : "this stage was"} completed:
+          {skipped.length > 1 ? "these stages were" : "this stage was"} completed:
         </p>
-        {skippedStages.map((stage) => (
+        {skipped.map((stage) => (
           <label key={stage} className="check-field">
             <input type="checkbox" name={`done_${stage}`} required /> {stage} completed
           </label>
@@ -236,20 +239,6 @@ export default function Modal({ modal, close, data, run, notify, user }) {
         </label>
       </div>
     );
-  // Tick box for the no-reply email to the customer (ticked by default; the backend skips it if there is no email)
-  const customerEmail =
-    type === "won"
-      ? data.contacts.find((c) => c.id === record?.primary_contact_id)?.email
-      : record?.email;
-  const customerCheck = (label, hint) => (
-    <label className="check-field welcome-check">
-      <input type="checkbox" name="notify_customer" defaultChecked={!!customerEmail} disabled={!customerEmail} />
-      <span>
-        {label}
-        <small>{customerEmail ? `To ${customerEmail}. ${hint}` : "No email address on this record, so nothing is sent."}</small>
-      </span>
-    </label>
-  );
   const textArea = (label, name, value = "") => (
     <label className="field">
       <span>{label}</span>
@@ -316,8 +305,12 @@ export default function Modal({ modal, close, data, run, notify, user }) {
         <input type="hidden" name="owner_id" value={record?.owner_id ?? user?.id ?? ""} />
         {type === "lead" && record && <small className="field-hint">Use Transfer on the lead page to change the owner.</small>}
       </label>
-    ) : select("Owner", "owner_id", [
-      ...data.users.map((user) => [user.id, user.full_name]),
+    ) : select(type === "lead" ? "Lead Owner (assign to)" : "Owner", "owner_id", [
+      // records are owned by active Managers and Salespeople (the Admin doesn't own leads)
+      ...data.users
+        .filter((u) => u.is_active !== false && u.role !== "Admin")
+        .sort((a, b) => a.full_name.localeCompare(b.full_name))
+        .map((u) => [u.id, `${u.full_name} (${u.role})`]),
       ...(record?.owner_id &&
       !data.users.some((user) => user.id === record.owner_id)
         ? [[record.owner_id, record.owner || "Current owner"]]
@@ -354,7 +347,7 @@ export default function Modal({ modal, close, data, run, notify, user }) {
     stage: "The next follow-up for this stage (instead of the system's automatic one).",
     convert: "The first task of the new opportunity.",
     won: "A post-sale task, such as handover or onboarding. It stays open after the deal is won.",
-    cancelDemo: "The next follow-up now that the lead is back in Nurturing.",
+    cancelDemo: "The next follow-up now that the lead is back in Revisit.",
   };
   const taskSection = () => (
     <fieldset className="stage-task">
@@ -385,35 +378,33 @@ export default function Modal({ modal, close, data, run, notify, user }) {
       </label>
     </fieldset>
   );
-  // The green message after saving says what happened (the customer email, if any, is mentioned too)
+  // The green message after saving says what happened
   const doneMessage = (v, saved) => {
     const name = record?.name;
-    const mailed = v.notify_customer === "on" ? " The customer was emailed." : "";
     if (type === "convert") return "Lead converted. Account, contact, opportunity and follow-up task created.";
     if (type === "lead" && !record)
-      return `Lead "${saved.name}" was created.${v.welcome_email === "on" && v.email ? " A welcome email was sent to the lead." : ""}`;
+      return `Lead "${saved.name}" was created.`;
     if (type === "stage") return `"${name}" moved to ${modal.stage}. The next follow-up task was created.${attachedText}`;
-    if (type === "won") return `"${name}" was marked as Won. The new task was created.${mailed}${attachedText}`;
-    if (type === "lost") return `"${name}" was marked as Lost.${mailed}`;
+    if (type === "won") return `"${name}" was marked as Won. The new task was created.${attachedText}`;
+    if (type === "lost") return `"${name}" was marked as Lost.`;
     if (type === "task") return record ? "Task updated." : "Task created.";
     if (type === "note") return "Note added.";
     if (type === "transfer") return `"${name}" was transferred to ${saved?.owner_name || "the new owner"}.`;
     if (type === "cancelDemo")
       return demoChoice === "reschedule"
         ? `The demo with "${name}" was rescheduled to ${new Date(v.reschedule_to).toLocaleString()}. Its reminders moved too.`
-        : `The demo with "${name}" was cancelled. The lead is back in Nurturing with a follow-up call.`;
+        : `The demo with "${name}" was cancelled. The lead is back in Revisit with your follow-up task.`;
     if (type === "account") return `Account "${saved.name}" was created.`;
     if (type === "contact") return `Contact "${saved.full_name || v.last_name}" was created.`;
     return "Your changes were saved.";
   };
   const duplicateBox = () =>
     duplicate && (
-      <div className={`dup-box ${duplicate.has_open_lead ? "blocked" : ""}`} role="alert">
+      <div className="dup-box blocked" role="alert">
         <p>
           <Icon name="warn" size={14} />
-          {duplicate.has_open_lead
-            ? "This email already has an open lead. Use that lead instead of creating a new one."
-            : "This email is already in the CRM. Is this a returning customer?"}
+          This email is already in the CRM. Each email can belong to one lead only: use the record below, or ask its
+          owner or a Manager.
         </p>
         <ul>
           {duplicate.matches.map((m) => (
@@ -434,24 +425,11 @@ export default function Modal({ modal, close, data, run, notify, user }) {
           ))}
         </ul>
         <div className="dup-actions">
-          {!duplicate.has_open_lead && (
-            <button
-              type="button"
-              className="sf-button brand small"
-              onClick={() => {
-                confirmDuplicate.current = true;
-                ref.current.querySelector("form").requestSubmit();
-              }}
-            >
-              Create new lead for this customer
-            </button>
-          )}
           <button
             type="button"
             className="sf-button small"
             onClick={() => {
               setDuplicate(null);
-              confirmDuplicate.current = false;
               ref.current.querySelector("input[name=email]")?.focus();
             }}
           >
@@ -491,14 +469,17 @@ export default function Modal({ modal, close, data, run, notify, user }) {
         ].filter(([name]) => !(v[name] || "").trim());
         if (missing.length) throw new Error(`Please fill in: ${missing.map(([, label]) => label).join(", ")}.`);
         const email = (v.email || "").trim().toLowerCase();
-        if (!record && email && !(confirmDuplicate.current && duplicate?.email === email)) {
+        const domainProblem = emailWebsiteProblem(email, v.company_website);
+        if (domainProblem) throw new Error(domainProblem);
+        if (email && email !== (record?.email || "").trim().toLowerCase()) {
           const check = await api.leadDuplicates(email);
-          if (check.matches.length) {
-            setDuplicate(check); // show who has it, and let the salesperson decide
+          const others = check.matches.filter((m) => !(m.type === "Lead" && String(m.id) === String(record?.id)));
+          if (others.length) {
+            setDuplicate({ ...check, matches: others }); // show who has it (emails are unique)
             return;
           }
         }
-        saved = await run("saveLead", { ...v, confirm_duplicate: confirmDuplicate.current }, record?.id, user?.id);
+        saved = await run("saveLead", v, record?.id, user?.id);
       }
       if (type === "opportunity")
         saved = await run("saveOpportunity", v, record.id, user?.id);
@@ -518,14 +499,12 @@ export default function Modal({ modal, close, data, run, notify, user }) {
         await run("lost", modal.collection, record.id, {
           lost_reason: v.lost_reason,
           lost_notes: stageNote(v.lost_notes),
-          notify_customer: v.notify_customer === "on",
         });
       if (type === "won") {
         const values = {
           final_value: v.final_value === "" ? null : Number(v.final_value),
           note: stageNote(v.note),
           task: stageTaskPayload(v),
-          notify_customer: v.notify_customer === "on",
           ...skipPayload(v),
         };
         await (stageFiles.length ? run("wonWithFiles", record.id, values, stageFiles) : run("won", record.id, values));
@@ -542,7 +521,7 @@ export default function Modal({ modal, close, data, run, notify, user }) {
           ...skipPayload(v),
         });
       if (type === "stage" && stageFilesOn && stageFiles.length)
-        await run("stageWithFiles", record.id, { stage: modal.stage, note: stageNote(v.note), task: stageTaskPayload(v) }, stageFiles);
+        await run("stageWithFiles", record.id, { stage: modal.stage, note: stageNote(v.note), task: stageTaskPayload(v), ...skipPayload(v) }, stageFiles);
       else if (type === "stage")
         await run("stage", modal.collection, record.id, {
           stage: modal.stage,
@@ -683,15 +662,6 @@ export default function Modal({ modal, close, data, run, notify, user }) {
               {field("Company LinkedIn URL", "company_linkedin_url", "text", true)}
               {field("Turnover (USD)", "annual_revenue", "number")}
               {field("Headcount", "employees", "number")}
-              {!record && (
-                <label className="check-field welcome-check">
-                  <input type="checkbox" name="welcome_email" defaultChecked />
-                  <span>
-                    Send the lead a welcome email
-                    <small>An automatic (no-reply) email to the lead's email address saying their profile was created and who will contact them.</small>
-                  </span>
-                </label>
-              )}
               {record &&
                 field(
                   "Demo Date",
@@ -816,10 +786,6 @@ export default function Modal({ modal, close, data, run, notify, user }) {
             <>
               {select("Lost Reason", "lost_reason", LOST_REASONS, "", true)}
               {noteBox("Lost Notes", "lost_notes")}
-              {customerCheck(
-                "Send the customer a polite closing email",
-                "A short thank-you (no-reply). The lost reason and notes are internal and are never sent.",
-              )}
             </>
           )}
           {type === "won" && (
@@ -835,10 +801,6 @@ export default function Modal({ modal, close, data, run, notify, user }) {
               {noteBox("Closing Note", "note")}
               {taskSection()}
               <StageFiles files={stageFiles} setFiles={setStageFiles} stage={WON_FILES_STAGE} saving={submitting} />
-              {customerCheck(
-                "Send the customer a thank-you email",
-                "A no-reply email to the deal's contact: thank you for accepting the proposal, and who will contact them about next steps.",
-              )}
             </>
           )}
           {type === "convert" && (
@@ -925,11 +887,11 @@ export default function Modal({ modal, close, data, run, notify, user }) {
                     checked={demoChoice === "nurturing"}
                     onChange={() => setDemoChoice("nurturing")}
                   />
-                  <span>Cancel the demo and move the lead back to Nurturing (a follow-up call is created)</span>
+                  <span>Cancel the demo and move the lead back to Revisit</span>
                 </label>
               </fieldset>
               {demoChoice === "reschedule" && field("New Demo Date", "reschedule_to", "datetime-local", true, "")}
-              {/* going back to Nurturing is a stage change, so the reason is its required note */}
+              {/* going back to Revisit is a stage change, so the reason is its required note */}
               {demoChoice === "nurturing" ? noteBox("Reason", "reason") : textArea("Reason", "reason")}
               {taskNeeded && taskSection()}
             </>

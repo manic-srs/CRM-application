@@ -35,33 +35,33 @@ def mine(record):
 # ---------- each stage change that needs a task, with everything but the task ready ----------
 
 def lead_forward(client):
-    return "put", f"/api/leads/{new_lead(client)['id']}/stage", {"stage": "Nurturing", "note": NOTE}
+    return "put", f"/api/leads/{new_lead(client)['id']}/stage", {"stage": "Nurturing", "completed_stages": ["New"], "note": NOTE}
 
 
 def lead_backward(client):
     lead = new_lead(client)
-    ok(client.put(f"/api/leads/{lead['id']}/stage", json={"stage": "Nurturing", "note": NOTE, "task": HANDOVER}))
+    ok(client.put(f"/api/leads/{lead['id']}/stage", json={"stage": "Nurturing", "completed_stages": ["New"], "note": NOTE, "task": HANDOVER}))
     return "put", f"/api/leads/{lead['id']}/stage", {"stage": "New", "note": NOTE}
 
 
 def lead_convert(client):
-    return "post", f"/api/leads/{new_lead(client)['id']}/convert", {"note": NOTE, "completed_stages": ["Nurturing", "Demo"]}
+    return "post", f"/api/leads/{new_lead(client)['id']}/convert", {"note": NOTE, "completed_stages": ["New", "Nurturing", "Demo"]}
 
 
 def lead_cancel_demo(client):
     lead = new_lead(client)
     ok(client.put(f"/api/leads/{lead['id']}/stage", json={"stage": "Demo", "demo_date": "2030-01-01T11:00:00",
-                                                          "completed_stages": ["Nurturing"], "note": NOTE, "task": HANDOVER}))
+                                                          "completed_stages": ["New", "Nurturing"], "note": NOTE, "task": HANDOVER}))
     return "post", f"/api/leads/{lead['id']}/cancel-demo", {"reason": "Client travelling"}
 
 
 def opportunity_forward(client):
-    return "put", f"/api/opportunities/{new_opportunity(client)['id']}/stage", {"stage": "Proposal", "note": NOTE}
+    return "put", f"/api/opportunities/{new_opportunity(client)['id']}/stage", {"stage": "Proposal", "completed_stages": ["Discovery"], "note": NOTE}
 
 
 def opportunity_won(client):
     return "post", f"/api/opportunities/{new_opportunity(client)['id']}/won", {"note": NOTE,
-                                                                            "completed_stages": ["Proposal"]}
+                                                                            "completed_stages": ["Discovery", "Proposal"]}
 
 
 CHANGES = [lead_forward, lead_backward, lead_convert, lead_cancel_demo, opportunity_forward, opportunity_won]
@@ -96,7 +96,7 @@ def test_a_missing_or_invalid_task_is_refused_and_nothing_changes(client, sent, 
                          ids=["missing", "blank subject", "no due", "not json"])
 def test_popups_with_files_need_the_task_too(client, sent, path, task, expected):
     opp = new_opportunity(client)
-    form = ({"stage": "Proposal"} if path == "stage-with-files" else {"completed_stages": ["Proposal"]}) | {"note": NOTE}
+    form = ({"stage": "Proposal", "completed_stages": ["Discovery"]} if path == "stage-with-files" else {"completed_stages": ["Discovery", "Proposal"]}) | {"note": NOTE}
     before, mails = snapshot(), len(sent)
     res = client.post(f"/api/opportunities/{opp['id']}/{path}", data=form | ({"task": task} if task else {}),
                       files=[("files", ("quote.pdf", pdf_file(), PDF))])
@@ -110,7 +110,7 @@ def test_popups_with_files_need_the_task_too(client, sent, path, task, expected)
 def test_the_assignee_follows_the_task_rules(client, sent):
     lead = new_lead(client)  # Ravi's
     before = snapshot()
-    body = {"stage": "Nurturing", "note": NOTE}
+    body = {"stage": "Nurturing", "completed_stages": ["New"], "note": NOTE}
     for owner in (PRIYA, 999):  # a Salesperson can't give tasks to others (as on the Tasks page)
         res = client.put(f"/api/leads/{lead['id']}/stage", json=body | {"task": HANDOVER | {"owner_id": owner}})
         assert res.status_code == 403, res.text
@@ -135,7 +135,7 @@ def test_the_assignee_follows_the_task_rules(client, sent):
 
 def test_a_lead_move_saves_the_users_task_instead_of_the_system_follow_up(client, sent):
     lead = new_lead(client)
-    moved = ok(client.put(f"/api/leads/{lead['id']}/stage", json={"stage": "Nurturing", "note": NOTE, "task": TASK}))
+    moved = ok(client.put(f"/api/leads/{lead['id']}/stage", json={"stage": "Nurturing", "completed_stages": ["New"], "note": NOTE, "task": TASK}))
     [task] = open_tasks(moved)  # no "Follow-up call" next to it; "Make first contact" is closed
     assert (task["title"], task["due_date"], task["priority"], task["reminder_at"], task["description"], task["is_auto"],
             task["lead_id"], task["owner_id"]) == ("Call the buyer about the budget", TASK["due_date"], "High",
@@ -151,19 +151,19 @@ def test_a_lead_move_saves_the_users_task_instead_of_the_system_follow_up(client
 def test_demo_reminders_stay_with_the_demo_date(client):
     lead = new_lead(client)
     demo = ok(client.put(f"/api/leads/{lead['id']}/stage", json={"stage": "Demo", "demo_date": "2030-03-04T15:00:00",
-                                                                 "completed_stages": ["Nurturing"], "note": NOTE, "task": TASK}))
+                                                                 "completed_stages": ["New", "Nurturing"], "note": NOTE, "task": TASK}))
     assert sorted((t["title"].split(" - ")[0], t["is_auto"]) for t in open_tasks(demo)) == [
         ("Call the buyer about the budget", False), ("Conduct demo", True), ("Prepare for demo", True)]
     # without a demo date there is no demo to remind about: only the user's task
     other = new_lead(client)
-    no_date = ok(client.put(f"/api/leads/{other['id']}/stage", json={"stage": "Demo", "completed_stages": ["Nurturing"],
+    no_date = ok(client.put(f"/api/leads/{other['id']}/stage", json={"stage": "Demo", "completed_stages": ["New", "Nurturing"],
                                                                      "note": NOTE, "task": TASK}))
     assert [t["title"] for t in open_tasks(no_date)] == ["Call the buyer about the budget"]
 
 
 def test_conversion_puts_the_task_on_the_new_opportunity(client):
     lead = new_lead(client)
-    res = ok(client.post(f"/api/leads/{lead['id']}/convert", json={"note": NOTE, "completed_stages": ["Nurturing", "Demo"],
+    res = ok(client.post(f"/api/leads/{lead['id']}/convert", json={"note": NOTE, "completed_stages": ["New", "Nurturing", "Demo"],
                                                                     "expected_value": 900, "task": TASK}))
     opp = client.get(f"/api/opportunities/{res['opportunity']['id']}").json()
     assert res["new_task"]["opportunity_id"] == opp["id"] and res["new_task"]["lead_id"] is None
@@ -174,14 +174,14 @@ def test_conversion_puts_the_task_on_the_new_opportunity(client):
 
 def test_an_opportunity_move_keeps_the_close_date_reminder(client):
     opp = new_opportunity(client)
-    moved = ok(client.put(f"/api/opportunities/{opp['id']}/stage", json={"stage": "Proposal", "note": NOTE, "task": TASK}))
+    moved = ok(client.put(f"/api/opportunities/{opp['id']}/stage", json={"stage": "Proposal", "completed_stages": ["Discovery"], "note": NOTE, "task": TASK}))
     assert sorted(t["title"].split(" - ")[0] for t in open_tasks(moved)) == ["Call the buyer about the budget",
                                                                             "Close date coming up"]
 
 
 def test_the_won_task_stays_open_and_can_be_managed_after_closing(client, sent):
     opp = new_opportunity(client)
-    ok(client.put(f"/api/opportunities/{opp['id']}/stage", json={"stage": "Proposal", "note": NOTE, "task": TASK}))
+    ok(client.put(f"/api/opportunities/{opp['id']}/stage", json={"stage": "Proposal", "completed_stages": ["Discovery"], "note": NOTE, "task": TASK}))
     won = ok(client.post(f"/api/opportunities/{opp['id']}/won", json={"note": NOTE, "task": HANDOVER,
                                                                        "notify_customer": False}))
     assert won["stage"] == "Won"
@@ -217,7 +217,7 @@ def test_cancelling_a_demo_needs_a_task_but_rescheduling_does_not(client):
     moved = ok(client.post(f"/api/leads/{lead_id}/cancel-demo", json={"reschedule_to": "2030-01-05T11:00:00"}))
     assert moved["stage"] == "Demo"
     back = ok(client.post(path, json=body | {"task": TASK}))
-    assert back["stage"] == "Nurturing" and [t["title"] for t in open_tasks(back)] == ["Call the buyer about the budget"]
+    assert back["stage"] == "Revisit" and [t["title"] for t in open_tasks(back)] == ["Call the buyer about the budget"]
 
 
 # ---------- all or nothing ----------
@@ -233,23 +233,23 @@ def test_a_failure_while_saving_leaves_nothing_behind(client, sent, monkeypatch)
         patch.setattr(leads_router, "add_stage_task", broken)
         with pytest.raises(RuntimeError):
             client.post(f"/api/leads/{lead['id']}/convert", json={"note": NOTE, "task": TASK,
-                                                                   "completed_stages": ["Nurturing", "Demo"]})
+                                                                   "completed_stages": ["New", "Nurturing", "Demo"]})
     with monkeypatch.context() as patch:  # the files fail
         patch.setattr(opportunities_router, "save_files", broken)
         with pytest.raises(RuntimeError):
             client.post(f"/api/opportunities/{opp['id']}/won-with-files", files=[("files", ("q.pdf", pdf_file(), PDF))],
-                        data={"note": NOTE, "task": json.dumps(HANDOVER), "completed_stages": ["Proposal"]})
+                        data={"note": NOTE, "task": json.dumps(HANDOVER), "completed_stages": ["Discovery", "Proposal"]})
     with monkeypatch.context() as patch:  # the save itself fails
         from sqlalchemy.orm import Session
         patch.setattr(Session, "commit", broken)
         with pytest.raises(RuntimeError):
-            client.put(f"/api/opportunities/{opp['id']}/stage", json={"stage": "Proposal", "note": NOTE, "task": TASK})
+            client.put(f"/api/opportunities/{opp['id']}/stage", json={"stage": "Proposal", "completed_stages": ["Discovery"], "note": NOTE, "task": TASK})
     assert snapshot() == before and len(sent) == mails
 
 
 def test_double_submissions_create_one_transition_and_one_task(client):
     lead = new_lead(client)
-    body = {"stage": "Nurturing", "note": NOTE, "task": TASK}
+    body = {"stage": "Nurturing", "completed_stages": ["New"], "note": NOTE, "task": TASK}
     assert client.put(f"/api/leads/{lead['id']}/stage", json=body).status_code == 200
     again = client.put(f"/api/leads/{lead['id']}/stage", json=body)
     assert again.status_code == 400 and "already at Nurturing" in again.json()["detail"]
@@ -257,7 +257,7 @@ def test_double_submissions_create_one_transition_and_one_task(client):
     convert = {"note": NOTE, "task": TASK, "completed_stages": ["Demo"]}
     first = ok(client.post(f"/api/leads/{lead['id']}/convert", json=convert))
     assert client.post(f"/api/leads/{lead['id']}/convert", json=convert).status_code == 400  # closed now
-    won = {"note": NOTE, "task": HANDOVER, "completed_stages": ["Proposal"], "final_value": 10}
+    won = {"note": NOTE, "task": HANDOVER, "completed_stages": ["Discovery", "Proposal"], "final_value": 10}
     assert client.post(f"/api/opportunities/{first['opportunity']['id']}/won", json=won).status_code == 200
     assert client.post(f"/api/opportunities/{first['opportunity']['id']}/won", json=won).status_code == 400
     opp = client.get(f"/api/opportunities/{first['opportunity']['id']}").json()
@@ -269,7 +269,7 @@ def test_view_only_users_cannot_change_stages_even_with_a_task(client):
     sam = add_salesperson(client)
     assert login_as(client, PRIYA).put(f"/api/users/{sam}/team-access", json={"team_access": True}).status_code == 200
     before = snapshot()
-    res = login_as(client, sam).put(f"/api/leads/{lead['id']}/stage", json={"stage": "Nurturing", "note": NOTE, "task": TASK})
+    res = login_as(client, sam).put(f"/api/leads/{lead['id']}/stage", json={"stage": "Nurturing", "completed_stages": ["New"], "note": NOTE, "task": TASK})
     assert res.status_code == 403 and snapshot() == before
 
 
@@ -293,7 +293,7 @@ def test_two_saves_at_the_same_time_make_one_transition(client, monkeypatch):
         other = TestClient(app)  # no "with": skips startup, as in conftest.py (the app database is never opened)
         other.headers["Authorization"] = token
         results.append(other.put(f"/api/leads/{lead['id']}/stage",
-                                 json={"stage": "Nurturing", "note": NOTE, "task": TASK}).status_code)
+                                 json={"stage": "Nurturing", "completed_stages": ["New"], "note": NOTE, "task": TASK}).status_code)
     threads = [threading.Thread(target=save) for _ in range(2)]
     [t.start() for t in threads]
     [t.join() for t in threads]
@@ -309,7 +309,7 @@ def test_assistant_needs_the_users_task(client, ai):
     lead = new_lead(client)
     before = snapshot()
     script += [[call("move_lead_stage", lead_id=lead["id"], stage="Nurturing", note=NOTE)], "What task should I add?",
-               [call("mark_opportunity_won", opportunity_id=opp["id"], completed_stages=["Proposal"], note=NOTE,
+               [call("mark_opportunity_won", opportunity_id=opp["id"], completed_stages=["Discovery", "Proposal"], note=NOTE,
                      task_title="  ")], "What is the post-sale task?"]
     client.post("/api/assistant/chat", json={"message": "Move it to nurturing"})
     assert NEEDED in json.loads(seen[-1][-1]["content"])["error"]
@@ -321,7 +321,7 @@ def test_assistant_needs_the_users_task(client, ai):
 def test_assistant_shows_the_task_before_confirming_and_creates_it(client, ai):
     script, _ = ai
     opp = new_opportunity(client)
-    script += [[call("mark_opportunity_won", opportunity_id=opp["id"], completed_stages=["Proposal"], note=NOTE,
+    script += [[call("mark_opportunity_won", opportunity_id=opp["id"], completed_stages=["Discovery", "Proposal"], note=NOTE,
                      task_title="Kick-off call", task_due_date="2030-02-20T10:00")]]
     first = client.post("/api/assistant/chat", json={"message": "Won; kick-off call on 20 Feb"}).json()
     assert 'New task: "Kick-off call", due 2030-02-20T10:00.' in first["pending"]["summary"]
@@ -330,7 +330,7 @@ def test_assistant_shows_the_task_before_confirming_and_creates_it(client, ai):
     script += ["I couldn't do that: a task is needed."]
     client.post("/api/assistant/confirm", json={"messages": first["messages"], "pending": tampered, "confirmed": True})
     assert snapshot() == before
-    script += [[call("mark_opportunity_won", opportunity_id=opp["id"], completed_stages=["Proposal"], note=NOTE,
+    script += [[call("mark_opportunity_won", opportunity_id=opp["id"], completed_stages=["Discovery", "Proposal"], note=NOTE,
                      task_title="Kick-off call", task_due_date="2030-02-20T10:00")]]
     again = client.post("/api/assistant/chat", json={"message": "Try again"}).json()
     script += ["Done."]

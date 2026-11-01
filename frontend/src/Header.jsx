@@ -324,8 +324,13 @@ export default function Header({ section, user, data, onLogout, openNew, notify,
             <Bell data={data} open={menu === "bell"} setOpen={(v) => setMenu(v ? "bell" : null)} notify={notify} />
           </div>
           <div className="pop-wrap">
-            <button className="avatar-button" aria-label="View profile" title={user.full_name} onClick={() => toggle("user")}>
+            <button className="avatar-button header-user" aria-label="View profile" aria-expanded={menu === "user"} onClick={() => toggle("user")}>
               <Avatar name={user.full_name} size={32} />
+              <span className="header-user-text">
+                <b>{user.full_name}</b>
+                <small>{user.role}</small>
+              </span>
+              <Icon name="down" size={12} />
             </button>
             {menu === "user" && (
               <div className="menu-pop user-pop">

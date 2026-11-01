@@ -64,16 +64,16 @@ def test_draft_uses_record_context_and_does_not_send_or_save(client, record, pro
     payload = json.loads(captured[0].content)
     context = json.loads(payload['input'])
     assert context['crm_context']['first_name'] == 'Jack'
-    assert context['crm_context']['current_stage'] == 'New'
+    assert context['crm_context']['current_stage'] == 'Unqualified'
     assert 'Introduce yourself' in context['stage_guidance']
-    assert response.json()['stage'] == 'New'
+    assert response.json()['stage'] == 'Unqualified'
     assert response.json()['mode'] == 'openai'
     assert 'jack@bluebird.example' not in payload['input']
     assert 'ravi@crm.test' not in payload['input']
     assert payload['store'] is False
     assert payload['text']['format']['strict'] is True
     assert db.scalar(select(func.count()).select_from(Email)) == before
-    assert client.get(f"/api/leads/{record['id']}").json()['stage'] == 'New'
+    assert client.get(f"/api/leads/{record['id']}").json()['stage'] == 'Unqualified'
     db.close()
 
 
@@ -150,7 +150,7 @@ def test_custom_model_and_current_message(client, record, provider, monkeypatch)
     assert json.loads(payload['input'])['existing_message'] == 'My draft'
 
 
-@pytest.mark.parametrize("stage", ["New", "Nurturing", "Demo", "Converted", "Lost"])
+@pytest.mark.parametrize("stage", ["Unqualified", "New", "Nurturing", "Revisit", "Demo", "Converted", "Lost"])
 def test_sample_mode_uses_real_lead_stage_without_a_provider(client, record, monkeypatch, stage):
     monkeypatch.setenv('EMAIL_DRAFT_MODE', 'sample')
     monkeypatch.delenv('OPENAI_API_KEY', raising=False)
@@ -184,7 +184,7 @@ def test_client_cannot_override_the_real_stage(client, record, provider):
     assert not provider[0]
 
 
-@pytest.mark.parametrize("action,subject", [("stage", "Let’s connect"), ("follow_up", "Following up on our conversation"), ("meeting", "A convenient time to connect"), ("thanks", "Thank you for your time")])
+@pytest.mark.parametrize("action,subject", [("stage", "A quick introduction"), ("follow_up", "Following up on our conversation"), ("meeting", "A convenient time to connect"), ("thanks", "Thank you for your time")])
 def test_four_sample_menu_actions_generate_relevant_emails(client, record, monkeypatch, action, subject):
     monkeypatch.setenv('EMAIL_DRAFT_MODE', 'sample')
     monkeypatch.delenv('OPENAI_API_KEY', raising=False)
@@ -192,7 +192,7 @@ def test_four_sample_menu_actions_generate_relevant_emails(client, record, monke
     response = client.post('/api/emails/draft', json=request(record, action=action))
     assert response.status_code == 200, response.text
     assert response.json()['subject'] == subject
-    assert response.json()['stage'] == 'New'
+    assert response.json()['stage'] == 'Unqualified'
     assert response.json()['mode'] == 'sample'
 
 
@@ -209,7 +209,7 @@ def test_ai_menu_action_reaches_provider(client, record, provider):
     content = json.loads(json.loads(provider[0][0].content)['input'])
     assert content['email_action'] == 'meeting'
     assert 'arrange a meeting' in content['user_request']
-    assert content['crm_context']['current_stage'] == 'New'
+    assert content['crm_context']['current_stage'] == 'Unqualified'
 
 
 def test_key_is_read_from_secret_file_without_exporting_it(tmp_path, monkeypatch):
@@ -283,7 +283,7 @@ def test_menu_refreshes_after_a_stage_change(client, record):
     db.get(Lead,record['id']).stage='Demo'
     db.commit()
     after=client.get(url).json()
-    assert before['stage']=='New'
+    assert before['stage']=='Unqualified'
     assert after['stage']=='Demo'
     assert before['options'] != after['options']
     db.close()
@@ -295,7 +295,7 @@ def test_stage_specific_choice_reaches_the_real_provider_adapter(client, record,
     payload=json.loads(json.loads(provider[0][0].content)['input'])
     assert payload['email_action']=='discover_needs'
     assert 'goals, and priorities' in payload['user_request']
-    assert payload['crm_context']['current_stage']=='New'
+    assert payload['crm_context']['current_stage']=='Unqualified'
 
 
 def test_draft_menu_requires_record_access_and_email_permission(client, record):
@@ -313,7 +313,7 @@ def test_draft_menu_requires_record_access_and_email_permission(client, record):
     db.close()
 
 
-@pytest.mark.parametrize('stage', ['New','Nurturing','Demo','Converted','Lost'])
+@pytest.mark.parametrize('stage', ['Unqualified','New','Nurturing','Revisit','Demo','Converted','Lost'])
 def test_free_text_drafts_receive_actual_stage_and_preserve_user_intent(client, record, provider, stage):
     db=next(app.dependency_overrides[get_db]())
     db.get(Lead,record['id']).stage=stage
@@ -361,18 +361,18 @@ def test_signature_normalization_preserves_body_text_that_mentions_a_closing():
     assert ai_email.with_sender_signature(body,'Ravi Kumar','ravi@crm.test').startswith(body+'\n\n')
 
 
-@pytest.mark.parametrize('email_stage', ['New','Nurturing','Demo','Converted','Opportunity','Proposal','Won','Lost'])
+@pytest.mark.parametrize('email_stage', ['Unqualified','New','Nurturing','Revisit','Demo','Converted','Opportunity','Discovery','Proposal','Won','Lost'])
 def test_email_stage_selection_changes_draft_context_not_crm_record(client, record, provider, monkeypatch, email_stage):
     monkeypatch.setattr(mailer,'send',lambda *a,**kw: pytest.fail('Drafting must not send email'))
     response=client.post('/api/emails/draft',json=request(record,action='custom',email_stage=email_stage))
     assert response.status_code == 200, response.text
     assert response.json()['stage'] == email_stage
-    assert response.json()['record_stage'] == 'New'
+    assert response.json()['record_stage'] == 'Unqualified'
     content=json.loads(json.loads(provider[0][0].content)['input'])
     assert content['email_stage'] == email_stage
     assert content['stage_guidance'] == ai_email.STAGE_GUIDANCE[email_stage]
-    assert content['crm_context']['current_stage'] == 'New'
-    assert client.get(f"/api/leads/{record['id']}").json()['stage'] == 'New'
+    assert content['crm_context']['current_stage'] == 'Unqualified'
+    assert client.get(f"/api/leads/{record['id']}").json()['stage'] == 'Unqualified'
 
 
 def test_invalid_email_stage_is_rejected_before_model_call(client, record, provider):

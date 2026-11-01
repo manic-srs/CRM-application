@@ -1,5 +1,5 @@
 import React from "react";
-import { dateKey } from "./domain";
+import { LEAD_OPEN_STAGES, OPPORTUNITY_OPEN_STAGES, dateKey } from "./domain";
 import { compact, dateTime, firstName, greeting, shortDate, time } from "./format";
 import { Card, EmptyState, Icon, ObjectIcon, Ring, StageBadge } from "./ui";
 
@@ -74,13 +74,13 @@ function assistantItems(data, user) {
     });
   const today = dateKey();
   data.opportunities
-    .filter((o) => mine(o) && ["Opportunity", "Proposal"].includes(o.stage) && o.expected_close_date && o.expected_close_date < today)
+    .filter((o) => mine(o) && OPPORTUNITY_OPEN_STAGES.includes(o.stage) && o.expected_close_date && o.expected_close_date < today)
     .forEach((o) =>
       items.push({ key: `late${o.id}`, icon: "opportunity", text: `${o.name} is past its close date`, href: `#/opportunities/${o.id}` }),
     );
   const openTaskFor = new Set(data.tasks.filter((t) => !t.completed && t.relatedType === "leads").map((t) => t.relatedId));
   data.leads
-    .filter((l) => mine(l) && ["New", "Nurturing", "Demo"].includes(l.stage) && !openTaskFor.has(l.id))
+    .filter((l) => mine(l) && LEAD_OPEN_STAGES.includes(l.stage) && !openTaskFor.has(l.id))
     .forEach((l) =>
       items.push({ key: `idle${l.id}`, icon: "lead", text: `${l.name} has no upcoming activity`, href: `#/leads/${l.id}` }),
     );
