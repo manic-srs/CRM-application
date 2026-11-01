@@ -335,6 +335,10 @@ export const api = {
   leadDuplicates: (email) => apiRequest(`/leads/duplicates?email=${encodeURIComponent(email)}`),
   sendEmail: (formData) => upload("/emails", formData),
   deleteLead: (id) => apiRequest(`/leads/${id}`, { method: "DELETE" }),
+  // Bulk actions on the leads selected in the Leads list
+  bulkTransferLeads: (lead_ids, to_user_id, note) =>
+    apiRequest("/leads/bulk-transfer", { method: "POST", body: { lead_ids, to_user_id, note: note || null } }),
+  bulkDeleteLeads: (lead_ids) => apiRequest("/leads/bulk-delete", { method: "POST", body: { lead_ids } }),
   companyMatches: (company, excludeId) =>
     apiRequest(`/leads/company-matches?${new URLSearchParams({ company, ...(excludeId ? { exclude_id: excludeId } : {}) })}`),
   // Bulk upload: dryRun=true only checks the file and returns what would happen

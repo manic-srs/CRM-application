@@ -1,5 +1,5 @@
 // Small building blocks used by every screen: icons, object icons, ring charts, path bar, empty states.
-import { shortDate, time } from "./format";
+import { formatPhone, maskPhone, shortDate, time } from "./format";
 import React, { useEffect, useState } from "react";
 
 const paths = {
@@ -30,6 +30,9 @@ const paths = {
   lock: "M6 11h12v10H6ZM8 11V7a4 4 0 0 1 8 0v4",
   settings: "M16 19v-1a3 3 0 0 0-3-3H6a3 3 0 0 0-3 3v1M9.5 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6M21 19v-1a3 3 0 0 0-2.2-2.9M16 5.1a3 3 0 0 1 0 5.8",
   mail: "M3 5h18v14H3ZM3 6l9 7 9-7",
+  eye: "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Zm10 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6",
+  eyeOff:
+    "m3 3 18 18M10.6 5.1Q11.3 5 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.2M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7c1.9 0 3.6-.6 5-1.5M9.9 9.9a3 3 0 0 0 4.2 4.2",
 };
 
 export function Icon({ name, size = 16, className = "", ...props }) {
@@ -383,6 +386,31 @@ export function ActionMenu({ items, label = "Actions" }) {
 }
 
 // Date on the first line, time underneath (lists: Created, Last Modified)
+// A phone number shown masked (first digits only) with an eye button to show or hide the full number
+export function PhoneReveal({ value }) {
+  const [shown, setShown] = useState(false);
+  if (!value) return null;
+  return (
+    <span className="phone-reveal">
+      <span className="phone-text">{shown ? formatPhone(value) : maskPhone(value)}</span>
+      <button
+        type="button"
+        className="eye-button"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setShown((v) => !v);
+        }}
+        aria-label={shown ? "Hide phone number" : "Show phone number"}
+        aria-pressed={shown}
+        title={shown ? "Hide phone number" : "Show phone number"}
+      >
+        <Icon name={shown ? "eyeOff" : "eye"} size={14} />
+      </button>
+    </span>
+  );
+}
+
 export function DateCell({ value }) {
   if (!value) return null;
   return (
