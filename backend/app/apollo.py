@@ -4,9 +4,13 @@
 - Only Apollo's fixed People Enrichment endpoint is called (never the LinkedIn address itself), with the profile
   address in the request body. Personal emails, phone reveal and waterfall enrichment stay off; no webhooks.
 - Fields are filled only when the LinkedIn URL in Apollo's answer is the pasted profile. A missing, invalid or
-  different URL fails closed: nothing is filled and the form says the profile could not be verified.
+  different URL fails closed: nothing is filled (company fields included) and the form says the profile could not
+  be verified.
+- Company details (name, website, industry, LinkedIn page) come from the same answer: the person's current employer
+  (person.organization). Links are used only when Apollo returns them and they pass the lead form's rules; nothing is
+  guessed (not from the email or the company domain) and no other page or company lookup is requested.
 - Credits (Apollo's docs): 1 credit when Apollo returns person data or an email; none when nobody matches.
-- Only the seven lead fields are kept, in memory, per user, for 10 minutes, so pasting the same profile again
+- Only the nine lead fields are kept, in memory, per user, for 10 minutes, so pasting the same profile again
   doesn't spend another credit. The full Apollo response is never stored or logged.
 """
 import asyncio
@@ -16,11 +20,12 @@ import os
 import re
 import time
 from collections import deque
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import HTTPException
 
-from app.schemas import linkedin_profile_url
+from app.schemas import clean_url, linkedin_profile_url
 from app.services import CUSTOMER_EMAIL_RE
 
 APOLLO_URL = "https://api.apollo.io/api/v1/people/match"
@@ -30,8 +35,11 @@ APOLLO_FLAGS = {"reveal_personal_emails": "false", "reveal_phone_number": "false
 TIMEOUT = httpx.Timeout(15.0, connect=5.0)
 MAX_RESPONSE_BYTES = 1024 * 1024
 PLACEHOLDER_EMAIL = "email_not_unlocked@domain.com"  # Apollo's stand-in when an email isn't revealed
-LIMITS = {"first_name": 50, "last_name": 50, "company": 200, "title": 100, "industry": 100, "email": 255, "phone": 30}
+LIMITS = {"first_name": 50, "last_name": 50, "company": 200, "title": 100, "industry": 100, "email": 255, "phone": 30,
+          "company_website": 255, "company_linkedin_url": 300}
 NOT_RETURNED = "Apollo didn't return it"
+COMPANY_PAGE = re.compile(r"/(?:company|school|showcase)/[^/]+/?")  # LinkedIn's organization pages, never /in/ people
+OTHER_EMPLOYER = "Apollo's company details aren't for the person's current job, so they were not used"
 LOOKUPS_PER_MINUTE = 10  # per user; cached answers don't count
 CACHE_SECONDS = 600
 CACHE_SIZE = 500
@@ -85,22 +93,63 @@ def business_phone(person: dict) -> str:
     return ""
 
 
+def current_employer(person: dict, current_job: dict) -> tuple[dict, bool]:
+    """(Apollo's organization for the person's current job, whether Apollo gave one that isn't that job). An
+    organization whose id differs from the person's organization_id or the current job's is not used."""
+    organization = person.get("organization") if isinstance(person.get("organization"), dict) else {}
+    org_id = organization.get("id")
+    others = {person.get("organization_id"), current_job.get("organization_id")} - {None, ""}
+    if org_id and any(other != org_id for other in others):
+        return {}, True
+    return organization, False
+
+
+def company_link(value, *, linkedin: bool) -> tuple[str, str]:
+    """(address, why there is none) for a company link Apollo returned: Company Website, or Company LinkedIn URL
+    (a LinkedIn company, school or showcase page, never a person's profile). Checked with the lead form's own rule
+    (schemas.clean_url) and kept as Apollo gave it: never repaired, guessed or looked up."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return "", NOT_RETURNED
+    invalid = ("Apollo's address isn't a LinkedIn company page, so it was not used" if linkedin
+               else "Apollo's address isn't a valid web address, so it was not used")
+    if not isinstance(value, str) or any(ch.isspace() or not ch.isprintable() for ch in value.strip()):
+        return "", invalid
+    try:
+        url = clean_url(value, linkedin=linkedin)
+        parts = urlsplit(url)
+        host = parts.hostname or ""
+    except ValueError:
+        return "", invalid
+    if parts.scheme.lower() not in ("http", "https") or "@" in parts.netloc or not all(host.split(".")):
+        return "", invalid
+    if linkedin and not COMPANY_PAGE.fullmatch(parts.path):
+        return "", invalid
+    return url, ""
+
+
 def lead_fields(person: dict) -> tuple[dict, dict]:
     """(fields to fill, why each other field is empty). Values that don't fit the form are reported, never cut."""
-    organization = person.get("organization") if isinstance(person.get("organization"), dict) else {}
     jobs = person.get("employment_history") if isinstance(person.get("employment_history"), list) else []
     current_job = next((j for j in jobs if isinstance(j, dict) and j.get("current")), {})
+    organization, other_employer = current_employer(person, current_job)
     email, no_email = work_email(person)
+    website, no_website = company_link(organization.get("website_url"), linkedin=False)
+    company_page, no_company_page = company_link(organization.get("linkedin_url"), linkedin=True)
     values = {
         "first_name": text(person.get("first_name")),
         "last_name": text(person.get("last_name")),
         "company": text(organization.get("name")) or text(current_job.get("organization_name")),
         "title": text(person.get("title")),
         "industry": text(organization.get("industry")),
+        "company_website": website,
+        "company_linkedin_url": company_page,
         "email": email,
         "phone": business_phone(person),
     }
-    reasons = {"email": no_email, "phone": "no direct business number was returned (mobile numbers are not requested)"}
+    reasons = {"email": no_email, "phone": "no direct business number was returned (mobile numbers are not requested)",
+               "company_website": no_website, "company_linkedin_url": no_company_page}
+    if other_employer:
+        reasons |= {name: OTHER_EMPLOYER for name in ("company", "industry", "company_website", "company_linkedin_url")}
     fields, unavailable = {}, {}
     for name, value in values.items():
         if not value:

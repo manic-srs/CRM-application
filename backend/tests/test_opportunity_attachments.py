@@ -17,6 +17,8 @@ from app.routers.attachments import MAX_FILE_BYTES, MAX_REQUEST_BYTES
 from app.security import make_token
 from conftest import login_as
 
+TASK = {"title": "Synthetic follow-up task", "due_date": "2030-01-15T10:00:00"}  # every stage change needs one
+
 PRIYA, RAVI, ASHA = 1, 2, 3  # Manager, Salesperson, Admin (see conftest.py)
 PDF, DOCX, JPEG, PNG = ("application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                         "image/jpeg", "image/png")
@@ -95,8 +97,8 @@ def new_opportunity(client, owner=RAVI) -> dict:
                                           "company": "Synthetic Co", "email": f"buyer{next(LEADS)}@example.test",
                                           "welcome_email": False})
     assert res.status_code == 201, res.text
-    res = client.post(f"/api/leads/{res.json()['id']}/convert", json={"completed_stages": ["Nurturing", "Demo"],
-                                                                      "expected_value": 1000})
+    res = client.post(f"/api/leads/{res.json()['id']}/convert", json={"task": TASK, "completed_stages": ["Nurturing", "Demo"],
+                                                                      "expected_value": 1000, "note": "Synthetic test note"})
     assert res.status_code == 200, res.text
     return res.json()["opportunity"]
 
@@ -122,7 +124,7 @@ def stored_rows():
 
 
 def move(client, opp_id, stage):
-    res = client.put(f"/api/opportunities/{opp_id}/stage", json={"stage": stage})
+    res = client.put(f"/api/opportunities/{opp_id}/stage", json={"task": TASK, "stage": stage, "note": "Synthetic test note"})
     assert res.status_code == 200, res.text
 
 
@@ -370,7 +372,7 @@ def test_files_keep_their_stage_and_are_read_only_after_won(client):
         "brief.pdf": "Opportunity", "proposal.docx": "Proposal"}
     move(client, opp["id"], "Proposal")
 
-    won = client.post(f"/api/opportunities/{opp['id']}/won", json={"final_value": 900, "notify_customer": False})
+    won = client.post(f"/api/opportunities/{opp['id']}/won", json={"task": TASK, "final_value": 900, "notify_customer": False, "note": "Synthetic test note"})
     assert won.status_code == 200 and won.json()["stage"] == "Won" and won.json()["probability"] == 100
     blocked = upload(client, opp["id"], "late.pdf", pdf_file())
     assert blocked.status_code == 409 and "Won" in blocked.json()["detail"]
@@ -388,7 +390,7 @@ def test_files_keep_their_stage_and_are_read_only_after_won(client):
 def test_files_are_read_only_after_lost(client):
     opp = new_opportunity(client)
     item = saved(client, opp["id"], "quote.png", png_file())
-    lost = client.post(f"/api/opportunities/{opp['id']}/lost", json={"lost_reason": "Price", "notify_customer": False})
+    lost = client.post(f"/api/opportunities/{opp['id']}/lost", json={"lost_reason": "Price", "notify_customer": False, "lost_notes": "Synthetic test note"})
     assert lost.status_code == 200
     assert upload(client, opp["id"], "late.pdf", pdf_file()).status_code == 409
     assert client.delete(url(opp["id"], item["id"])).status_code == 409

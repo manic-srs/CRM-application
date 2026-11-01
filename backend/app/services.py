@@ -2,7 +2,8 @@
 
 - record_stage_change:   every stage change is saved in stage_history (who, when, from -> to)
 - auto_close_open_tasks: open follow-ups are closed as "Auto-closed" when a record moves on or closes
-- create_auto_task:      the system creates the next follow-up for the new stage (is_auto = TRUE)
+- create_auto_task:      the system creates the next follow-up for the new stage (is_auto = TRUE); a stage change
+                         the user makes saves the user's new task instead (add_stage_task)
 - schedule_demo_tasks / schedule_close_date_task:
                          reminder tasks that follow the demo date and the expected close date
                          (created, moved when the date changes, closed when no longer needed)
@@ -26,6 +27,7 @@ from app.constants import (
 )
 from app import mailer
 from app.models import ActivityLog, Lead, Notification, StageHistory, Task, User
+from app.security import owner_for_new
 
 
 def now() -> datetime:
@@ -125,6 +127,38 @@ def create_auto_task(
     db.add(task)
     db.flush()
     return task
+
+
+# ---------- the user's new task with a stage change (instead of the system follow-up) ----------
+
+def stage_task_owner(db: Session, task, record_owner_id: int) -> int:
+    """Who gets a stage change's new task: the record's owner unless the user chose someone; giving it to someone
+    else follows the rule of POST /tasks (Reassign owner). Checked before anything is saved."""
+    return resolve_user_id(db, owner_for_new(task.owner_id if task.owner_id is not None else record_owner_id))
+
+
+def add_stage_task(db: Session, task, *, owner_id: int, record_owner_id: int, actor_id: int,
+                   lead_id: int | None = None, opportunity_id: int | None = None) -> Task:
+    """Saves the user's new task (schemas.StageTask) with the stage change, like a task added by hand: not automatic,
+    the reminder as given. The record's owner hears about it in the stage notice; another assignee is told the way
+    POST /tasks tells them."""
+    new = Task(**task.model_dump(exclude={"owner_id"}), owner_id=owner_id, status="Open", is_auto=False,
+               lead_id=lead_id, opportunity_id=opportunity_id)
+    db.add(new)
+    db.flush()
+    if owner_id != record_owner_id:
+        assignment_notice(db, owner_id=owner_id, actor_id=actor_id, kind="Task", name=new.title,
+                          link=record_link(lead_id=lead_id, opportunity_id=opportunity_id))
+    return new
+
+
+def get_for_update(db: Session, model, record_id: int, label: str):
+    """Like get_or_404, but the row stays locked until the save (PostgreSQL), so two stage changes of the same record
+    run one after the other: the second one sees the new stage (no second transition, task, notification or email)."""
+    record = db.get(model, record_id, with_for_update=True, populate_existing=True)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"{label} {record_id} not found")
+    return record
 
 
 # ---------- timeline reminders (demo date, close date) ----------

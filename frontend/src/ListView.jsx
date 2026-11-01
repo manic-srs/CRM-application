@@ -253,6 +253,12 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
     };
   }, [pickerOpen]);
   const [mode, setMode] = useState(params.get("view") === "kanban" ? "kanban" : "table");
+  // the workspace is loaded again only after a saved change (e.g. a stage popup): the Leads list then reloads too
+  const [saved, setSaved] = useState(0);
+  const firstData = useRef(data);
+  useEffect(() => {
+    if (data !== firstData.current) setSaved((n) => n + 1);
+  }, [data]);
   const [search, setSearch] = useState("");
   const cols = columns(collection, data);
   const [sort, setSort] = useState({ col: 0, dir: 1 });
@@ -380,7 +386,11 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
           filters={active}
           defs={defs}
           onFilter={setFilterValues}
-          refresh={uploads}
+          refresh={uploads + saved}
+          mode={mode}
+          onMode={setMode}
+          user={user}
+          setModal={setModal}
         />
       ) : mode === "kanban" && collection === "opportunities" ? (
         <Kanban records={rows} setModal={setModal} />

@@ -19,11 +19,24 @@ import {
   money,
   ATTACHMENT_MAX_BYTES,
   STAGE_FILES_MAX,
+  AUTOFILL_FIELDS,
   autofillPlan,
   linkedInProfileUrl,
   attachmentProblem,
   attachmentType,
   pickStageFiles,
+  STAGE_NOTE_REQUIRED,
+  CONVERSION_COMMENT_REQUIRED,
+  stageNote,
+  stageNoteField,
+  stageNoteMessage,
+  leadBoardColumns,
+  leadStageAction,
+  TASK_SUBJECT_REQUIRED,
+  TASK_DUE_REQUIRED,
+  stageTaskNeeded,
+  stageTaskPayload,
+  stageTaskProblems,
 } from "./domain.js";
 
 test("lead form uses backend fields and only requires last name and company", () => {
@@ -203,8 +216,8 @@ test("lifecycle actions call dedicated backend endpoints", async (t) => {
     calls.push({ url, options });
     return new Response(JSON.stringify({ id: 4 }), { status: 200 });
   });
-  await api.convert("4", { expected_value: 200 });
-  await api.won("6", { final_value: 225 });
+  await api.convert("4", { note: "Budget approved", expected_value: 200 });
+  await api.won("6", { final_value: 225, note: "Contract signed" });
   await api.completeTask("8");
   assert.deepEqual(
     calls.map((c) => [c.url, c.options.method]),
@@ -215,6 +228,92 @@ test("lifecycle actions call dedicated backend endpoints", async (t) => {
     ],
   );
   assert.equal(JSON.parse(calls[0].options.body).expected_value, 200);
+  assert.equal(JSON.parse(calls[0].options.body).note, "Budget approved");
+  assert.equal(JSON.parse(calls[1].options.body).note, "Contract signed");
+});
+test("every stage change popup has a required note; creating and editing records don't", () => {
+  assert.equal(stageNoteField("stage"), "note"); // path bar, Mark as Complete, Kanban
+  assert.equal(stageNoteField("convert"), "note");
+  assert.equal(stageNoteField("won"), "note"); // the Closing Note
+  assert.equal(stageNoteField("lost"), "lost_notes"); // the Lost Notes (the Lost Reason stays required too)
+  assert.equal(stageNoteField("cancelDemo", "nurturing"), "reason"); // the lead goes back to Nurturing
+  assert.equal(stageNoteField("cancelDemo", "reschedule"), null); // the lead stays at Demo
+  for (const type of ["lead", "opportunity", "task", "account", "contact", "note", "transfer", "delete"])
+    assert.equal(stageNoteField(type), null);
+  assert.equal(STAGE_NOTE_REQUIRED, "Enter a note to change the stage.");
+});
+test("the Leads board has five columns in order; Converted and Lost are closed; the list view decides which can fill", () => {
+  const all = leadBoardColumns("all", null);
+  assert.deepEqual(all.map((c) => c.stage), ["New", "Nurturing", "Demo", "Converted", "Lost"]);
+  assert.deepEqual(all.filter((c) => c.closed).map((c) => c.stage), ["Converted", "Lost"]);
+  assert.ok(all.every((c) => c.excluded === ""));
+  const excluded = (view, stage) => leadBoardColumns(view, stage).filter((c) => c.excluded).map((c) => c.stage);
+  assert.deepEqual(excluded("all_open"), ["Converted", "Lost"]);
+  assert.deepEqual(excluded("my_open"), ["Converted", "Lost"]);
+  assert.deepEqual(excluded("converted"), ["New", "Nurturing", "Demo", "Lost"]);
+  assert.deepEqual(excluded("lost"), ["New", "Nurturing", "Demo", "Converted"]);
+  assert.deepEqual(excluded("uploaded"), []);
+  assert.deepEqual(excluded("all", "Demo"), ["New", "Nurturing", "Converted", "Lost"]); // the Lead Status filter
+  assert.equal(leadBoardColumns("all_open", "Demo").find((c) => c.stage === "New").excluded, "Hidden by the Lead Status filter");
+  assert.equal(leadBoardColumns("all_open", null).find((c) => c.stage === "Lost").excluded, "Not in this list view");
+});
+test("a lead card opens the existing popups and only for moves the lead page allows", () => {
+  const lead = { id: 7, stage: "Nurturing" };
+  const both = { canEdit: true, canConvert: true };
+  assert.deepEqual(leadStageAction(lead, "Demo", both), { type: "stage", collection: "leads", record: lead, stage: "Demo" });
+  assert.deepEqual(leadStageAction(lead, "New", both), { type: "stage", collection: "leads", record: lead, stage: "New" }); // back
+  assert.deepEqual(leadStageAction(lead, "Converted", both), { type: "convert", record: lead });
+  assert.deepEqual(leadStageAction(lead, "Lost", both), { type: "lost", collection: "leads", record: lead });
+  assert.equal(leadStageAction(lead, "Nurturing", both), null); // the same column does nothing
+  assert.equal(leadStageAction(lead, "Demo", { canEdit: false, canConvert: false }), null); // view-only
+  assert.equal(leadStageAction(lead, "Converted", { canEdit: true, canConvert: false }), null); // e.g. an Admin
+  assert.deepEqual(leadStageAction(lead, "Lost", { canEdit: true, canConvert: false }).type, "lost");
+  for (const closed of ["Converted", "Lost"])
+    for (const to of ["New", "Nurturing", "Demo", "Converted", "Lost"])
+      assert.equal(leadStageAction({ id: 8, stage: closed }, to, both), null); // closed leads don't move
+  assert.equal(leadStageAction(lead, "Won", both), null);
+  assert.equal(leadStageAction(null, "Demo", both), null);
+});
+test("Convert's note is the Conversion Comment, with its own message; other popups keep theirs", () => {
+  assert.equal(stageNoteField("convert"), "note"); // the same field the backend reads
+  assert.equal(CONVERSION_COMMENT_REQUIRED, "Enter a conversion comment.");
+  assert.equal(stageNoteMessage("convert"), CONVERSION_COMMENT_REQUIRED);
+  for (const type of ["stage", "won", "lost", "cancelDemo"]) assert.equal(stageNoteMessage(type), STAGE_NOTE_REQUIRED);
+});
+test("every stage change but Lost needs a New Task with a subject and a due date", () => {
+  for (const type of ["stage", "convert", "won"]) assert.equal(stageTaskNeeded(type), true);
+  assert.equal(stageTaskNeeded("cancelDemo", "nurturing"), true); // back to Nurturing is a stage change
+  assert.equal(stageTaskNeeded("cancelDemo", "reschedule"), false); // the lead stays at Demo
+  for (const type of ["lost", "lead", "task", "note", "transfer", "opportunity"]) assert.equal(stageTaskNeeded(type), false);
+  assert.deepEqual(stageTaskProblems({}), { task_title: TASK_SUBJECT_REQUIRED, task_due_date: TASK_DUE_REQUIRED });
+  assert.deepEqual(stageTaskProblems({ task_title: "   ", task_due_date: "2030-01-15T10:00" }), { task_title: TASK_SUBJECT_REQUIRED });
+  assert.deepEqual(stageTaskProblems({ task_title: "Call", task_due_date: "2030-01-15T10:00" }), {});
+});
+test("the New Task is sent as the task form sends it: trimmed subject, optional fields left empty", () => {
+  assert.deepEqual(
+    stageTaskPayload({ task_title: "  Call the buyer ", task_due_date: "2030-01-15T10:00", task_priority: "High",
+                       task_reminder_at: "", task_description: "  ", task_owner_id: "3" }),
+    { title: "Call the buyer", due_date: "2030-01-15T10:00", priority: "High", reminder_at: null, description: null, owner_id: 3 },
+  );
+  assert.deepEqual(stageTaskPayload({ task_title: "Call", task_due_date: "2030-01-15T10:00" }), {
+    title: "Call", due_date: "2030-01-15T10:00", priority: "Normal", reminder_at: null, description: null, owner_id: null,
+  }); // no assignee chosen: the server gives it to the record's owner
+});
+test("the popups with files send the New Task as one JSON form field", async (t) => {
+  const forms = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    forms.push(options.body);
+    return new Response(JSON.stringify({ id: 1 }), { status: 200 });
+  });
+  const task = { title: "Handover", due_date: "2030-01-20T10:00", priority: "Normal", reminder_at: null, description: null, owner_id: null };
+  const file = new File(["%PDF-1.4"], "quote.pdf", { type: "application/pdf" });
+  await api.stageWithFiles("5", { stage: "Proposal", note: "Sent", task }, [file]);
+  await api.wonWithFiles("5", { final_value: 10, note: "Signed", notify_customer: false, task }, [file]);
+  for (const form of forms) assert.deepEqual(JSON.parse(form.get("task")), task);
+});
+test("a blank stage note is caught; a real one keeps its formatting inside", () => {
+  for (const blank of [undefined, null, "", "   ", "\n\t \n", 5]) assert.equal(stageNote(blank), "");
+  assert.equal(stageNote("  Called Priya.\n  - budget ok\n\n"), "Called Priya.\n  - budget ok");
 });
 test("API validation failures reach the form as readable errors", async (t) => {
   t.mock.method(
@@ -480,6 +579,29 @@ test("Apollo autofill fills empty fields and never overwrites what the user type
   // clearing the address ({}) removes untouched autofill only
   plan = autofillPlan({ ...form, first_name: "Sam" }, plan.autofilled, {});
   assert.deepEqual(plan.set, { first_name: "" });
+  assert.deepEqual(plan.autofilled, {});
+});
+test("company details follow the same rules: empty fields only, manual entries kept, untouched autofill replaced", () => {
+  assert.deepEqual(
+    Object.entries(AUTOFILL_FIELDS).slice(-2),
+    [["company_website", "Company Website"], ["company_linkedin_url", "Company LinkedIn URL"]],
+  );
+  const synthetic = { company: "Synthetic Co", industry: "Software", company_website: "https://synthetic-co.example",
+                      company_linkedin_url: "https://www.linkedin.com/company/synthetic-co" };
+  // the user typed a website before pasting: it stays; the other company details are filled
+  let plan = autofillPlan({ company_website: "https://typed.example" }, {}, synthetic);
+  assert.deepEqual(plan.set, { company: "Synthetic Co", industry: "Software",
+                               company_linkedin_url: "https://www.linkedin.com/company/synthetic-co" });
+  assert.deepEqual(plan.kept, ["company_website"]);
+  // the user edits the company name; another profile (another employer, no LinkedIn page) replaces only untouched values
+  const form = { company: "Synthetic Company Ltd", industry: "Software", company_website: "https://typed.example",
+                 company_linkedin_url: "https://www.linkedin.com/company/synthetic-co" };
+  plan = autofillPlan(form, plan.autofilled, { company: "Other Co", industry: "Retail", company_website: "https://other.example" });
+  assert.deepEqual(plan.set, { industry: "Retail", company_linkedin_url: "" }); // the old page doesn't belong to Other Co
+  assert.deepEqual(plan.kept, ["company", "company_website"]);
+  // clearing the profile address removes only the untouched autofill
+  plan = autofillPlan({ ...form, industry: "Retail", company_linkedin_url: "" }, plan.autofilled, {});
+  assert.deepEqual(plan.set, { industry: "" });
   assert.deepEqual(plan.autofilled, {});
 });
 test("LinkedIn autofill calls only the backend, with the login header, and keeps the error status", async (t) => {

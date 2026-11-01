@@ -59,17 +59,25 @@ Probability changes with the stage: Opportunity 20%, Proposal 75%, Won 100%, Los
 ## What happens at each step
 
 - New lead: stage is New and a "Make first contact" task is created for the owner (due next day).
-- Moving the stage: the old open tasks are closed automatically ("Auto-closed") and a new follow-up task is added:
-  - Nurturing: Follow-up call
-  - Demo: Conduct demo (due on the demo date)
-  - Opportunity: Send proposal
-  - Proposal: Follow up on proposal
+- Moving the stage: the old open tasks are closed automatically ("Auto-closed") and the user's new task is saved
+  (`task` in the request: `title` and `due_date` required; `priority`, `reminder_at`, `description`, `owner_id`
+  optional). It takes the place of the system follow-up the stage used to get (Follow-up call, Conduct demo, Send
+  proposal, Follow up on proposal). Reminders tied to dates stay: with a demo date, "Conduct demo" (1 hour before)
+  and "Prepare for demo"; on opportunities, "Close date coming up". Convert puts the task on the new opportunity;
+  Won saves it after closing the other tasks, so the post-sale task stays open. Lost needs no task. The popups with
+  files send the task as one JSON form field, `task`. A missing or invalid task is refused (422) before anything
+  changes, and the record row is locked during the save, so a double click makes one change and one task.
 - Every automatic task also shows up as a notification (bell icon) for the owner.
 - Lost: needs a reason (Price, Competitor, No response, No budget, Not interested, Other).
 - Convert: creates the Account (from company and industry, or you can pick an existing account), the Contact and the Opportunity at 20%. The lead becomes Converted.
 - Won: final value is optional. If it's empty, the expected value is used.
 - Once a lead is Converted/Lost or an opportunity is Won/Lost, the stage can't be changed again.
 - Every stage change is saved in stage history (who changed it, when, and a note).
+- The note is required for every stage change a user makes (`/stage`, `/convert`, `/won` `note`, `/lost` `lost_notes`,
+  the `reason` of `/cancel-demo` without a new date, and the popups with files). Missing, null, empty or blank notes
+  are refused (422) before anything changes; spaces around the note are trimmed. Creating a lead needs no note.
+  On `/convert` the note is the Conversion Comment: the same field and check, with the message "Enter a conversion
+  comment." (also when the field is left out). It is saved in the lead's and the new opportunity's stage history.
 - Tasks can belong to a lead, an opportunity, or nothing (general task). Status is Open, Done or Auto-closed.
 
 ## Emails and notifications
@@ -104,6 +112,11 @@ Reminders and overdue tasks are checked every minute in the background (`app/sch
   emails, phone reveal and waterfall enrichment are off. The LinkedIn page itself is never fetched.
 - Filled: first and last name, company, title, industry, the email only when Apollo marks it verified, and the phone
   only for a direct business line. Values that don't fit the form are reported, not cut. No match fills nothing.
+- Company details come from the same answer (`person.organization`), only when it is the person's current employer
+  (its id matches `organization_id` and the current job): name, industry, `website_url` (Company Website) and
+  `linkedin_url` (Company LinkedIn URL). The two links must pass the lead form's rules (`clean_url`), and the LinkedIn
+  one must be a company, school or showcase page; otherwise they are reported, not used. Nothing is guessed (not from
+  the email or the domain) and no company lookup is made.
 - The profile must be verified: fields are filled only when the LinkedIn URL in Apollo's answer is the pasted profile
   (`url_verified: true`). A missing, invalid or different URL fails closed (`status: "unverified"`, nothing filled).
 - Same access as creating a lead. 10 lookups a minute per user; each user's answers are kept in memory for 10 minutes
@@ -183,8 +196,8 @@ All APIs start with `/api`.
 | Download attachment | GET /emails/attachments/{id} |
 | Opportunity files (list, upload one file) | GET /opportunities/{id}/attachments, POST /opportunities/{id}/attachments (form field `file`) |
 | Open / download, delete an opportunity file | GET /opportunities/{id}/attachments/{attachment_id}/file (`?download=true` to save), DELETE /opportunities/{id}/attachments/{attachment_id} |
-| Change Stage popup with files | POST /opportunities/{id}/stage-with-files (form fields `stage`, `note`, `files`) |
-| Mark as Won popup with files | POST /opportunities/{id}/won-with-files (form fields `final_value`, `note`, `notify_customer`, `completed_stages`, `completed_note`, `files`) |
+| Change Stage popup with files | POST /opportunities/{id}/stage-with-files (form fields `stage`, `note`, `task`, `files`) |
+| Mark as Won popup with files | POST /opportunities/{id}/won-with-files (form fields `final_value`, `note`, `task`, `notify_customer`, `completed_stages`, `completed_note`, `files`) |
 | Search box | GET /search?q= |
 | DB check | GET /health/db |
 

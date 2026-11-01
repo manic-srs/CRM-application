@@ -6,6 +6,8 @@ import pytest
 from app import assistant
 from conftest import login_as
 
+TASK = {"title": "Synthetic follow-up task", "due_date": "2030-01-15T10:00:00"}  # every stage change needs one
+
 
 def call(name, **args):
     return {"id": f"call_{name}_{len(json.dumps(args))}", "type": "function",
@@ -54,7 +56,8 @@ def test_create_lead_from_one_sentence(client, ai):
 def test_missing_permission_is_explained_not_done(client, ai):
     script, seen = ai
     priyas = login_as(client, 1).post("/api/leads", json={"last_name": "Shah", "company": "Orbit"}).json()
-    script += [[call("move_lead_stage", lead_id=priyas["id"], stage="Nurturing")], "You can't change that lead."]
+    script += [[call("move_lead_stage", lead_id=priyas["id"], stage="Nurturing", note="Synthetic test note",
+                     task_title="Synthetic follow-up task", task_due_date="2030-01-15T10:00")], "You can't change that lead."]
     res = login_as(client, 2).post("/api/assistant/chat", json={"message": "Move Shah to nurturing"}).json()
     assert "error" in json.loads(seen[1][-1]["content"])  # Ravi can't see Priya's lead: the API refused
     assert login_as(client, 1).get(f"/api/leads/{priyas['id']}").json()["stage"] == "New"
@@ -64,9 +67,10 @@ def test_won_waits_for_confirm(client, ai):
     script, _ = ai
     lead = client.post("/api/leads", json={"last_name": "Iyer", "company": "Sunrise"}).json()
     opp = client.post(f"/api/leads/{lead['id']}/convert",
-                      json={"expected_value": 25000, "completed_stages": ["Nurturing", "Demo"]}).json()["opportunity"]
+                      json={"task": TASK, "expected_value": 25000, "completed_stages": ["Nurturing", "Demo"], "note": "Synthetic test note"}).json()["opportunity"]
     script += [[call("mark_opportunity_won", opportunity_id=opp["id"], final_amount=24000,
-                     completed_stages=["Proposal"])]]
+                     completed_stages=["Proposal"], note="Synthetic test: contract signed",
+                     task_title="Synthetic handover", task_due_date="2030-01-20T10:00")]]
     first = client.post("/api/assistant/chat", json={"message": "Mark the Sunrise deal won for 24k"}).json()
     p = first["pending"]
     assert p["tool"] == "mark_opportunity_won" and "24,000" in p["summary"]
@@ -83,7 +87,7 @@ def test_won_waits_for_confirm(client, ai):
 def test_cancel_leaves_record_alone(client, ai):
     script, _ = ai
     lead = client.post("/api/leads", json={"last_name": "Das", "company": "Acme"}).json()
-    script += [[call("mark_lead_lost", lead_id=lead["id"], reason="No budget")], "OK, I left it open."]
+    script += [[call("mark_lead_lost", lead_id=lead["id"], reason="No budget", notes="Synthetic test note")], "OK, I left it open."]
     first = client.post("/api/assistant/chat", json={"message": "Das has no budget, close it"}).json()
     done = client.post("/api/assistant/confirm", json={"messages": first["messages"], "pending": first["pending"],
                                                        "confirmed": False}).json()
@@ -106,10 +110,11 @@ def test_new_message_instead_of_confirm_keeps_conversation_valid(client, ai):
 def test_stage_rule_comes_back_as_a_question(client, ai):
     script, seen = ai
     lead = client.post("/api/leads", json={"last_name": "Rao", "company": "Acme"}).json()
-    script += [[call("move_lead_stage", lead_id=lead["id"], stage="Demo", demo_date="2026-12-01T11:00")],
+    script += [[call("move_lead_stage", lead_id=lead["id"], stage="Demo", demo_date="2026-12-01T11:00",
+                     note="Synthetic test: demo booked", task_title="Synthetic follow-up task", task_due_date="2030-01-15T10:00")],
                "Was Nurturing already done?",
                [call("move_lead_stage", lead_id=lead["id"], stage="Demo", demo_date="2026-12-01T11:00",
-                     completed_stages=["Nurturing"])],
+                     completed_stages=["Nurturing"], note="Synthetic test: demo booked", task_title="Synthetic follow-up task", task_due_date="2030-01-15T10:00")],
                "Booked the demo for 1 Dec 2026, 11:00 AM."]
     first = client.post("/api/assistant/chat", json={"message": "book a demo with Rao on 1 Dec 11am"}).json()
     assert "Nurturing" in json.loads(seen[1][-1]["content"])["error"]

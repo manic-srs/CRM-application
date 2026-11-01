@@ -41,8 +41,8 @@ email, tasks and reminders, notifications, lead conversion, closing a deal, and 
 - Lead research fields: LinkedIn profile, company website, company LinkedIn page (clickable, required with email),
   turnover, headcount and location.
 - LinkedIn autofill on New Lead: paste a LinkedIn profile URL and the empty fields are filled with the details Apollo
-  returns (name, company, title, industry, verified work email, direct business phone). Nothing is saved until Save;
-  off until `APOLLO_API_KEY` is set.
+  returns (name, title, verified work email, direct business phone, and the current employer's company name,
+  industry, website and LinkedIn page). Nothing is saved until Save; off until `APOLLO_API_KEY` is set.
 - Delete a lead (owner, Manager or Admin); the Admin and Managers are notified and it is logged.
 - While typing the company on a lead, existing leads and accounts for that company are shown (only owner and stage
   for records the user can't open), so two people don't work the same company.
@@ -167,14 +167,29 @@ Lost:         available from any open stage (reason required)
 | Stage | System behavior |
 | --- | --- |
 | New | Creates a "Make first contact" task |
-| Nurturing / Demo | Closes the previous follow-up and creates the next; demo preparation task and a 1-hour reminder |
-| Convert | Creates the Account, Contact and Opportunity; moves lead emails to the opportunity |
-| Proposal | Sets probability to 75%, creates a proposal follow-up and a close-date reminder |
-| Won / Lost | Closes the deal and its open tasks; optional customer email |
+| Nurturing / Demo | Closes the previous follow-ups and saves the user's new task; with a demo date, the demo reminder (1 hour before) and a preparation task |
+| Convert | Creates the Account, Contact and Opportunity (the user's new task goes on the opportunity); moves lead emails to the opportunity |
+| Proposal | Sets probability to 75%, saves the user's new task; the close-date reminder stays |
+| Won / Lost | Closes the deal and its open tasks; Won saves the user's post-sale task, which stays open; optional customer email |
 
 **Stage order.** Stages cannot be skipped. Moving forward past a stage requires the user to confirm that stage as
 completed, with an optional note recorded in the stage history. Moving back and marking Lost are always allowed.
 Implemented in `backend/app/services.py` (`confirm_skipped`).
+
+**Stage notes.** Every stage change a user makes needs a note: the Change Stage popup (path, Mark as Complete, Kanban),
+the Conversion Comment on Convert ("Enter a conversion comment."), the Closing Note on Won, the Lost Notes on Lost
+(with the Lost Reason), and the reason when a cancelled demo
+moves the lead back to Nurturing. The API refuses a missing or blank note and then changes nothing. The note is saved
+in the stage history (on conversion also as the new opportunity's first entry). Creating a record needs no note.
+Implemented in `backend/app/schemas.py` (`StageNote`).
+
+**New task with each stage change.** Every stage change except Lost also needs a New Task (subject and due date;
+priority, assignee, reminder and description as on the task form), in the same popup below the note: the next
+follow-up, the first task of the new opportunity on Convert, or a post-sale task (e.g. handover) on Won, which stays
+open on the won deal. It replaces the system's automatic follow-up for that change; reminders tied to dates (demo,
+close date) stay. It goes to the record's owner unless a user who may assign tasks picks someone else. The change,
+note, task and any files are saved together or not at all. Implemented in `backend/app/schemas.py` (`StageTask`) and
+`backend/app/services.py` (`add_stage_task`).
 
 **Bulk upload.** Leads > Upload accepts .xlsx or .csv files with up to 100,000 rows (50 MB). Common column names
 are recognised (First Name, Last Name, Title, Company, Email, Person Linkedin Url, Website, Company Linkedin Url,

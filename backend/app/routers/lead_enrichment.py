@@ -24,7 +24,8 @@ class EnrichmentOut(BaseModel):
     status: Literal["matched", "unverified", "no_match"]  # unverified: Apollo's LinkedIn URL missing/invalid/different
     linkedin_url: str  # the profile address in its saved form
     url_verified: bool = False  # true only when Apollo's returned LinkedIn URL is this same profile
-    fields: dict[str, str] = {}  # first_name, last_name, company, title, industry, email, phone: only those found
+    fields: dict[str, str] = {}  # first_name, last_name, company, title, industry, company_website,
+    #                              company_linkedin_url, email, phone: only those found
     unavailable: dict[str, str] = {}  # the other fields, with the reason they are empty
     message: str | None = None
     cached: bool = False  # answered from this user's recent lookups (no new Apollo request)

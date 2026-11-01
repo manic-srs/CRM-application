@@ -8,6 +8,8 @@ from openpyxl import Workbook, load_workbook
 from app import mailer
 from tests.conftest import login_as
 
+TASK = {"title": "Synthetic follow-up task", "due_date": "2030-01-15T10:00:00"}  # every stage change needs one
+
 
 @pytest.fixture
 def outbox(monkeypatch):
@@ -50,7 +52,7 @@ def test_lead_links_are_saved_cleaned_and_copied_on_convert(client, outbox):
     assert lead["annual_revenue"] == 5000000 and lead["employees"] == 120
     bad = client.post("/api/leads", json={"last_name": "X", "company": "Y", "linkedin_url": "twitter.com/x"})
     assert bad.status_code == 422
-    res = client.post(f"/api/leads/{lead['id']}/convert", json={"completed_stages": ["Nurturing", "Demo"]}).json()
+    res = client.post(f"/api/leads/{lead['id']}/convert", json={"task": TASK, "completed_stages": ["Nurturing", "Demo"], "note": "Synthetic test note"}).json()
     assert res["account"]["website"] == "https://brightline.example" and res["account"]["employees"] == 120
     assert res["contact"]["linkedin_url"] == "https://linkedin.com/in/priya"
 
@@ -69,7 +71,7 @@ def test_delete_lead_by_owner_manager_admin_only(client, outbox):
     assert client.delete(f"/api/leads/{other['id']}").status_code == 200  # the Admin can delete anyone's
     # converted leads stay
     conv = new_lead(login_as(client, 2), email="c@x.example")
-    client.post(f"/api/leads/{conv['id']}/convert", json={"completed_stages": ["Nurturing", "Demo"]})
+    client.post(f"/api/leads/{conv['id']}/convert", json={"task": TASK, "completed_stages": ["Nurturing", "Demo"], "note": "Synthetic test note"})
     assert client.delete(f"/api/leads/{conv['id']}").status_code == 400
 
 
@@ -152,7 +154,7 @@ def test_leads_list_page_views_search_and_sort(client, outbox):
     names = [l["last_name"] for l in client.get("/api/leads/page", params={"sort": "name", "direction": "asc"}).json()["items"]]
     assert names == sorted(names)
     first = client.get("/api/leads/page", params={"view": "uploaded"}).json()["items"][0]["id"]
-    client.put(f"/api/leads/{first}/stage", json={"stage": "Nurturing"})
+    client.put(f"/api/leads/{first}/stage", json={"task": TASK, "stage": "Nurturing", "note": "Synthetic test note"})
     assert client.get("/api/leads/page", params={"stage": "Nurturing"}).json()["total"] == 1
     # filters: Lead Source, Owner and Created date
     assert client.get("/api/leads/page", params={"source": "Upload"}).json()["total"] == 5
