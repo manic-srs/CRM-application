@@ -5,6 +5,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { LEAD_OPEN_STAGES } from "./domain";
+import { UploadUsers } from "./LeadFiles";
 import { can } from "./permissions";
 import PermissionsTab from "./PermissionsPage";
 import { dateTime } from "./format";
@@ -560,6 +561,11 @@ function PeopleTab({ user, data, reload, notify, onSelfChanged }) {
           <option value="inactive">Inactive</option>
         </select>
         {admin && (
+          <button className="sf-button" onClick={() => setDialog({ type: "upload" })} title="Add many users from Excel or CSV">
+            Upload Users
+          </button>
+        )}
+        {admin && (
           <button className="sf-button brand" onClick={() => setDialog({ type: "new" })}>
             Add User
           </button>
@@ -620,6 +626,7 @@ function PeopleTab({ user, data, reload, notify, onSelfChanged }) {
       </div>
       <Pagination {...peoplePage.pager} />
       {dialog?.type === "new" && <NewUser close={closeDialog} notify={notify} />}
+      {dialog?.type === "upload" && <UploadUsers onClose={() => setDialog(null)} onDone={() => closeDialog({})} notify={notify} />}
       {dialog?.type === "edit" && <EditUser target={dialog.target} close={closeDialog} notify={notify} />}
       {dialog?.type === "reset" && <ResetPassword target={dialog.target} close={closeDialog} notify={notify} />}
       {dialog?.type === "transfer" && <Transfer target={dialog.target} users={list} close={closeDialog} notify={notify} />}

@@ -19,7 +19,7 @@ from app.database import Base, SessionLocal, engine, get_db
 from app import mailer, scheduler, schemas
 from app.security import authenticate, ensure_default_admin, require_admin
 from app.routers import (accounts, activity, assistant, attachments, auth, emails, home, lead_enrichment, lead_files, leads,
-                         opportunities, opportunity_files, tasks)
+                         opportunities, opportunity_files, tasks, user_files)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(name)s - %(message)s")
 
@@ -134,7 +134,7 @@ app.include_router(auth.router)
 app.include_router(auth.protected)
 # lead_files, lead_enrichment and opportunity_files first: their fixed paths (/leads/page, /leads/enrichment...) come before
 # /leads/{id}
-for router in (emails.router, home.router, lead_files.router, lead_enrichment.router, leads.router, opportunity_files.router,
+for router in (user_files.router, emails.router, home.router, lead_files.router, lead_enrichment.router, leads.router, opportunity_files.router,
                opportunities.router, attachments.router, tasks.router, accounts.router, activity.router, assistant.router):
     app.include_router(router, dependencies=[Depends(authenticate)])
 

@@ -348,6 +348,13 @@ export const api = {
     for (const id of ownerIds || []) form.append("owner_ids", id);
     return upload(`/${object}/import`, form, { timeout: 10 * 60 * 1000, failed: "The file could not be uploaded.", tooLarge: "The file is too large." });
   },
+  // Admin: add many users from Excel / CSV (dry run first: nothing is saved)
+  importUsers: (file, dryRun) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("dry_run", dryRun ? "true" : "false");
+    return upload("/users/import", form, { timeout: 2 * 60 * 1000, failed: "The file could not be uploaded.", tooLarge: "The file is too large." });
+  },
   // Download leads to Excel / CSV; the reason is recorded in the Activity Log
   exportLeads: (params) => api.exportData("leads", params),
   exportData: async (object, params) => {

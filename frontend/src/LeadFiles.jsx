@@ -485,3 +485,142 @@ export function TransferHistory({ object = "leads", onClose }) {
     </Dialog>
   );
 }
+
+// Manage Access > People (Admin): add many users at once. Same rules as Add User; each gets the welcome email.
+const SAMPLE_USERS = "Full Name,Email,Role\nPriya Menon,priya.menon@srsconsultinginc.com,Salesperson\nArjun Rao,arjun.rao@srsconsultinginc.com,Manager\n";
+export function UploadUsers({ onClose, onDone, notify }) {
+  const [file, setFile] = useState(null);
+  const [check, setCheck] = useState(null);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const input = useRef(null);
+  const pick = (f) => (setFile(f || null), setCheck(null), setError(""));
+  const send = async (dryRun) => {
+    if (!file) return setError("Choose an Excel (.xlsx) or CSV file.");
+    setBusy(dryRun ? "check" : "upload");
+    setError("");
+    try {
+      const result = await api.importUsers(file, dryRun);
+      if (dryRun) setCheck(result);
+      else {
+        notify(`${n(result.created)} user${result.created === 1 ? "" : "s"} added. Each one was emailed their login details.`);
+        onDone();
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy("");
+    }
+  };
+  return (
+    <Dialog
+      title="Upload Users"
+      wide={!!check}
+      busy={!!busy}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="sf-button" onClick={onClose} disabled={!!busy}>
+            Cancel
+          </button>
+          {check?.ready > 0 ? (
+            <button className="sf-button brand" onClick={() => send(false)} disabled={!!busy} aria-busy={busy === "upload"}>
+              {busy === "upload" ? "Adding…" : `Add ${n(check.ready)} user${check.ready === 1 ? "" : "s"}`}
+            </button>
+          ) : (
+            <button className="sf-button brand" onClick={() => send(true)} disabled={!!busy || !file} aria-busy={busy === "check"}>
+              {busy === "check" ? "Checking…" : "Check file"}
+            </button>
+          )}
+        </>
+      }
+    >
+      <p className="upload-intro">Add many users from an Excel (.xlsx) or CSV file.</p>
+      <ul className="upload-rules">
+        {["Required: Full Name, Email", "Role: Salesperson (default), Manager or Admin", "Company emails only", "Each user gets a welcome email"].map((rule) => (
+          <li key={rule}>{rule}</li>
+        ))}
+      </ul>
+      <div
+        className={`dropzone upload-zone ${file ? "has-file" : ""}`}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => (e.preventDefault(), pick(e.dataTransfer.files[0]))}
+      >
+        <button type="button" className="sf-button small" onClick={() => input.current.click()} disabled={!!busy}>
+          {file ? "Change file" : "Choose file"}
+        </button>
+        <span className={file ? "" : "muted"}>{file ? file.name : "or drag it here · .xlsx or .csv, up to 500 users"}</span>
+        <input ref={input} type="file" hidden accept=".xlsx,.csv" onChange={(e) => (pick(e.target.files[0]), (e.target.value = ""))} />
+      </div>
+      <button type="button" className="link sample-link" onClick={() => saveText("SalesTrack-users-upload-sample.csv", SAMPLE_USERS)}>
+        Download sample file
+      </button>
+      {check && (
+        <div className="upload-check">
+          <div className="upload-counts">
+            <span>
+              <b>{n(check.rows)}</b> rows
+            </span>
+            <span className="ok">
+              <b>{n(check.ready)}</b> ready to add
+            </span>
+            <span className="warn">
+              <b>{n(check.duplicates)}</b> already have an account
+            </span>
+            <span className="bad">
+              <b>{n(check.invalid)}</b> invalid
+            </span>
+          </div>
+          {check.ready > 0 && (
+            <p className="field-hint">
+              {Object.entries(check.roles).filter(([, count]) => count).map(([role, count]) => `${count} ${role}${count === 1 ? "" : "s"}`).join(" • ")}
+              {" "}• A temporary password is created for anyone without one in the file.
+            </p>
+          )}
+          {check.preview.length > 0 && (
+            <div className="table-scroll">
+              <table className="sf-table upload-preview">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {check.preview.map((u) => (
+                    <tr key={u.email}>
+                      <td>{u.full_name}</td>
+                      <td>{u.email}</td>
+                      <td>{u.role}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {check.errors.length > 0 && (
+            <details className="upload-errors" open={check.ready === 0}>
+              <summary>
+                {n(check.errors.length)} row{check.errors.length === 1 ? "" : "s"} skipped
+              </summary>
+              <ul>
+                {check.errors.map((e) => (
+                  <li key={e.row}>
+                    Row {e.row}: {e.reason}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+          {check.ready === 0 && <p className="form-error">No new users to add.</p>}
+        </div>
+      )}
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+    </Dialog>
+  );
+}
