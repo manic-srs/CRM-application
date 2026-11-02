@@ -91,7 +91,7 @@ SYSTEM_NAME = "SalesTrack (no-reply)"
 
 
 def company_name() -> str:
-    """Shown to customers in the lead welcome email (COMPANY_NAME in .env)."""
+    """The company name used in email wording (COMPANY_NAME in .env)."""
     return os.getenv("COMPANY_NAME", "").strip() or "SalesTrack"
 
 

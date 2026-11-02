@@ -176,6 +176,9 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
 
   const path = lead ? LEAD_PATH : OPP_PATH;
   const pathStages = item.stage === "Lost" ? [...path.slice(0, -1), "Lost"] : path;
+  // an optional stage (Revisit) the lead went past without entering is shown as skipped, not as done
+  const reached = (stage) => item.activity.some((a) => a.text?.includes(`→ ${stage}`) || a.text?.startsWith(`Created at ${stage}`));
+  const skippedStages = lead ? LEAD_OPTIONAL_STAGES.filter((stage) => !reached(stage)) : [];
   // "Mark as Complete" goes to the next required stage: an optional one (Revisit) is chosen on the path itself
   const nextStage = path.slice(path.indexOf(item.stage) + 1).find((stage) => !LEAD_OPTIONAL_STAGES.includes(stage));
   const selectStage = (stage) => {
@@ -269,6 +272,7 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
       <section className="card path-card">
         <PathBar
           stages={pathStages}
+          skipped={skippedStages}
           current={item.stage}
           closed={closed}
           onSelect={canEdit ? selectStage : () => {}}

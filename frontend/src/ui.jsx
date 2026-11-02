@@ -164,7 +164,7 @@ export function Ring({ segments, size = 150, stroke = 9, children, label }) {
 }
 
 // Salesforce-style path: chevrons, completed steps get a check
-export function PathBar({ stages, current, closed, onSelect, lostLabel }) {
+export function PathBar({ stages, current, closed, onSelect, lostLabel, skipped = [] }) {
   const index = stages.indexOf(current);
   return (
     <ol className="path">
@@ -172,7 +172,9 @@ export function PathBar({ stages, current, closed, onSelect, lostLabel }) {
         const state =
           lostLabel && i === stages.length - 1
             ? "lost"
-            : i < index || (closed && i <= index)
+            : i < index && skipped.includes(stage)
+              ? "skipped"
+              : i < index || (closed && i <= index)
               ? "complete"
               : i === index
                 ? "current"
@@ -183,7 +185,7 @@ export function PathBar({ stages, current, closed, onSelect, lostLabel }) {
               type="button"
               disabled={closed || !onSelect}
               onClick={() => onSelect?.(stage)}
-              title={stage}
+              title={state === "skipped" ? `${stage} (skipped)` : stage}
             >
               {state === "complete" && <Icon name="check" size={14} className="path-check" />}
               <span className="path-label">{lostLabel && i === stages.length - 1 ? lostLabel : stage}</span>

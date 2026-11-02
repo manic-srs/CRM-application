@@ -631,6 +631,11 @@ p {
 .path-step.complete button:not(:disabled):hover {
   background: #194e31;
 }
+/* an optional stage (Revisit) that was passed over: grey with a dashed edge, no check */
+.path-step.skipped button {
+  background: repeating-linear-gradient(135deg, #ecebea 0 6px, #e2e1df 6px 12px);
+  color: var(--text-weak);
+}
 .path-step.current button {
   background: var(--brand-dark);
   color: var(--white);
