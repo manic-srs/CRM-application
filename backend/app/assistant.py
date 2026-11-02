@@ -24,7 +24,7 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
 from app import schemas
-from app.constants import LEAD_FLOW, LEAD_STAGES, OPPORTUNITY_FLOW, OPPORTUNITY_STAGES
+from app.constants import LEAD_FLOW, LEAD_STAGES, OPPORTUNITY_FLOW, OPPORTUNITY_STAGES, REVISIT_REASONS
 from app.models import User
 from app.routers import activity, home, leads, opportunities, tasks
 from app.security import acting_user
@@ -100,12 +100,13 @@ TOOLS = [
     _tool("list_users", "Active users (for owners and transfers)."),
     _tool("pipeline_summary", "Numbers for the dashboard: leads per stage, open deals, won and lost, today's tasks.", {
         "mine_only": {"type": "boolean", "description": "Default false: the whole team the user can see"}}),
-    _tool("create_lead", "Create a lead at stage Unqualified. Last name and company are required.", {
+    _tool("create_lead", "Create a lead at stage New. Last name and company are required.", {
         **LEAD_FIELDS, "owner_name": {"type": "string", "description": "Only when the user names another owner"}},
         ["last_name", "company"]),
     _tool("update_lead", "Change details of a lead (not its stage or owner).", {"lead_id": I, **LEAD_FIELDS}, ["lead_id"]),
-    _tool("move_lead_stage", "Move a lead to Unqualified, New, Nurturing, Revisit or Demo. Demo needs demo_date.", {
+    _tool("move_lead_stage", "Move a lead to New, Nurturing, Revisit or Demo. Demo needs demo_date; Revisit needs revisit_date and revisit_reason.", {
         "lead_id": I, "stage": {"type": "string", "enum": LEAD_FLOW}, "demo_date": DATE_TIME,
+        "revisit_date": DATE_TIME, "revisit_reason": {"type": "string", "enum": REVISIT_REASONS},
         "note": NOTE, "completed_stages": COMPLETED, **TASK_ARGS}, ["lead_id", "stage", "note", *TASK_REQUIRED]),
     _tool("reschedule_demo", "Move a booked demo to a new date and time (the lead stays at Demo).", {
         "lead_id": I, "new_date": DATE_TIME, "reason": S}, ["lead_id", "new_date"]),
@@ -261,6 +262,7 @@ def run_tool(db: Session, name: str, args: dict) -> tuple[dict, dict | None]:
         return _lead_row(out), _link("Lead", out)
     if name == "move_lead_stage":
         data = schemas.LeadStageChange(stage=a["stage"], demo_date=a.get("demo_date"), note=a.get("note"),
+                                       revisit_date=a.get("revisit_date"), revisit_reason=a.get("revisit_reason"),
                                        completed_stages=a.get("completed_stages", []), task=stage_task(a))
         out = _plain(leads.change_stage(lead_id=a["lead_id"], data=data, db=db))
         return _lead_row(out), _link("Lead", out)
@@ -373,7 +375,7 @@ def system_prompt() -> str:
         "- Use tools for every fact and action. Never invent ids, names or numbers: search or list first.\n"
         "- If several records match, ask which one. If required details are missing (lead: last name and company; "
         "demo: date and time), ask for them in one short question.\n"
-        "- Lead stages go Unqualified -> New -> Nurturing -> Revisit (optional) -> Demo -> Convert; deals go Opportunity "
+        "- Lead stages go New -> Nurturing -> Revisit (optional) -> Demo -> Convert (a lead can be closed as Unqualified or Lost); deals go Opportunity "
         "-> Discovery -> Proposal -> Won. Stages can't be "
         "skipped: if a tool says a stage is missing, ask the user whether it was already done, and only then pass it "
         "in completed_stages.\n"

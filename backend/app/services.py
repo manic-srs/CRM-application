@@ -260,8 +260,8 @@ def task_line(label: str, task: Task | None) -> list[str]:
 # Title of the notification / email subject for each step. Titles start with "Lead" or "Opportunity"
 # so the bell shows the matching icon.
 STAGE_TITLES = {
-    ("Lead", "Unqualified"): "Lead created",
     ("Lead", "New"): "Lead moved to New",
+    ("Lead", "Unqualified"): "Lead unqualified",
     ("Lead", "Nurturing"): "Lead moved to Nurturing",
     ("Lead", "Revisit"): "Lead moved to Revisit",
     ("Lead", "Demo"): "Lead moved to Demo",

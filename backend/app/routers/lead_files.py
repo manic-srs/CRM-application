@@ -2,13 +2,13 @@
 
 Every upload and download is recorded in the Activity Log (who, when, what, how many, and the reason for downloads),
 and the Admin is notified of downloads.
-Uploaded leads start at Unqualified. They get no welcome email, no notification each and no automatic task, so a file of
+Uploaded leads start at New. They get no welcome email, no notification each and no automatic task, so a file of
 100,000 leads doesn't flood the bell or the task list. Rows whose email is already in the CRM are skipped.
 """
 import csv
 import io
 import re
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -20,7 +20,7 @@ from app import schemas
 from app.constants import LEAD_OPEN_STAGES, LEAD_SOURCES, LEAD_STAGES, LEAD_START
 from app.database import get_db
 from app.models import Account, ActivityLog, Contact, Lead, StageHistory, User
-from app.security import acting_user, can_view, owner_for_new, require, visible
+from app.security import acting_user, can_view, require, visible
 from app.serializers import lead_out
 from app.services import email_matches_website, log_activity, notify, website_host
 
@@ -253,7 +253,7 @@ def drop_duplicates(db: Session, leads: list[dict], errors: list[dict]) -> list[
     return keep
 
 
-ASSIGN_MODES = ("one", "column", "even")
+ASSIGN_MODES = ("one", "column", "even", "counts")
 
 
 def assignable(db: Session, user_id: int | None) -> User:
@@ -271,33 +271,44 @@ async def import_leads(
     assign: str = Form("one", description="one: all to owner_id; column: the file's Lead Owner column (email or name); "
                                           "even: shared round-robin among owner_ids"),
     owner_ids: list[int] = Form([], description="assign=even: the people to share the leads between"),
+    counts: list[str] = Form([], description='assign=counts: "user_id:how_many" per person, in file order; '
+                                             'the rest go to owner_id (or you)'),
     dry_run: bool = Form(True),
     db: Session = Depends(get_db),
 ):
     """Upload leads from Excel / CSV. dry_run=true (default) only checks the file and shows what would happen.
 
     Who owns the leads, as in Salesforce's Data Import Wizard: everyone to one person, the file's Lead Owner column,
-    or shared evenly (round-robin) between chosen people. Assigning to others needs the Reassign owner permission
-    (Managers); the Admin always chooses an owner."""
+    or shared evenly (round-robin) between chosen people, or a set number per person ("counts": e.g. 10 to one
+    teammate, 5 to another, the rest to you). Anyone who can upload can assign to active Managers and Salespeople;
+    the Admin always chooses an owner. Each person gets one "Leads assigned to you" notification saying who and how many."""
     me = require("import_leads")
     if assign not in ASSIGN_MODES:
-        raise HTTPException(status_code=400, detail="assign must be one, column or even")
-    may_assign = me.is_admin or me.can("reassign_owner")
+        raise HTTPException(status_code=400, detail="assign must be one, column, even or counts")
     people: list[User] = []
+    quota: list[tuple[User, int]] = []
     if assign == "even":
         ids = list(dict.fromkeys(owner_ids))
         if not ids:
             raise HTTPException(status_code=400, detail="Choose the people to share the leads between.")
-        if not may_assign and ids != [me.id]:
-            raise HTTPException(status_code=403, detail="You can't assign leads to other people (Reassign owner).")
         people = [assignable(db, i) for i in ids]
         default = people[0]
     else:
         if me.is_admin and (owner_id is None or owner_id == me.id):
             raise HTTPException(status_code=400, detail="Choose who will own the uploaded leads.")
-        if assign == "column" and not may_assign:
-            raise HTTPException(status_code=403, detail="You can't assign leads to other people (Reassign owner).")
-        default = assignable(db, owner_id if me.is_admin else owner_for_new(owner_id))
+        default = assignable(db, owner_id if owner_id is not None else me.id)
+        if assign == "counts":
+            seen = set()
+            for item in counts:
+                user_text, _, how_many = item.partition(":")
+                if not (user_text.strip().isdigit() and how_many.strip().isdigit()) or int(how_many) < 1:
+                    raise HTTPException(status_code=400, detail="Give each person a number of leads (1 or more).")
+                if int(user_text) in seen:
+                    raise HTTPException(status_code=400, detail="Each person can be listed once.")
+                seen.add(int(user_text))
+                quota.append((assignable(db, int(user_text)), int(how_many)))
+            if not quota:
+                raise HTTPException(status_code=400, detail="Choose who gets how many leads.")
     content = await file.read(MAX_FILE_BYTES + 1)
     if len(content) > MAX_FILE_BYTES:
         raise HTTPException(status_code=413, detail="The file is larger than 50 MB. Split it into smaller files.")
@@ -316,6 +327,10 @@ async def import_leads(
     if assign == "even":
         for i, lead in enumerate(leads):
             lead["_owner_user"] = people[i % len(people)]
+    elif assign == "counts":  # in file order: the first N to the first person, the next M to the second...
+        queue = [user for user, how_many in quota for _ in range(how_many)]
+        for i, lead in enumerate(leads):
+            lead["_owner_user"] = queue[i] if i < len(queue) else default  # the rest: the default owner
     elif assign == "column":
         users = db.scalars(select(User).where(User.is_active.is_(True), User.role != "Admin")).all()
         lookup = {u.email.lower(): u for u in users} | {u.full_name.lower(): u for u in users}
@@ -328,11 +343,19 @@ async def import_leads(
     else:
         for lead in leads:
             lead["_owner_user"] = default
-    counts: dict[int, list] = {}
+    assign_note = None
+    if assign == "counts":
+        asked = sum(n for _, n in quota)
+        if asked > len(leads):
+            assign_note = (f"You asked for {asked:,} leads but {len(leads):,} are ready to upload, "
+                           "so the last people get fewer.")
+        elif asked < len(leads):
+            assign_note = f"The other {len(leads) - asked:,} go to {default.full_name}."
+    per_owner: dict[int, list] = {}
     for lead in leads:
         user = lead["_owner_user"]
-        counts.setdefault(user.id, [user, 0])[1] += 1
-    owners = sorted(({"id": u.id, "name": u.full_name, "count": n} for u, n in counts.values()),
+        per_owner.setdefault(user.id, [user, 0])[1] += 1
+    owners = sorted(({"id": u.id, "name": u.full_name, "count": n} for u, n in per_owner.values()),
                     key=lambda o: (-o["count"], o["name"]))
 
     kept = {l["_row"] for l in leads}
@@ -348,6 +371,7 @@ async def import_leads(
         "invalid": len(errors) - skipped,
         "owner": owner_text,
         "owners": owners,
+        "assign_note": assign_note,
         "columns_used": mapped,
         "columns_ignored": ignored,
         "errors": issue_list(errors, header, rows, LOOKUP),
@@ -390,6 +414,10 @@ LIST_VIEWS = {
     "all": lambda q, me: q,
     "converted": lambda q, me: q.where(Lead.stage == "Converted"),
     "lost": lambda q, me: q.where(Lead.stage == "Lost"),
+    "unqualified": lambda q, me: q.where(Lead.stage == "Unqualified"),
+    # Revisit leads whose date has come (today or earlier)
+    "revisit_due": lambda q, me: q.where(Lead.stage == "Revisit",
+                                         Lead.revisit_date < datetime.combine(date.today() + timedelta(days=1), time())),
     "uploaded": lambda q, me: q.where(Lead.uploaded_from.is_not(None)),
     "my_uploaded": lambda q, me: q.where(Lead.uploaded_from.is_not(None), Lead.owner_id == me.id),
     # email campaigns: these leads are left out of every campaign

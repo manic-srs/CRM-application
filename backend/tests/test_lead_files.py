@@ -95,7 +95,7 @@ def test_upload_preview_then_import(client, outbox):
     assert asha["uploaded_from"] == "apollo.csv"
     # uploaded leads are in the normal open-leads list too
     assert {l["last_name"] for l in client.get("/api/leads/page").json()["items"]} == {"Menon", "Iyer", "Diaz"}
-    assert asha["linkedin_url"] == "https://linkedin.com/in/asha" and asha["owner_id"] == 2 and asha["stage"] == "Unqualified"
+    assert asha["linkedin_url"] == "https://linkedin.com/in/asha" and asha["owner_id"] == 2 and asha["stage"] == "New"
     assert len(outbox) == sent  # no welcome emails for uploaded leads
     assert client.get(f"/api/leads/{asha['id']}").json()["tasks"] == []  # and no automatic tasks
     log = login_as(client, 3).get("/api/activity-log").json()[0]
@@ -116,8 +116,9 @@ def test_upload_excel_and_admin_must_pick_owner(client, outbox):
     lead = login_as(client, 2).get("/api/leads/page", params={"view": "my_uploaded"}).json()["items"][0]
     assert (lead["first_name"], lead["last_name"], lead["owner_id"]) == ("Dev", "Patel", 2)
     assert "Leads assigned to you" in [n["title"] for n in client.get("/api/notifications").json()]
-    # a salesperson can't upload for someone else
-    assert client.post("/api/leads/import", files=files, data={"owner_id": "1"}).status_code == 403
+    # a salesperson can upload for a teammate, not for the Admin
+    assert client.post("/api/leads/import", files=files, data={"owner_id": "1"}).status_code == 200
+    assert client.post("/api/leads/import", files=files, data={"owner_id": "3"}).status_code == 400
     assert client.post("/api/leads/import", files={"file": ("a.pdf", b"x", "application/pdf")}).status_code == 400
 
 

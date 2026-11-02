@@ -89,7 +89,7 @@ def upgrade_database() -> None:
             CONSTRAINT ck_opp_attach_deleted CHECK ((deleted_at IS NULL) = (deleted_by_id IS NULL)))"""))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_opp_attachments_opp ON opportunity_attachments "
                           "(opportunity_id, uploaded_at DESC) WHERE deleted_at IS NULL"))
-        # Stages: Unqualified and Revisit for leads (new leads start at Unqualified), Discovery for opportunities.
+        # Stages: Revisit (and Unqualified, a closed outcome) for leads, Discovery for opportunities.
         # Existing records keep their stage; only the allowed lists and the default change.
         for table, column, stages in (
             ("leads", "stage", LEAD_STAGES),
@@ -120,6 +120,20 @@ def upgrade_database() -> None:
                           "ON campaign_recipients (campaign_id, status)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_campaign_recipients_sent "
                           "ON campaign_recipients (sent_at) WHERE sent_at IS NOT NULL"))
+        # Unqualified is now a closed outcome (not eligible, with a reason); Revisit has a date; Discovery its details
+        for table, column, kind in (
+            ("leads", "unqualified_reason", "VARCHAR(20)"), ("leads", "unqualified_notes", "TEXT"),
+            ("leads", "revisit_date", "TIMESTAMP"), ("leads", "revisit_reason", "VARCHAR(30)"),
+            ("opportunities", "discovery_needs", "TEXT"), ("opportunities", "discovery_budget", "VARCHAR(100)"),
+            ("opportunities", "discovery_decision_maker", "VARCHAR(150)"),
+            ("opportunities", "discovery_timeline", "VARCHAR(100)"),
+        ):
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {kind}"))
+        # leads that started at Unqualified (when it was the first stage) are open leads: they move to New
+        conn.execute(text("UPDATE leads SET stage = 'New' WHERE stage = 'Unqualified' AND unqualified_reason IS NULL"))
+        conn.execute(text("ALTER TABLE leads DROP CONSTRAINT IF EXISTS ck_leads_unqualified_reason"))
+        conn.execute(text("ALTER TABLE leads ADD CONSTRAINT ck_leads_unqualified_reason "
+                          "CHECK (stage <> 'Unqualified' OR unqualified_reason IS NOT NULL)"))
 
 
 @asynccontextmanager

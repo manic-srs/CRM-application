@@ -1,14 +1,22 @@
-// Lead path (same as backend/app/constants.py): Unqualified -> New -> Nurturing -> Revisit -> Demo -> Converted,
-// or Lost from any open stage. New leads start at Unqualified. Revisit is optional (only when a lead asks to be
-// contacted again later), so it can be passed over; every other stage must be done or confirmed as done.
-export const LEAD_STAGES = ["Unqualified", "New", "Nurturing", "Revisit", "Demo", "Converted", "Lost"];
-// Leads Kanban: the open stages, then Converted and Lost as two separate closed (terminal) columns
-export const LEAD_OPEN_STAGES = ["Unqualified", "New", "Nurturing", "Revisit", "Demo"];
+// Lead path (same as backend/app/constants.py): New -> Nurturing -> Revisit -> Demo -> Converted. New leads start at
+// New. Revisit is optional ("not now": the lead asked to be contacted on a later date), so it can be passed over;
+// every other stage must be done or confirmed as done. Closed without converting, from any open stage:
+// Unqualified (not eligible, with a reason; can be reopened) or Lost.
+export const LEAD_STAGES = ["New", "Nurturing", "Revisit", "Demo", "Converted", "Unqualified", "Lost"];
+// Leads Kanban: the open stages, then Converted, Unqualified and Lost as separate closed (terminal) columns
+export const LEAD_OPEN_STAGES = ["New", "Nurturing", "Revisit", "Demo"];
 export const LEAD_FLOW = LEAD_OPEN_STAGES; // then Convert
 export const LEAD_OPTIONAL_STAGES = ["Revisit"];
-export const LEAD_CLOSED_STAGES = ["Converted", "Lost"];
+export const LEAD_CLOSED_STAGES = ["Converted", "Unqualified", "Lost"];
 // the stages each Leads list view contains (the same rule as LIST_VIEWS in backend/app/routers/lead_files.py)
-const LEAD_VIEW_STAGES = { all_open: LEAD_OPEN_STAGES, my_open: LEAD_OPEN_STAGES, converted: ["Converted"], lost: ["Lost"] };
+const LEAD_VIEW_STAGES = {
+  all_open: LEAD_OPEN_STAGES,
+  my_open: LEAD_OPEN_STAGES,
+  converted: ["Converted"],
+  lost: ["Lost"],
+  unqualified: ["Unqualified"],
+  revisit_due: ["Revisit"],
+};
 // Per board column: whether the current list view and Lead Status filter can contain it ("" = yes, else why not)
 export function leadBoardColumns(view, stageFilter) {
   return LEAD_STAGES.map((stage) => ({
@@ -27,6 +35,7 @@ export function leadStageAction(lead, stage, { canEdit, canConvert }) {
   if (!lead || !canEdit || !LEAD_OPEN_STAGES.includes(lead.stage) || lead.stage === stage) return null;
   if (stage === "Converted") return canConvert ? { type: "convert", record: lead } : null;
   if (stage === "Lost") return { type: "lost", collection: "leads", record: lead };
+  if (stage === "Unqualified") return { type: "unqualified", record: lead };
   if (LEAD_OPEN_STAGES.includes(stage)) return { type: "stage", collection: "leads", record: lead, stage };
   return null;
 }
@@ -62,6 +71,10 @@ export const LOST_REASONS = [
   "Not interested",
   "Other",
 ];
+// Unqualified = not eligible (like Salesforce "Closed - Not Converted"); Not a fit and Bad data are permanent
+export const UNQUALIFIED_REASONS = ["Not a fit", "No budget", "No authority", "No current need", "Bad timing", "Bad data", "Other"];
+// Revisit = "not now": the lead asked to be contacted on a later date
+export const REVISIT_REASONS = ["Bad timing", "Budget next period", "Asked to call back", "No response yet", "Other"];
 export const SALUTATIONS = ["Mr.", "Ms.", "Mrs.", "Dr.", "Prof."];
 
 // LinkedIn autofill on New Lead. The backend checks the address again and is the only one that talks to Apollo.
@@ -154,6 +167,8 @@ export const stageNoteMessage = (type) => (type === "convert" ? CONVERSION_COMME
 export function stageNoteField(type, demoChoice) {
   if (["stage", "won", "convert"].includes(type)) return "note";
   if (type === "lost") return "lost_notes";
+  if (type === "unqualified") return "notes";
+  if (type === "reopen") return "note";
   if (type === "cancelDemo" && demoChoice === "nurturing") return "reason";
   return null;
 }
@@ -165,7 +180,7 @@ export const stageNote = (value) => (typeof value === "string" ? value.trim() : 
 export const TASK_SUBJECT_REQUIRED = "Enter a task subject.";
 export const TASK_DUE_REQUIRED = "Choose a due date for the task.";
 export const stageTaskNeeded = (type, demoChoice) =>
-  ["stage", "convert", "won"].includes(type) || (type === "cancelDemo" && demoChoice === "nurturing");
+  ["stage", "convert", "won", "reopen"].includes(type) || (type === "cancelDemo" && demoChoice === "nurturing");
 export function stageTaskProblems(values) {
   const problems = {};
   if (!stageNote(values.task_title)) problems.task_title = TASK_SUBJECT_REQUIRED;

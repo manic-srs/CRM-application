@@ -99,6 +99,15 @@ export function opportunityPayload(values) {
     expected_close_date: optional(values.expected_close_date),
     primary_contact_id: numeric(values.primary_contact_id),
     owner_id: numeric(values.owner_id),
+    // Discovery details (edited with the deal)
+    ...("discovery_needs" in values
+      ? {
+          discovery_needs: optional(values.discovery_needs?.trim()),
+          discovery_budget: optional(values.discovery_budget?.trim()),
+          discovery_decision_maker: optional(values.discovery_decision_maker?.trim()),
+          discovery_timeline: optional(values.discovery_timeline?.trim()),
+        }
+      : {}),
   };
 }
 const actor = (editing, actorId) =>
@@ -236,6 +245,8 @@ export const api = {
       body: { ...taskPayload(v, !!id), ...actor(id, actorId) },
     }),
   completeTask: (id) => apiRequest(`/tasks/${id}/complete`, { method: "PUT" }),
+  unqualifyLead: (id, values) => apiRequest(`/leads/${id}/unqualified`, { method: "POST", body: values }),
+  reopenLead: (id, values) => apiRequest(`/leads/${id}/reopen`, { method: "POST", body: values }),
   stage: (collection, id, values) =>
     apiRequest(`/${collection}/${id}/stage`, { method: "PUT", body: values }),
   lost: (collection, id, values) =>
@@ -347,19 +358,24 @@ export const api = {
   campaignAction: (id, action) => apiRequest(`/campaigns/${id}/${action}`, { method: "POST", body: {} }),
   setLeadEmailStatus: (id, status, reason) =>
     apiRequest(`/leads/${id}/email-status`, { method: "POST", body: { status, reason: reason || null } }),
+  bulkTransferOpportunities: (opportunity_ids, to_user_id, note) =>
+    apiRequest("/opportunities/bulk-transfer", { method: "POST", body: { opportunity_ids, to_user_id, note: note || null } }),
+  bulkLostOpportunities: (opportunity_ids, lost_reason, lost_notes) =>
+    apiRequest("/opportunities/bulk-lost", { method: "POST", body: { opportunity_ids, lost_reason, lost_notes } }),
   companyMatches: (company, excludeId) =>
     apiRequest(`/leads/company-matches?${new URLSearchParams({ company, ...(excludeId ? { exclude_id: excludeId } : {}) })}`),
   // Bulk upload: dryRun=true only checks the file and returns what would happen
   importLeads: (file, options) => api.importData("leads", file, options),
   // assign (leads): "one" (all to ownerId), "column" (the file's Lead Owner column, ownerId for the rest) or
   // "even" (shared round-robin between ownerIds)
-  importData: (object, file, { ownerId, dryRun, assign, ownerIds }) => {
+  importData: (object, file, { ownerId, dryRun, assign, ownerIds, counts }) => {
     const form = new FormData();
     form.append("file", file);
     form.append("dry_run", dryRun ? "true" : "false");
     if (ownerId) form.append("owner_id", ownerId);
     if (assign) form.append("assign", assign);
     for (const id of ownerIds || []) form.append("owner_ids", id);
+    for (const item of counts || []) form.append("counts", item); // "user_id:how_many"
     return upload(`/${object}/import`, form, { timeout: 10 * 60 * 1000, failed: "The file could not be uploaded.", tooLarge: "The file is too large." });
   },
   // Admin: add many users from Excel / CSV (dry run first: nothing is saved)
@@ -424,7 +440,8 @@ export const api = {
     saveWithFiles(`/opportunities/${opportunityId}/stage-with-files`, [["stage", values.stage], ["note", values.note],
       ["task", values.task && JSON.stringify(values.task)],
       ...(values.completed_stages || []).map((stage) => ["completed_stages", stage]),
-      ["completed_note", values.completed_note]], files, {
+      ["completed_note", values.completed_note],
+      ...["discovery_needs", "discovery_budget", "discovery_decision_maker", "discovery_timeline"].map((f) => [f, values[f]])], files, {
       failed: "The stage could not be changed.",
       what: "the stage changed",
     }),

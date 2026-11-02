@@ -156,7 +156,7 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
       </div>
     );
 
-  const closed = ["Won", "Lost", "Converted"].includes(item.stage);
+  const closed = ["Won", "Lost", "Converted", "Unqualified"].includes(item.stage);
   // Salespeople change only their own records; Managers and Admins can change any (the backend checks it too)
   const canEdit = item.owner_id === user?.id || can(user, "edit_team_records");
   const canConvert = canEdit && canCreateSales(user); // Admins edit leads but don't create opportunities
@@ -175,10 +175,15 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
     );
 
   const path = lead ? LEAD_PATH : OPP_PATH;
-  const pathStages = item.stage === "Lost" ? [...path.slice(0, -1), "Lost"] : path;
+  // a closed lead shows how it ended in the last step (Lost / Unqualified) instead of Converted
+  const pathStages = ["Lost", "Unqualified"].includes(item.stage) ? [...path.slice(0, -1), item.stage] : path;
   // an optional stage (Revisit) the lead went past without entering is shown as skipped, not as done
   const reached = (stage) => item.activity.some((a) => a.text?.includes(`→ ${stage}`) || a.text?.startsWith(`Created at ${stage}`));
   const skippedStages = lead ? LEAD_OPTIONAL_STAGES.filter((stage) => !reached(stage)) : [];
+  // a lead closed as Lost / Unqualified: only the stages it really reached are ticked
+  const notReached = lead && ["Lost", "Unqualified"].includes(item.stage)
+    ? LEAD_PATH.filter((stage) => stage !== "Converted" && !reached(stage))
+    : [];
   // "Mark as Complete" goes to the next required stage: an optional one (Revisit) is chosen on the path itself
   const nextStage = path.slice(path.indexOf(item.stage) + 1).find((stage) => !LEAD_OPTIONAL_STAGES.includes(stage));
   const selectStage = (stage) => {
@@ -191,6 +196,12 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
     ? [
         ["Title", item.title],
         ["Company", item.company],
+        item.stage === "Revisit" && item.revisit_date && [
+          "Revisit On",
+          <span key="rv" className="revisit-on">
+            {new Date(item.revisit_date).toLocaleDateString()} <small>{item.revisit_reason}</small>
+          </span>,
+        ],
         ["Phone", item.phone && <PhoneReveal key="ph" value={item.phone} />],
         ["Email", item.email && (
           <span key="em" className="email-with-status">
@@ -263,6 +274,15 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
                   label: "Reschedule / Cancel Demo",
                   onClick: () => setModal({ type: "cancelDemo", record: item }),
                 },
+                // not eligible: closes the lead with a reason (it can be reopened later)
+                canEdit && lead && !closed && {
+                  label: "Mark as Unqualified",
+                  onClick: () => setModal({ type: "unqualified", record: item }),
+                },
+                canEdit && lead && item.stage === "Unqualified" && {
+                  label: "Reopen Lead",
+                  onClick: () => setModal({ type: "reopen", record: item }),
+                },
                 "-",
                 // email campaigns: an address that bounced, or fixed again; a lead who asked to get emails again
                 canEdit && lead && item.email && !item.email_invalid_at && {
@@ -288,7 +308,7 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
           </div>
         </div>
         <dl className="highlights-fields">
-          {highlights.map(([label, value]) => (
+          {highlights.filter(Boolean).map(([label, value]) => (
             <div key={label}>
               <dt>{label}</dt>
               <dd>{value || " "}</dd>
@@ -301,10 +321,11 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
         <PathBar
           stages={pathStages}
           skipped={skippedStages}
+          notReached={notReached}
           current={item.stage}
           closed={closed}
           onSelect={canEdit ? selectStage : () => {}}
-          lostLabel={item.stage === "Lost" ? (lead ? "Lost" : "Closed Lost") : null}
+          lostLabel={item.stage === "Lost" ? (lead ? "Lost" : "Closed Lost") : item.stage === "Unqualified" ? "Unqualified" : null}
         />
         {!canEdit && !closed && (
           <span className="read-only-note">
@@ -318,9 +339,11 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
           </button>
         )}
         {closed && (
-          <span className={`path-result ${item.stage === "Lost" ? "lost" : "won"}`}>
+          <span className={`path-result ${["Lost", "Unqualified"].includes(item.stage) ? "lost" : "won"}`}>
             {item.stage === "Lost"
               ? `Lost: ${item.lost_reason || ""}`
+              : item.stage === "Unqualified"
+                ? `Unqualified: ${item.unqualified_reason || ""}`
               : item.stage === "Won"
                 ? `Closed Won • ${amount(item.final_value)}`
                 : "Converted"}
@@ -378,6 +401,18 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
                   <Field label="Lost Notes">{item.lost_notes}</Field>
                 </Section>
               )}
+              {item.stage === "Unqualified" && (
+                <Section title="Unqualified Details">
+                  <Field label="Reason">{item.unqualified_reason}</Field>
+                  <Field label="Notes">{item.unqualified_notes}</Field>
+                </Section>
+              )}
+              {item.stage === "Revisit" && (
+                <Section title="Revisit">
+                  <Field label="Revisit On">{dateTime(item.revisit_date)}</Field>
+                  <Field label="Reason">{item.revisit_reason}</Field>
+                </Section>
+              )}
               <Section title="System Information">
                 <Field label="Created">{dateTime(item.created_at)}</Field>
                 <Field label="Last Modified">{dateTime(item.updated_at)}</Field>
@@ -406,6 +441,12 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
                 <Field label="Converted From">
                   {sourceLead && <a href={`#/leads/${sourceLead.id}`}>{sourceLead.name}</a>}
                 </Field>
+              </Section>
+              <Section title="Discovery">
+                <Field label="Needs / Pain Points" onEdit={edit}>{item.discovery_needs}</Field>
+                <Field label="Budget" onEdit={edit}>{item.discovery_budget}</Field>
+                <Field label="Decision Maker" onEdit={edit}>{item.discovery_decision_maker}</Field>
+                <Field label="Timeline" onEdit={edit}>{item.discovery_timeline}</Field>
               </Section>
               {item.stage === "Lost" && (
                 <Section title="Lost Details">

@@ -105,11 +105,15 @@ def test_salesperson_sees_and_changes_only_own_records(client):
         assert res.status_code == 404, (url, res.text)
     assert client.put(f"/api/tasks/{priyas['tasks'][0]['id']}/complete").status_code == 404
     assert client.get("/api/emails", params={"lead_id": lid}).status_code == 404
-    # own records work as before; a salesperson can transfer their own lead (Transfer leads) but can't
-    # create records for someone else
+    # own records work as before; a salesperson can transfer their own lead (Transfer leads), and can assign a new
+    # lead to a teammate (who is told), but not to the Admin or create other records for someone else
     assert client.put(f"/api/leads/{mine['id']}/stage", json={"task": TASK, "stage": "Nurturing", "completed_stages": ["New"], "note": "Synthetic test note"}).status_code == 200
     assert client.put(f"/api/leads/{mine['id']}", json={"owner_id": 1}).status_code == 200
-    assert client.post("/api/leads", json={"last_name": "X", "company": "Y", "owner_id": 1}).status_code == 403
+    assigned = client.post("/api/leads", json={"last_name": "X", "company": "Y", "owner_id": 1})
+    assert assigned.status_code == 201 and assigned.json()["owner_id"] == 1
+    assert any(n["title"] == "Lead assigned to you" for n in login_as(client, 1).get("/api/notifications").json())
+    login_as(client, 2)
+    assert client.post("/api/leads", json={"last_name": "X", "company": "Y", "owner_id": 3}).status_code == 400
     assert client.post("/api/tasks", json={"title": "T", "due_date": "2026-12-01T10:00:00", "owner_id": 1}).status_code == 403
 
 
@@ -149,7 +153,8 @@ def test_roles_and_permissions_matrix(client):
     assert [l["name"] for l in login_as(client, 2).get("/api/leads").json()] == ["Priya Lead"]
     # take reassign away from Managers
     login_as(client, 3).put("/api/permissions", json={"role": "Manager", "permission": "reassign_owner", "allowed": False})
-    assert login_as(client, 1).post("/api/leads", json={"last_name": "X", "company": "Y", "owner_id": 2}).status_code == 403
+    task = login_as(client, 1).post("/api/tasks", json={"title": "T", "due_date": "2026-12-01T10:00:00", "owner_id": 2})
+    assert task.status_code == 403  # giving records to someone else needs Reassign owner (new leads can be assigned)
 
 
 def test_manager_edits_and_transfers_any_lead(client):
@@ -426,7 +431,7 @@ def test_stages_cannot_be_skipped(client, outbox):
     record = lead(client)
     lid = record["id"]
     res = client.put(f"/api/leads/{lid}/stage", json={"task": TASK, "stage": "Demo", "note": "Synthetic test note"})
-    assert res.status_code == 409 and "Complete New and Nurturing" in res.json()["detail"]
+    assert res.status_code == 409 and "Complete Nurturing" in res.json()["detail"]
     assert client.post(f"/api/leads/{lid}/convert", json={"task": TASK, "note": "Synthetic test note"}).status_code == 409
     # confirm the skipped stage: saved in the history
     res = client.put(f"/api/leads/{lid}/stage", json={"task": TASK, "stage": "Demo", "completed_stages": ["New", "Nurturing"],

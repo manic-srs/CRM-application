@@ -41,7 +41,7 @@ OPTIONS = {
 }
 
 STAGE_OPTIONS = {
-    "Unqualified": ("introduce", "discover_needs", "share_information", "schedule_call"),
+    "Unqualified": ("stay_in_touch", "close_conversation", "request_feedback"),
     "New": ("introduce", "discover_needs", "share_information", "schedule_call"),
     "Nurturing": ("check_interest", "share_information", "answer_questions", "schedule_follow_up"),
     "Revisit": ("check_interest", "share_information", "schedule_follow_up", "schedule_call"),

@@ -31,7 +31,7 @@ def test_a_missing_or_blank_conversion_comment_is_refused_and_nothing_is_created
     assert [(e["loc"], e["msg"]) for e in res.json()["detail"]] == [(["body", "note"], COMMENT_REQUIRED)]
     assert snapshot() == before  # no account, contact, opportunity, history, task, notification or file
     assert len(sent) == mails  # no email
-    assert client.get(f"/api/leads/{lead['id']}").json()["stage"] == "Unqualified"
+    assert client.get(f"/api/leads/{lead['id']}").json()["stage"] == "New"
 
 
 @pytest.mark.parametrize("note", [7, ["a comment"], {"text": "a comment"}, False])
@@ -51,14 +51,14 @@ def test_the_comment_is_saved_in_both_histories(client, sent):
     assert history(client, "leads", lead["id"])[-1] == ("Demo", "Converted", saved)
     assert history(client, "opportunities", res.json()["opportunity"]["id"]) == [(None, "Opportunity", saved)]
     # skipped stages keep their own confirmation rows; the comment goes only on the conversion
-    assert [note for *_, note in history(client, "leads", lead["id"])[1:-1]] == ["Confirmed as completed"] * 3  # New, Nurturing, Demo
+    assert [note for *_, note in history(client, "leads", lead["id"])[1:-1]] == ["Confirmed as completed"] * 2  # Nurturing, Demo
 
 
 def test_conversion_rules_and_permissions_are_unchanged(client):
     lead = new_lead(client)  # Ravi's, at New
     before = snapshot()
     skipped = client.post(f"/api/leads/{lead['id']}/convert", json={"task": TASK, "note": "Ready to buy"})
-    assert skipped.status_code == 409 and "Complete New and Nurturing and Demo" in skipped.json()["detail"]
+    assert skipped.status_code == 409 and "Complete Nurturing and Demo" in skipped.json()["detail"]
     assert snapshot() == before
     sam = add_salesperson(client)
     before = snapshot()

@@ -135,12 +135,19 @@ CREATE TABLE leads (
   uploaded_from        VARCHAR(255),  -- file name when the lead came from a bulk upload
   source       VARCHAR(20) NOT NULL DEFAULT 'Other'
                CHECK (source IN ('Website','Referral','Phone','Email','Event','Social Media','Other','Upload')),
-  stage        VARCHAR(20) NOT NULL DEFAULT 'Unqualified'
-               CHECK (stage IN ('Unqualified','New','Nurturing','Revisit','Demo','Converted','Lost')),
+  stage        VARCHAR(20) NOT NULL DEFAULT 'New'
+               CHECK (stage IN ('New','Nurturing','Revisit','Demo','Converted','Unqualified','Lost')),
   demo_date    TIMESTAMP,
   lost_reason  VARCHAR(20)
                CHECK (lost_reason IN ('Price','Competitor','No response','No budget','Not interested','Other')),
   lost_notes   TEXT,
+  -- Unqualified: closed as not eligible (reason required). Revisit: "not now", come back on revisit_date.
+  unqualified_reason VARCHAR(20)
+               CHECK (unqualified_reason IN ('Not a fit','No budget','No authority','No current need','Bad timing',
+                                             'Bad data','Other')),
+  unqualified_notes  TEXT,
+  revisit_date       TIMESTAMP,
+  revisit_reason     VARCHAR(30),
   converted_at TIMESTAMP,
   closed_at    TIMESTAMP,
   owner_id     INT NOT NULL,
@@ -151,7 +158,9 @@ CREATE TABLE leads (
   updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_leads_owner FOREIGN KEY (owner_id) REFERENCES users(id),
   -- Rule: a Lost lead must have a lost reason
-  CONSTRAINT ck_leads_lost_reason CHECK (stage <> 'Lost' OR lost_reason IS NOT NULL)
+  CONSTRAINT ck_leads_lost_reason CHECK (stage <> 'Lost' OR lost_reason IS NOT NULL),
+  -- Rule: an Unqualified lead must have a reason
+  CONSTRAINT ck_leads_unqualified_reason CHECK (stage <> 'Unqualified' OR unqualified_reason IS NOT NULL)
 );
 CREATE INDEX idx_leads_stage   ON leads (stage);
 CREATE INDEX idx_leads_name    ON leads (name);
@@ -174,6 +183,11 @@ CREATE TABLE opportunities (
   lost_reason         VARCHAR(20)
                       CHECK (lost_reason IN ('Price','Competitor','No response','No budget','Not interested','Other')),
   lost_notes          TEXT,
+  -- Discovery (Salesforce "Needs Analysis"): needs, budget, decision maker, timeline
+  discovery_needs          TEXT,
+  discovery_budget         VARCHAR(100),
+  discovery_decision_maker VARCHAR(150),
+  discovery_timeline       VARCHAR(100),
   closed_at           TIMESTAMP,
   account_id          INT NOT NULL,
   primary_contact_id  INT,

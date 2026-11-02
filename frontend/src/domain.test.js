@@ -245,26 +245,28 @@ test("every stage change popup has a required note; creating and editing records
     assert.equal(stageNoteField(type), null);
   assert.equal(STAGE_NOTE_REQUIRED, "Enter a note to change the stage.");
 });
-test("the Leads board has seven columns in order; Converted and Lost are closed; the list view decides which can fill", () => {
+test("the Leads board has seven columns in order; Converted, Unqualified and Lost are closed; the list view decides which can fill", () => {
   const all = leadBoardColumns("all", null);
-  assert.deepEqual(all.map((c) => c.stage), ["Unqualified", "New", "Nurturing", "Revisit", "Demo", "Converted", "Lost"]);
-  assert.deepEqual(all.filter((c) => c.closed).map((c) => c.stage), ["Converted", "Lost"]);
+  assert.deepEqual(all.map((c) => c.stage), ["New", "Nurturing", "Revisit", "Demo", "Converted", "Unqualified", "Lost"]);
+  assert.deepEqual(all.filter((c) => c.closed).map((c) => c.stage), ["Converted", "Unqualified", "Lost"]);
   assert.ok(all.every((c) => c.excluded === ""));
   const excluded = (view, stage) => leadBoardColumns(view, stage).filter((c) => c.excluded).map((c) => c.stage);
-  const open = ["Unqualified", "New", "Nurturing", "Revisit", "Demo"];
-  assert.deepEqual(excluded("all_open"), ["Converted", "Lost"]);
-  assert.deepEqual(excluded("my_open"), ["Converted", "Lost"]);
-  assert.deepEqual(excluded("converted"), [...open, "Lost"]);
-  assert.deepEqual(excluded("lost"), [...open, "Converted"]);
+  const open = ["New", "Nurturing", "Revisit", "Demo"];
+  assert.deepEqual(excluded("all_open"), ["Converted", "Unqualified", "Lost"]);
+  assert.deepEqual(excluded("my_open"), ["Converted", "Unqualified", "Lost"]);
+  assert.deepEqual(excluded("converted"), [...open, "Unqualified", "Lost"]);
+  assert.deepEqual(excluded("lost"), [...open, "Converted", "Unqualified"]);
+  assert.deepEqual(excluded("unqualified"), [...open, "Converted", "Lost"]);
+  assert.deepEqual(excluded("revisit_due"), ["New", "Nurturing", "Demo", "Converted", "Unqualified", "Lost"]);
   assert.deepEqual(excluded("uploaded"), []);
-  assert.deepEqual(excluded("all", "Demo"), ["Unqualified", "New", "Nurturing", "Revisit", "Converted", "Lost"]); // the Lead Status filter
+  assert.deepEqual(excluded("all", "Demo"), ["New", "Nurturing", "Revisit", "Converted", "Unqualified", "Lost"]); // the Lead Status filter
   assert.equal(leadBoardColumns("all_open", "Demo").find((c) => c.stage === "New").excluded, "Hidden by the Lead Status filter");
   assert.equal(leadBoardColumns("all_open", null).find((c) => c.stage === "Lost").excluded, "Not in this list view");
 });
 test("stage order: skipped stages must be confirmed, Revisit is optional, going back skips nothing", () => {
-  assert.deepEqual(skippedStages(LEAD_FLOW, "Unqualified", "Nurturing", LEAD_OPTIONAL_STAGES), ["New"]);
+  assert.deepEqual(skippedStages(LEAD_FLOW, "New", "Demo", LEAD_OPTIONAL_STAGES), ["Nurturing"]);
   assert.deepEqual(skippedStages(LEAD_FLOW, "Nurturing", "Demo", LEAD_OPTIONAL_STAGES), []); // Revisit may be passed over
-  assert.deepEqual(skippedStages(LEAD_FLOW, "Unqualified", LEAD_FLOW.length, LEAD_OPTIONAL_STAGES), ["New", "Nurturing", "Demo"]);
+  assert.deepEqual(skippedStages(LEAD_FLOW, "New", LEAD_FLOW.length, LEAD_OPTIONAL_STAGES), ["Nurturing", "Demo"]);
   assert.deepEqual(skippedStages(LEAD_FLOW, "Demo", "New", LEAD_OPTIONAL_STAGES), []);
   assert.deepEqual(skippedStages(OPPORTUNITY_FLOW, "Opportunity", "Proposal"), ["Discovery"]);
   assert.deepEqual(skippedStages(OPPORTUNITY_FLOW, "Opportunity", OPPORTUNITY_FLOW.length), ["Discovery", "Proposal"]);

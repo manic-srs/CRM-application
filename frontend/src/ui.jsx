@@ -166,7 +166,7 @@ export function Ring({ segments, size = 150, stroke = 9, children, label }) {
 }
 
 // Salesforce-style path: chevrons, completed steps get a check
-export function PathBar({ stages, current, closed, onSelect, lostLabel, skipped = [] }) {
+export function PathBar({ stages, current, closed, onSelect, lostLabel, skipped = [], notReached = [] }) {
   const index = stages.indexOf(current);
   return (
     <ol className="path">
@@ -174,7 +174,9 @@ export function PathBar({ stages, current, closed, onSelect, lostLabel, skipped 
         const state =
           lostLabel && i === stages.length - 1
             ? "lost"
-            : i < index && skipped.includes(stage)
+            : notReached.includes(stage)
+              ? "incomplete"
+              : i < index && skipped.includes(stage)
               ? "skipped"
               : i < index || (closed && i <= index)
               ? "complete"
@@ -257,9 +259,9 @@ export function Avatar({ name, size = 32 }) {
 // ---------- paging for long tables ----------
 // const { pageRows, pager } = usePaged(rows, resetKey);  ...  <Pagination {...pager} />
 // resetKey: anything that changes the list (view, search), so the table goes back to page 1.
-export const PAGE_SIZES = [10, 25, 50, 100];
+export const PAGE_SIZES = [15, 25, 50, 100];
 
-export function usePaged(rows, resetKey = "", initialSize = 25) {
+export function usePaged(rows, resetKey = "", initialSize = 15) {
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(initialSize);
   useEffect(() => setPage(1), [resetKey, size]);
@@ -315,7 +317,7 @@ export function Pagination({ page, pages, size, total, start, setPage, setSize }
 // "Actions ▾" button at the end of a record's buttons (Edit, Transfer, Delete...), like HubSpot / Zoho.
 // items: [{ label, onClick, danger }] or "-" for a divider. Opens under the button, right-aligned;
 // arrow keys move between items, Esc or a click outside closes it.
-export function ActionMenu({ items, label = "Actions" }) {
+export function ActionMenu({ items, label = "Actions", badge }) {
   const [open, setOpen] = React.useState(null);
   const ref = React.useRef(null);
   const list = React.useRef(null);
@@ -361,6 +363,7 @@ export function ActionMenu({ items, label = "Actions" }) {
         }}
       >
         {label}
+        {badge ? <span className="menu-badge">{badge}</span> : null}
         <Icon name="down" size={14} />
       </button>
       {open && (
@@ -374,9 +377,11 @@ export function ActionMenu({ items, label = "Actions" }) {
                 type="button"
                 role="menuitem"
                 className={item.danger ? "danger" : ""}
+                disabled={item.disabled}
+                title={item.title}
                 onClick={() => {
                   setOpen(null);
-                  item.onClick();
+                  item.onClick?.();
                 }}
               >
                 {item.label}
