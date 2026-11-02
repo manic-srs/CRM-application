@@ -373,6 +373,7 @@ export function Sidebar({ section, data, user, collapsed }) {
       <ul>
         {[
           ...TABS,
+          ...(can(user, "send_campaigns") || user.role === "Admin" ? [["campaigns", "Email Campaigns", "/campaigns", "campaign"]] : []),
           ...(can(user, "manage_users") || can(user, "grant_team_access") ? [["users", "Manage Access", "/users", "contact"]] : []),
         ].map(([key, label, path, icon]) => (
           <li key={key}>

@@ -339,6 +339,10 @@ class LeadOut(Out):
     created_at: datetime | None
     updated_at: datetime | None
     last_transferred_at: datetime | None = None  # when the lead last got a new owner (shown in the list)
+    # email campaigns: left out of every campaign while either is set
+    email_invalid_at: datetime | None = None
+    email_invalid_reason: str | None = None
+    unsubscribed_at: datetime | None = None
 
     @field_serializer("annual_revenue")
     def _revenue(self, value):

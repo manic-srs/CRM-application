@@ -1,4 +1,5 @@
 import AssistantPage from "./AssistantPage";
+import CampaignsPage from "./CampaignsPage";
 import React, { useEffect, useState } from "react";
 import { api, setToken } from "./api";
 import { EmailComposer } from "./Email";
@@ -154,7 +155,7 @@ function Workspace({ user, onLogout, onUserChanged }) {
     return () => clearTimeout(t);
   }, [toast]);
   useEffect(() => {
-    const titles = { home: "Home", leads: "Leads", opportunities: "Opportunities", tasks: "Tasks", accounts: "Accounts", contacts: "Contacts", users: "Manage Access", permissions: "Manage Access", activity: "Manage Access", assistant: "AI Assistant" };
+    const titles = { home: "Home", leads: "Leads", opportunities: "Opportunities", tasks: "Tasks", accounts: "Accounts", contacts: "Contacts", campaigns: "Email Campaigns", users: "Manage Access", permissions: "Manage Access", activity: "Manage Access", assistant: "AI Assistant" };
     document.title = `${titles[section] || "SalesTrack"} | SalesTrack`;
   }, [section]);
 
@@ -225,6 +226,7 @@ function Workspace({ user, onLogout, onUserChanged }) {
   else if (["users", "permissions", "activity"].includes(section) && (can(user, "manage_users") || can(user, "grant_team_access")))
     page = <ManageAccess tab={section === "users" ? "people" : section} user={user} data={data} reload={reload} notify={notify} onSelfChanged={onUserChanged} />;
   else if (section === "assistant") page = <AssistantPage user={user} reload={reload} />;
+  else if (section === "campaigns") page = <CampaignsPage key={id || "list"} id={id} user={user} data={data} notify={notify} />;
   else if (section === "tasks")
     page = <TasksPage key={route} data={data} user={user} toggleTask={toggleTask} openTask={openTask} setModal={setModal} query={query} />;
   else

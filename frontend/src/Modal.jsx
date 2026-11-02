@@ -141,6 +141,8 @@ export default function Modal({ modal, close, data, run, notify, user }) {
     transfer: `Transfer Lead: ${record?.name}`,
     cancelDemo: `Cancel or Reschedule Demo: ${record?.name}`,
     delete: `Delete Lead: ${record?.name}`,
+    emailStatus:
+      modal.status === "invalid" ? "Mark Email as Invalid" : modal.status === "valid" ? "Mark Email as Valid" : "Subscribe Lead Again",
   };
   useEffect(() => {
     const first = ref.current.querySelector("input,select,textarea,button");
@@ -401,6 +403,12 @@ export default function Modal({ modal, close, data, run, notify, user }) {
       return demoChoice === "reschedule"
         ? `The demo with "${name}" was rescheduled to ${new Date(v.reschedule_to).toLocaleString()}. Its reminders moved too.`
         : `The demo with "${name}" was cancelled. The lead is back in Revisit with your follow-up task.`;
+    if (type === "emailStatus")
+      return modal.status === "invalid"
+        ? `${record.email} is marked invalid and left out of email campaigns.`
+        : modal.status === "valid"
+          ? `${record.email} is marked valid.`
+          : `${record.name} will get campaign emails again.`;
     if (type === "account") return `Account "${saved.name}" was created.`;
     if (type === "contact") return `Contact "${saved.full_name || v.last_name}" was created.`;
     return "Your changes were saved.";
@@ -514,6 +522,11 @@ export default function Modal({ modal, close, data, run, notify, user }) {
         notify(res.message);
         go("/leads");
         return;
+      }
+      if (type === "emailStatus") {
+        if (modal.status === "subscribed" && (v.reason || "").trim().length < 5)
+          throw new Error("Say when and how the lead asked to get emails again.");
+        await run("setLeadEmailStatus", record.id, modal.status, (v.reason || "").trim());
       }
       if (type === "note") {
         if (!v.body.trim()) throw new Error("Note cannot be blank.");
@@ -744,6 +757,22 @@ export default function Modal({ modal, close, data, run, notify, user }) {
               )}
             </>
           )}
+          {type === "emailStatus" && (
+            <>
+              <p className="modal-subtitle">
+                {modal.status === "invalid"
+                  ? `${record.email} will be listed under Leads > Invalid Emails and left out of every email campaign.`
+                  : modal.status === "valid"
+                    ? `${record.email} will get campaign emails again. Check the address is correct first (Edit the lead to fix it).`
+                    : `${record.name} unsubscribed${record.unsubscribed_at ? ` on ${new Date(record.unsubscribed_at).toLocaleDateString()}` : ""}. Subscribe them again only if they asked for it (they can also do it from the link in any campaign email).`}
+              </p>
+              {textArea(
+                modal.status === "invalid" ? "Reason (optional)" : modal.status === "valid" ? "Note (optional)" : "When and how did the lead ask?",
+                "reason",
+                "",
+              )}
+            </>
+          )}
           {type === "delete" && (
             <div className="delete-box" role="alert">
               <Icon name="warn" size={18} />
@@ -915,7 +944,9 @@ export default function Modal({ modal, close, data, run, notify, user }) {
                             : "Cancel demo"
                           : type === "delete"
                             ? "Delete lead"
-                            : "Save"}
+                            : type === "emailStatus"
+                              ? modal.status === "invalid" ? "Mark invalid" : modal.status === "valid" ? "Mark valid" : "Subscribe again"
+                              : "Save"}
             </button>
           </div>
         </form>

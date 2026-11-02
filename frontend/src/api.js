@@ -337,6 +337,16 @@ export const api = {
   bulkTransferLeads: (lead_ids, to_user_id, note) =>
     apiRequest("/leads/bulk-transfer", { method: "POST", body: { lead_ids, to_user_id, note: note || null } }),
   bulkDeleteLeads: (lead_ids) => apiRequest("/leads/bulk-delete", { method: "POST", body: { lead_ids } }),
+  // email campaigns (see backend/app/campaigns.py)
+  campaignSettings: () => apiRequest("/campaigns/settings"),
+  campaigns: () => apiRequest("/campaigns"),
+  campaign: (id, params = {}) =>
+    apiRequest(`/campaigns/${id}?${new URLSearchParams(Object.entries(params).filter(([, v]) => v !== "" && v != null))}`),
+  campaignPreview: (audience) => apiRequest("/campaigns/preview", { method: "POST", body: audience }),
+  createCampaign: (values) => apiRequest("/campaigns", { method: "POST", body: values }),
+  campaignAction: (id, action) => apiRequest(`/campaigns/${id}/${action}`, { method: "POST", body: {} }),
+  setLeadEmailStatus: (id, status, reason) =>
+    apiRequest(`/leads/${id}/email-status`, { method: "POST", body: { status, reason: reason || null } }),
   companyMatches: (company, excludeId) =>
     apiRequest(`/leads/company-matches?${new URLSearchParams({ company, ...(excludeId ? { exclude_id: excludeId } : {}) })}`),
   // Bulk upload: dryRun=true only checks the file and returns what would happen

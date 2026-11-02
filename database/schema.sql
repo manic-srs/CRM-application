@@ -145,6 +145,9 @@ CREATE TABLE leads (
   closed_at    TIMESTAMP,
   owner_id     INT NOT NULL,
   created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  email_invalid_at     TIMESTAMP,          -- email campaigns: the address doesn't work (left out of campaigns)
+  email_invalid_reason VARCHAR(300),
+  unsubscribed_at      TIMESTAMP,          -- the lead unsubscribed (left out of campaigns)
   updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_leads_owner FOREIGN KEY (owner_id) REFERENCES users(id),
   -- Rule: a Lost lead must have a lost reason
@@ -343,3 +346,34 @@ CREATE TRIGGER trg_contacts_updated_at      BEFORE UPDATE ON contacts      FOR E
 CREATE TRIGGER trg_leads_updated_at         BEFORE UPDATE ON leads         FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TRIGGER trg_opportunities_updated_at BEFORE UPDATE ON opportunities FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TRIGGER trg_tasks_updated_at         BEFORE UPDATE ON tasks         FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Email campaigns: one email to many leads, sent a few at a time under the Outlook mailbox limits (app/campaigns.py)
+CREATE TABLE campaigns (
+  id            SERIAL PRIMARY KEY,
+  name          VARCHAR(150) NOT NULL,
+  subject       VARCHAR(200) NOT NULL,
+  body          TEXT NOT NULL,
+  status        VARCHAR(15) NOT NULL DEFAULT 'Scheduled'
+                CHECK (status IN ('Scheduled','Sending','Paused','Completed','Cancelled')),
+  status_note   VARCHAR(300),
+  send_at       TIMESTAMP NOT NULL,
+  created_by_id INT NOT NULL REFERENCES users(id),
+  created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  started_at    TIMESTAMP,
+  finished_at   TIMESTAMP
+);
+CREATE TABLE campaign_recipients (
+  id              SERIAL PRIMARY KEY,
+  campaign_id     INT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+  lead_id         INT REFERENCES leads(id) ON DELETE SET NULL,
+  email           VARCHAR(255),
+  name            VARCHAR(101) NOT NULL,
+  status          VARCHAR(10) NOT NULL DEFAULT 'Queued'
+                  CHECK (status IN ('Queued','Sent','Failed','Invalid','Skipped','Cancelled')),
+  attempts        INT NOT NULL DEFAULT 0,
+  next_attempt_at TIMESTAMP,
+  sent_at         TIMESTAMP,
+  error           VARCHAR(300)
+);
+CREATE INDEX idx_campaign_recipients_campaign ON campaign_recipients (campaign_id, status);
+CREATE INDEX idx_campaign_recipients_sent ON campaign_recipients (sent_at) WHERE sent_at IS NOT NULL;

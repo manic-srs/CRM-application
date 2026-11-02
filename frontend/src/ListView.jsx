@@ -22,6 +22,9 @@ const LEAD_VIEWS = {
   "Lost Leads": "lost",
   "Uploaded Leads": "uploaded",
   "My Uploaded Leads": "my_uploaded",
+  // left out of every email campaign
+  "Invalid Emails": "invalid_email",
+  "Unsubscribed Leads": "unsubscribed",
 };
 
 // List views per object, like the Salesforce "list view" picker
@@ -36,6 +39,8 @@ function views(collection, user) {
       ["Lost Leads", (r) => r.stage === "Lost"],
       ["Uploaded Leads", () => true],
       ["My Uploaded Leads", () => true],
+      ["Invalid Emails", (r) => !!r.email_invalid_at],
+      ["Unsubscribed Leads", (r) => !!r.unsubscribed_at],
     ],
     opportunities: [
       ["All Opportunities", () => true],

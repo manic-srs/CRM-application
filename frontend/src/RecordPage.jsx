@@ -192,7 +192,21 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
         ["Title", item.title],
         ["Company", item.company],
         ["Phone", item.phone && <PhoneReveal key="ph" value={item.phone} />],
-        ["Email", item.email && <a href={`mailto:${item.email}`}>{item.email}</a>],
+        ["Email", item.email && (
+          <span key="em" className="email-with-status">
+            <a href={`mailto:${item.email}`}>{item.email}</a>
+            {item.email_invalid_at && (
+              <span className="email-flag bad" title={item.email_invalid_reason || "Marked invalid"}>
+                Invalid email
+              </span>
+            )}
+            {item.unsubscribed_at && (
+              <span className="email-flag off" title={`Unsubscribed on ${new Date(item.unsubscribed_at).toLocaleDateString()}`}>
+                Unsubscribed
+              </span>
+            )}
+          </span>
+        )],
         ["LinkedIn", <ExternalLink key="li" href={item.linkedin_url}>Profile</ExternalLink>],
         ["Company Links", (item.company_website || item.company_linkedin_url) && (
           <span key="co" className="link-pair">
@@ -248,6 +262,20 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
                 canEdit && lead && item.stage === "Demo" && {
                   label: "Reschedule / Cancel Demo",
                   onClick: () => setModal({ type: "cancelDemo", record: item }),
+                },
+                "-",
+                // email campaigns: an address that bounced, or fixed again; a lead who asked to get emails again
+                canEdit && lead && item.email && !item.email_invalid_at && {
+                  label: "Mark Email as Invalid",
+                  onClick: () => setModal({ type: "emailStatus", status: "invalid", record: item }),
+                },
+                canEdit && lead && item.email_invalid_at && {
+                  label: "Mark Email as Valid",
+                  onClick: () => setModal({ type: "emailStatus", status: "valid", record: item }),
+                },
+                canEdit && lead && item.unsubscribed_at && {
+                  label: "Subscribe Again",
+                  onClick: () => setModal({ type: "emailStatus", status: "subscribed", record: item }),
                 },
                 "-",
                 canEdit && lead && item.stage !== "Converted" && {

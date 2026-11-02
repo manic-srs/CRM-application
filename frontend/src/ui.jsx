@@ -74,6 +74,7 @@ const glyphs = {
   note: "M6 3h9l4 4v14H6Zm3 7h7m-7 4h7",
   home: "M4 11 12 4l8 7v9h-5v-6H9v6H4Z",
   user: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 8c0-3.3 3.1-5.5 7-5.5s7 2.2 7 5.5Z",
+  campaign: "M3 6h18v12H3Zm0 0 9 7 9-7",
   assistant: "M10 3 11.8 8.2 17 10l-5.2 1.8L10 17l-1.8-5.2L3 10l5.2-1.8Zm8 10 .9 2.1 2.1.9-2.1.9L18 21l-.9-2.1L15 18l2.1-.9Z",
 };
 const tileColor = {
@@ -87,6 +88,7 @@ const tileColor = {
   home: "#ef7ead",
   user: "#1b96ff",
   assistant: "#7f56d9",
+  campaign: "#0b827c",
 };
 const typeKey = {
   Lead: "lead",

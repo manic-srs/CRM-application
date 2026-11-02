@@ -67,6 +67,11 @@ services:
       EMAIL_DRAFT_MODE: ${EMAIL_DRAFT_MODE:-openai}
       OPENAI_ENV_FILE: /run/secrets/ai_settings
       OPENAI_EMAIL_MODEL: ${OPENAI_EMAIL_MODEL:-gpt-4.1-mini}
+      # Email campaigns: sending pace (Outlook allows 30 a minute and 2,000 external recipients a day per mailbox)
+      CAMPAIGN_PER_MINUTE: ${CAMPAIGN_PER_MINUTE:-20}
+      CAMPAIGN_PER_DAY: ${CAMPAIGN_PER_DAY:-1800}
+      # Unsubscribe links in campaign emails point here: must be an address your leads can open (not localhost)
+      PUBLIC_URL: ${PUBLIC_URL:-}
       TZ: America/New_York     # same clock for PostgreSQL and the API, so "today" matches
     secrets:
       - ai_settings

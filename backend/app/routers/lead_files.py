@@ -392,6 +392,9 @@ LIST_VIEWS = {
     "lost": lambda q, me: q.where(Lead.stage == "Lost"),
     "uploaded": lambda q, me: q.where(Lead.uploaded_from.is_not(None)),
     "my_uploaded": lambda q, me: q.where(Lead.uploaded_from.is_not(None), Lead.owner_id == me.id),
+    # email campaigns: these leads are left out of every campaign
+    "invalid_email": lambda q, me: q.where(Lead.email_invalid_at.is_not(None)),
+    "unsubscribed": lambda q, me: q.where(Lead.unsubscribed_at.is_not(None)),
 }
 SORTS = {"name": Lead.name, "title": Lead.title, "company": Lead.company, "phone": Lead.phone, "email": Lead.email,
          "stage": Lead.stage, "source": Lead.source, "owner": User.full_name, "created": Lead.created_at,

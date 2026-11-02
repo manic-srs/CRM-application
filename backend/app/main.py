@@ -18,8 +18,9 @@ from app.constants import LEAD_STAGES, LEAD_START, OPPORTUNITY_OPEN_STAGES, OPPO
 from app.database import Base, SessionLocal, engine, get_db
 from app import mailer, scheduler, schemas
 from app.security import authenticate, ensure_default_admin, require_admin
-from app.routers import (accounts, activity, assistant, attachments, auth, emails, home, lead_enrichment, lead_files, leads,
-                         opportunities, opportunity_files, tasks, user_files)
+from app.routers import (accounts, activity, assistant, attachments, auth, campaigns, emails, home, lead_enrichment,
+                         lead_files, leads, opportunities, opportunity_files, tasks, user_files)
+from app import campaigns as campaign_sender
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(name)s - %(message)s")
 
@@ -99,6 +100,26 @@ def upgrade_database() -> None:
             conn.execute(text(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {table}_{column}_check"))
             conn.execute(text(f"ALTER TABLE {table} ADD CONSTRAINT {table}_{column}_check CHECK ({column} IN ({allowed}))"))
         conn.execute(text(f"ALTER TABLE leads ALTER COLUMN stage SET DEFAULT '{LEAD_START}'"))
+        # Email campaigns: invalid / unsubscribed leads, the campaigns and who each one goes to
+        for column, kind in (("email_invalid_at", "TIMESTAMP"), ("email_invalid_reason", "VARCHAR(300)"),
+                             ("unsubscribed_at", "TIMESTAMP")):
+            conn.execute(text(f"ALTER TABLE leads ADD COLUMN IF NOT EXISTS {column} {kind}"))
+        conn.execute(text("""CREATE TABLE IF NOT EXISTS campaigns (
+            id SERIAL PRIMARY KEY, name VARCHAR(150) NOT NULL, subject VARCHAR(200) NOT NULL, body TEXT NOT NULL,
+            status VARCHAR(15) NOT NULL DEFAULT 'Scheduled'
+              CHECK (status IN ('Scheduled','Sending','Paused','Completed','Cancelled')),
+            status_note VARCHAR(300), send_at TIMESTAMP NOT NULL, created_by_id INT NOT NULL REFERENCES users(id),
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, started_at TIMESTAMP, finished_at TIMESTAMP)"""))
+        conn.execute(text("""CREATE TABLE IF NOT EXISTS campaign_recipients (
+            id SERIAL PRIMARY KEY, campaign_id INT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+            lead_id INT REFERENCES leads(id) ON DELETE SET NULL, email VARCHAR(255), name VARCHAR(101) NOT NULL,
+            status VARCHAR(10) NOT NULL DEFAULT 'Queued'
+              CHECK (status IN ('Queued','Sent','Failed','Invalid','Skipped','Cancelled')),
+            attempts INT NOT NULL DEFAULT 0, next_attempt_at TIMESTAMP, sent_at TIMESTAMP, error VARCHAR(300))"""))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_campaign_recipients_campaign "
+                          "ON campaign_recipients (campaign_id, status)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_campaign_recipients_sent "
+                          "ON campaign_recipients (sent_at) WHERE sent_at IS NOT NULL"))
 
 
 @asynccontextmanager
@@ -111,12 +132,13 @@ async def lifespan(app: FastAPI):
     with SessionLocal() as db:
         ensure_default_admin(db)  # first start: the Admin who adds everyone else
     # Task reminders and overdue alerts (set CHECK_INTERVAL_SECONDS=0 to turn off)
-    checker = None
+    # and the email campaign sender (both off with CHECK_INTERVAL_SECONDS=0)
+    loops = []
     if int(os.getenv("CHECK_INTERVAL_SECONDS", "60")) > 0:
-        checker = asyncio.create_task(scheduler.loop(SessionLocal))
+        loops = [asyncio.create_task(scheduler.loop(SessionLocal)), asyncio.create_task(campaign_sender.loop(SessionLocal))]
     yield
-    if checker:
-        checker.cancel()
+    for task in loops:
+        task.cancel()
 
 
 app = FastAPI(title="CRM API", version="1.0.0", lifespan=lifespan)
@@ -132,9 +154,12 @@ app.add_middleware(
 # Login is open; every other API needs the token from login (see app/security.py)
 app.include_router(auth.router)
 app.include_router(auth.protected)
+# the unsubscribe page is opened from campaign emails, without logging in
+app.include_router(campaigns.public)
 # lead_files, lead_enrichment and opportunity_files first: their fixed paths (/leads/page, /leads/enrichment...) come before
 # /leads/{id}
-for router in (user_files.router, emails.router, home.router, lead_files.router, lead_enrichment.router, leads.router, opportunity_files.router,
+for router in (user_files.router, emails.router, home.router, lead_files.router, lead_enrichment.router,
+               campaigns.router, campaigns.leads_router, leads.router, opportunity_files.router,
                opportunities.router, attachments.router, tasks.router, accounts.router, activity.router, assistant.router):
     app.include_router(router, dependencies=[Depends(authenticate)])
 

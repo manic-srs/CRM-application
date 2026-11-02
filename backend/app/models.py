@@ -134,6 +134,10 @@ class Lead(Base):
     converted_at: Mapped[datetime | None]
     closed_at: Mapped[datetime | None]
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    # Email campaigns: an address that doesn't work, and leads who unsubscribed, are left out of every campaign
+    email_invalid_at: Mapped[datetime | None]
+    email_invalid_reason: Mapped[str | None] = mapped_column(String(300))
+    unsubscribed_at: Mapped[datetime | None]
     created_at: Mapped[datetime | None] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(server_default=func.now(), onupdate=func.now())
 
@@ -323,3 +327,45 @@ class OpportunityAttachment(Base):
     opportunity: Mapped[Opportunity] = relationship()
     uploaded_by: Mapped[User] = relationship(foreign_keys=[uploaded_by_id])
     deleted_by: Mapped[User | None] = relationship(foreign_keys=[deleted_by_id])
+
+
+class Campaign(Base):
+    """One email sent to many leads (Leads > select > Email, or Campaigns > New Campaign).
+    Sent a few at a time by app/campaigns.py so the Outlook mailbox stays under its sending limits."""
+
+    __tablename__ = "campaigns"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(150))
+    subject: Mapped[str] = mapped_column(String(200))
+    body: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(15), default="Scheduled")  # Scheduled, Sending, Paused, Completed, Cancelled
+    status_note: Mapped[str | None] = mapped_column(String(300))           # why it was paused, etc.
+    send_at: Mapped[datetime]                                              # when sending starts
+    created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime | None] = mapped_column(server_default=func.now())
+    started_at: Mapped[datetime | None]
+    finished_at: Mapped[datetime | None]
+
+    created_by: Mapped[User] = relationship()
+    recipients: Mapped[list["CampaignRecipient"]] = relationship(back_populates="campaign", cascade="all, delete-orphan")
+
+
+class CampaignRecipient(Base):
+    """One lead in a campaign. Queued -> Sent, or Failed (after retries), Invalid (the address doesn't work),
+    Skipped (unsubscribed / invalid / no email when the campaign was made or before its turn), Cancelled."""
+
+    __tablename__ = "campaign_recipients"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    campaign_id: Mapped[int] = mapped_column(ForeignKey("campaigns.id", ondelete="CASCADE"), index=True)
+    lead_id: Mapped[int | None] = mapped_column(ForeignKey("leads.id", ondelete="SET NULL"))
+    email: Mapped[str | None] = mapped_column(String(255))
+    name: Mapped[str] = mapped_column(String(101))
+    status: Mapped[str] = mapped_column(String(10), default="Queued")
+    attempts: Mapped[int] = mapped_column(default=0)
+    next_attempt_at: Mapped[datetime | None]
+    sent_at: Mapped[datetime | None]
+    error: Mapped[str | None] = mapped_column(String(300))
+
+    campaign: Mapped[Campaign] = relationship(back_populates="recipients")

@@ -6,6 +6,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { api, apiRequest } from "./api";
 import { leadBoardColumns } from "./domain";
 import LeadsKanban from "./LeadsKanban";
+import { NewCampaign } from "./CampaignsPage";
 import { can } from "./permissions";
 import { DateCell, Icon, PhoneReveal, StageBadge } from "./ui";
 import { dateTime } from "./format";
@@ -168,6 +169,7 @@ export default function LeadsTable({
   const [error, setError] = useState("");
   const [selected, setSelected] = useState(() => new Set());
   const [bulk, setBulk] = useState(null); // { type: "transfer" | "delete", ids }
+  const [campaignFor, setCampaignFor] = useState(null); // lead ids for "Email" (a campaign to the selected leads)
   const [again, setAgain] = useState(0); // reloads the list after a bulk action
   const kanban = mode === "kanban";
   const columns = leadBoardColumns(view, stage || filters.stage);
@@ -295,6 +297,11 @@ export default function LeadsTable({
             <span>
               <b>{selected.size.toLocaleString()}</b> selected
             </span>
+            {can(user, "send_campaigns") && (
+              <button className="sf-button small" onClick={() => setCampaignFor([...selected])}>
+                <Icon name="mail" size={14} /> Email
+              </button>
+            )}
             {canTransferAny && (
               <button className="sf-button small" disabled={selected.size > 500} onClick={() => setBulk({ type: "transfer", ids: [...selected] })}>
                 <Icon name="transfer" size={14} /> Transfer
@@ -366,7 +373,13 @@ export default function LeadsTable({
                   </Cell>
                   <Cell>{l.company || ""}</Cell>
                   <Cell>{l.title || ""}</Cell>
-                  <Cell title={l.email || ""}>{l.email && <a href={`mailto:${l.email}`}>{l.email}</a>}</Cell>
+                  <Cell title={l.email_invalid_at ? `Invalid email: ${l.email_invalid_reason || ""}` : l.unsubscribed_at ? "Unsubscribed" : l.email || ""}>
+                    {l.email && (
+                      <a href={`mailto:${l.email}`} className={l.email_invalid_at ? "email-invalid" : l.unsubscribed_at ? "email-off" : ""}>
+                        {l.email}
+                      </a>
+                    )}
+                  </Cell>
                   <Cell className="phone">
                     <PhoneReveal value={l.phone} />
                   </Cell>
@@ -414,6 +427,20 @@ export default function LeadsTable({
           me={user}
           onClose={() => setBulk(null)}
           onDone={finish}
+        />
+      )}
+      {campaignFor && (
+        <NewCampaign
+          user={user}
+          users={users}
+          leadIds={campaignFor}
+          onClose={() => setCampaignFor(null)}
+          onCreated={(c) => {
+            setCampaignFor(null);
+            setSelected(new Set());
+            notify(`Campaign "${c.name}" ${c.status === "Scheduled" && new Date(c.send_at) > new Date() ? "is scheduled" : "is sending"}: ${c.counts.Queued.toLocaleString()} leads.`);
+            window.location.hash = `#/campaigns/${c.id}`;
+          }}
         />
       )}
     </>
