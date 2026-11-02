@@ -1,8 +1,10 @@
 """Opportunity APIs: the second half of the lifecycle.
 
-Opportunity -> Discovery -> Proposal -> Won, or Lost at any open stage. Opportunities come from converting a lead.
+Opportunity -> Discovery -> Proposal -> Won, or Lost at any open stage. Opportunities come from converting a lead,
+or from New Opportunity (Opportunities or Account page), which reuses the company's account and the person's contact.
 """
 import json
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import ValidationError
@@ -13,11 +15,13 @@ from starlette.datastructures import UploadFile
 from app import schemas
 from app.constants import OPPORTUNITY_FLOW, OPPORTUNITY_OPEN_STAGES, OPPORTUNITY_STAGES, STAGE_PROBABILITY
 from app.database import get_db
-from app.security import acting_user, acting_user_id, check_owner_change, require_edit, require_view, visible
-from app.models import Contact, Opportunity, OpportunityAttachment, User
+from app.security import (acting_user, acting_user_id, check_owner_change, forbid_admin_create, owner_for_new,
+                          require_edit, require_view, visible)
+from app.models import Account, Contact, Lead, Opportunity, OpportunityAttachment, User
+from app import opportunity_matches as matches
 from app.routers.attachments import (MAX_REQUEST_BYTES, checked_type, clean_filename, header_login_only,
                                      locked_opportunity, read_upload)
-from app.serializers import history_out, opportunity_detail, opportunity_out
+from app.serializers import account_out, contact_out, history_out, opportunity_detail, opportunity_out, task_out
 from app.services import (
     add_stage_task,
     confirm_skipped,
@@ -69,6 +73,94 @@ def list_opportunities(
     return [opportunity_out(o) for o in db.scalars(query.order_by(Opportunity.id.desc())).all()]
 
 
+@router.get("/duplicate-check")
+def duplicate_check(
+    company: str | None = Query(None, max_length=200),
+    account_id: int | None = Query(None),
+    contact_id: int | None = Query(None),
+    email: str | None = Query(None, max_length=255),
+    first_name: str | None = Query(None, max_length=50),
+    last_name: str | None = Query(None, max_length=50),
+    name: str | None = Query(None, max_length=200, description="Opportunity name (blank = the default name)"),
+    lead_id: int | None = Query(None, description="Converting this lead: its company, email and name are used"),
+    db: Session = Depends(get_db),
+):
+    """Before New Opportunity or Convert: the account and contact that will be reused, and whether this person at
+    this company already has an open opportunity with that name (it can't be created twice)."""
+    if lead_id is not None:
+        lead = get_or_404(db, Lead, lead_id, "Lead")
+        require_view(lead.owner_id, "lead")
+        company, email, first_name, last_name = lead.company or lead.name, lead.email, lead.first_name, lead.last_name
+    return matches.check(db, company=company, account_id=account_id, contact_id=contact_id, email=email,
+                         first_name=first_name, last_name=last_name, name=name)
+
+
+@router.post("", response_model=schemas.OpportunityCreated, status_code=201)
+def create_opportunity(data: schemas.OpportunityCreate, db: Session = Depends(get_db)):
+    """New Opportunity without a lead. No duplicates: an existing account with the company name and an existing contact
+    with the email (or name) are reused, and the same open opportunity for the same person and company is refused."""
+    me = forbid_admin_create("opportunities")
+    owner_id = resolve_user_id(db, owner_for_new(data.owner_id))
+    task_owner = stage_task_owner(db, data.task, owner_id)
+    if data.account_id is not None:
+        account = get_or_404(db, Account, data.account_id, "Account")
+    else:
+        account = matches.find_account(db, data.account_name)
+    reused_account = account is not None
+    contact = None
+    if data.primary_contact_id is not None:
+        contact = get_or_404(db, Contact, data.primary_contact_id, "Contact")
+        if account is not None and contact.account_id != account.id:
+            raise HTTPException(status_code=400, detail="That contact belongs to a different account")
+    elif account is not None:
+        contact = matches.find_contact(db, account.id, email=data.contact_email, first_name=data.contact_first_name,
+                                       last_name=data.contact_last_name)
+    reused_contact = contact is not None
+    matches.ensure_no_duplicate(db, account, contact, data.name)
+    if account is None:
+        account = Account(name=data.account_name.strip(), owner_id=owner_id)
+        db.add(account)
+        db.flush()
+    if contact is None:
+        contact = Contact(salutation=data.contact_salutation, first_name=(data.contact_first_name or "").strip() or None,
+                          last_name=data.contact_last_name.strip(), email=(data.contact_email or "").strip() or None,
+                          job_title=(data.contact_title or "").strip() or None,
+                          phone=(data.contact_phone or "").strip() or None, account_id=account.id, owner_id=owner_id)
+        db.add(contact)
+        db.flush()
+    opp = Opportunity(
+        name=data.name.strip(), stage="Opportunity", probability=STAGE_PROBABILITY["Opportunity"],
+        expected_value=data.expected_value,
+        expected_close_date=data.expected_close_date or (date.today() + timedelta(days=30)),
+        account_id=account.id, primary_contact_id=contact.id, owner_id=owner_id,
+    )
+    db.add(opp)
+    db.flush()
+    record_stage_change(db, opportunity_id=opp.id, from_stage=None, to_stage="Opportunity", changed_by_id=me.id,
+                        note=data.note)
+    task = add_stage_task(db, data.task, owner_id=task_owner, record_owner_id=owner_id, actor_id=me.id,
+                          opportunity_id=opp.id)
+    details = [f"Account: {account.name}" + (" (existing account)" if reused_account else ""),
+               f"Contact: {contact.full_name}" + (" (existing contact)" if reused_contact else "")]
+    if opp.expected_value is not None:
+        details.append(f"Amount: ${opp.expected_value:,.2f}")
+    details.append(f"Close date: {opp.expected_close_date:%d %b %Y}")
+    schedule_close_date_task(db, opp)
+    details.append(f"Note: {data.note}")
+    stage_notice(db, kind="Opportunity", stage="Opportunity", record_name=opp.name, owner_id=owner_id, actor_id=me.id,
+                 opportunity_id=opp.id, task=task, details=details,
+                 title="Opportunity assigned to you" if owner_id != me.id else None)
+    log_activity(db, me.id, "Opportunity created", opp.name, " • ".join(details[:2]))
+    db.commit()
+    for record in (opp, account, contact):
+        db.refresh(record)
+    if task:
+        db.refresh(task)
+    return {"opportunity": opportunity_out(opp), "account": account_out(account), "contact": contact_out(contact),
+            "new_task": task_out(task) if task else None,
+            "reused": {"account": reused_account, "contact": reused_contact}}
+
+
 @router.get("/{opportunity_id}", response_model=schemas.OpportunityDetail)
 def get_opportunity(opportunity_id: int, db: Session = Depends(get_db)):
     """The opportunity record page: details, tasks, notes and stage history."""
@@ -94,6 +186,10 @@ def update_opportunity(opportunity_id: int, data: schemas.OpportunityUpdate, db:
         changes["owner_id"] = resolve_user_id(db, changes["owner_id"])
     for field, value in changes.items():
         setattr(opp, field, value)
+    if ("name" in changes or "primary_contact_id" in changes) and opp.stage in OPPORTUNITY_OPEN_STAGES:
+        # renaming or changing the contact can't turn it into a copy of another open opportunity
+        matches.ensure_no_duplicate(db, opp.account, db.get(Contact, opp.primary_contact_id) if opp.primary_contact_id
+                                    else None, opp.name, exclude_id=opp.id)
     if opp.owner_id != old_owner:
         db.flush()
         reassign_system_tasks(db, opp.owner_id, opportunity_id=opp.id)  # follow-ups and reminders go to the new owner

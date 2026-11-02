@@ -253,6 +253,10 @@ export const api = {
     apiRequest(`/${collection}/${id}/lost`, { method: "POST", body: values }),
   won: (id, values) =>
     apiRequest(`/opportunities/${id}/won`, { method: "POST", body: values }),
+  // New Opportunity (no lead) and the duplicate check shown before New Opportunity / Convert
+  createOpportunity: (values) => apiRequest("/opportunities", { method: "POST", body: values }),
+  opportunityDuplicateCheck: (params) =>
+    apiRequest(`/opportunities/duplicate-check?${new URLSearchParams(Object.entries(params).filter(([, v]) => v !== "" && v != null))}`),
   convert: (id, values) =>
     apiRequest(`/leads/${id}/convert`, { method: "POST", body: values }),
   transferLead: (id, values) =>

@@ -5,19 +5,27 @@ from sqlalchemy.orm import Session
 
 from app import schemas
 from app.database import get_db
-from app.security import acting_user, owner_for_new, require_view, visible
-from app.models import Account, Contact
+from app.security import acting_user, can_view, owner_for_new, require_view, visible
+from app.models import Account, Contact, Opportunity
 from app.serializers import account_detail, account_out, contact_out
 from app.services import get_or_404, resolve_user_id
 
 router = APIRouter(prefix="/api", tags=["Accounts and contacts"])
 
 
+def _worked_on(user_id: int):
+    """Accounts where the user has a contact or an opportunity. One company has one account, so a salesperson whose deal
+    is on another salesperson's account can still open that account (and sees only their own contacts and deals there)."""
+    return or_(Account.id.in_(select(Opportunity.account_id).where(Opportunity.owner_id == user_id)),
+               Account.id.in_(select(Contact.account_id).where(Contact.owner_id == user_id)))
+
+
 @router.get("/accounts", response_model=list[schemas.AccountOut])
 def list_accounts(
     search: str | None = Query(None), owner_id: int | None = Query(None), db: Session = Depends(get_db)
 ):
-    query = visible(select(Account), Account)
+    me = acting_user()
+    query = select(Account) if me.sees_team else select(Account).where(or_(Account.owner_id == me.id, _worked_on(me.id)))
     if owner_id is not None:
         query = query.where(Account.owner_id == owner_id)
     if search:
@@ -38,9 +46,11 @@ def create_account(data: schemas.AccountCreate, db: Session = Depends(get_db)):
 def get_account(account_id: int, db: Session = Depends(get_db)):
     """The account page: details, its contacts and its opportunities."""
     account = get_or_404(db, Account, account_id, "Account")
-    require_view(account.owner_id, "account")
-    detail = account_detail(account)
     me = acting_user()
+    if not can_view(account.owner_id) and not db.scalar(select(Account.id).where(Account.id == account.id,
+                                                                                   _worked_on(me.id))):
+        require_view(account.owner_id, "account")  # 404, like any record the user can't open
+    detail = account_detail(account)
     if not me.sees_team:  # without team access: only your own contacts and deals on the account
         detail.contacts = [c for c in detail.contacts if c.owner_id == me.id]
         detail.opportunities = [o for o in detail.opportunities if o.owner_id == me.id]

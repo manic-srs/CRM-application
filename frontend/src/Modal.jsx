@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { StageFiles } from "./Attachments";
 import LinkedInField from "./LeadAutofill";
+import { ConvertCheck, NewOpportunityFields, newOpportunityPayload } from "./NewOpportunity";
 import {
   ATTACHMENT_STAGES,
   LEAD_FLOW,
@@ -113,6 +114,9 @@ export default function Modal({ modal, close, data, run, notify, user }) {
     );
   // Cancel Demo: "reschedule" (pick a new date, stay at Demo) or "nurturing" (cancel, back to Revisit)
   const [demoChoice, setDemoChoice] = useState("reschedule");
+  // New Opportunity / Convert: the same open opportunity already exists (saving is blocked until it's changed)
+  const [blocked, setBlocked] = useState(false);
+  const [convertValues, setConvertValues] = useState({});
   const [relatedType, setRelatedType] = useState(
     record?.relatedType || modal.relatedType || "general",
   );
@@ -132,6 +136,7 @@ export default function Modal({ modal, close, data, run, notify, user }) {
   const titles = {
     lead: record ? `Edit ${record.name}` : "New Lead",
     opportunity: `Edit ${record?.name}`,
+    newOpportunity: "New Opportunity",
     task: record ? `Edit Task` : "New Task",
     account: "New Account",
     contact: "New Contact",
@@ -360,6 +365,7 @@ export default function Modal({ modal, close, data, run, notify, user }) {
   const TASK_HINTS = {
     stage: "The next follow-up for this stage (instead of the system's automatic one).",
     convert: "The first task of the new opportunity.",
+    newOpportunity: "The first task of the new opportunity.",
     won: "A post-sale task, such as handover or onboarding. It stays open after the deal is won.",
     cancelDemo: "When to come back to the lead: the lead waits in Revisit until this date.",
     reopen: "The first follow-up now that the lead is open again.",
@@ -410,7 +416,16 @@ export default function Modal({ modal, close, data, run, notify, user }) {
   // The green message after saving says what happened
   const doneMessage = (v, saved) => {
     const name = record?.name;
-    if (type === "convert") return "Lead converted. Account, contact, opportunity and follow-up task created.";
+    const reusedText = (r = {}) =>
+      r.account && r.contact ? "the existing account and contact" : r.account ? "the existing account" : r.contact ? "the existing contact" : "";
+    if (type === "convert")
+      return saved?.reused?.account || saved?.reused?.contact
+        ? `Lead converted. The opportunity and follow-up task were created on ${reusedText(saved.reused)} (no duplicates).`
+        : "Lead converted. Account, contact, opportunity and follow-up task created.";
+    if (type === "newOpportunity")
+      return `Opportunity "${saved.opportunity.name}" was created${
+        saved.reused?.account || saved.reused?.contact ? ` on ${reusedText(saved.reused)} (no duplicates)` : ""
+      }, with its first task.`;
     if (type === "lead" && !record)
       return `Lead "${saved.name}" was created.`;
     if (type === "stage") return `"${name}" moved to ${modal.stage}. The next follow-up task was created.${attachedText}`;
@@ -488,6 +503,8 @@ export default function Modal({ modal, close, data, run, notify, user }) {
       }
       if (type === "opportunity")
         saved = await run("saveOpportunity", v, record.id, user?.id);
+      if (type === "newOpportunity")
+        saved = await run("createOpportunity", newOpportunityPayload(v, { note: stageNote(v.note), task: stageTaskPayload(v) }));
       if (type === "task") {
         if (!v.title.trim()) throw new Error("Task title is required.");
         saved = await run("saveTask", v, record?.id, user?.id);
@@ -576,7 +593,7 @@ export default function Modal({ modal, close, data, run, notify, user }) {
       if (type === "lead") go(`/leads/${saved.id}`);
       if (type === "account") go(`/accounts/${saved.id}`);
       if (type === "contact") go(`/contacts/${saved.id}`);
-      if (type === "convert") go(`/opportunities/${saved.opportunity.id}`);
+      if (type === "convert" || type === "newOpportunity") go(`/opportunities/${saved.opportunity.id}`);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -689,6 +706,13 @@ export default function Modal({ modal, close, data, run, notify, user }) {
                   localInput(record.demo_date),
                 )}
             </div>
+            </>
+          )}
+          {type === "newOpportunity" && (
+            <>
+              <NewOpportunityFields data={data} defaults={modal.defaults} owner={owner()} onBlocked={setBlocked} />
+              {noteBox("Opportunity Comment", "note")}
+              {taskSection()}
             </>
           )}
           {type === "opportunity" && (
@@ -854,14 +878,20 @@ export default function Modal({ modal, close, data, run, notify, user }) {
           {type === "convert" && (
             <>
               {skippedChecklist()}
-              <div className="form-grid">
+              <div
+                className="form-grid"
+                onChange={(e) =>
+                  ["opportunity_name", "account_id"].includes(e.target.name) &&
+                  setConvertValues((values) => ({ ...values, [e.target.name]: e.target.value }))
+                }
+              >
                 {field("Opportunity Name", "opportunity_name")}
                 {field("Amount", "expected_value", "number")}
                 {field("Close Date", "expected_close_date", "date")}
                 <label className="field">
                   <span>Account</span>
                   <select name="account_id" defaultValue="">
-                    <option value="">Create new account from company</option>
+                    <option value="">Match by company name (reuses the existing account, or creates one)</option>
                     {data.accounts.map((account) => (
                       <option key={account.id} value={account.id}>
                         {account.name}
@@ -870,6 +900,7 @@ export default function Modal({ modal, close, data, run, notify, user }) {
                   </select>
                 </label>
               </div>
+              <ConvertCheck leadId={record.id} values={convertValues} onBlocked={setBlocked} />
               {noteBox("Conversion Comment", "note")}
               {taskSection()}
             </>
@@ -1007,13 +1038,15 @@ export default function Modal({ modal, close, data, run, notify, user }) {
             <button
               type="submit"
               className={`sf-button ${type === "delete" ? "danger" : "brand"}`}
-              disabled={submitting}
+              disabled={submitting || (blocked && (type === "newOpportunity" || type === "convert"))}
               aria-busy={submitting}
             >
               {submitting
                 ? "Saving…"
                 : type === "convert"
                   ? "Convert lead"
+                  : type === "newOpportunity"
+                    ? "Create opportunity"
                   : type === "won"
                     ? "Mark as won"
                     : type === "lost"

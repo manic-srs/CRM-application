@@ -671,6 +671,44 @@ class OpportunityUpdate(BaseModel):
     discovery_timeline: str | None = Field(None, max_length=100)
 
 
+class OpportunityCreate(NeedsTask):
+    """New Opportunity (Opportunities or Account page), without a lead. The account is an existing one (account_id) or
+    a company name (an existing account with that name is reused). The contact is an existing one on that account
+    (primary_contact_id) or a person (an existing contact with that email or name is reused). The note and the first
+    task are required, like on Convert."""
+
+    name: str = Field(..., min_length=1, max_length=200)
+    note: StageNote  # why the opportunity is opened: saved in its stage history
+    expected_value: float | None = Field(None, ge=0)
+    expected_close_date: date | None = None
+    owner_id: int | None = None  # default: the logged-in user
+    account_id: int | None = None
+    account_name: str | None = Field(None, max_length=200)
+    primary_contact_id: int | None = None
+    contact_salutation: Salutation | None = None
+    contact_first_name: str | None = Field(None, max_length=50)
+    contact_last_name: str | None = Field(None, max_length=50)
+    contact_email: str | None = Field(None, max_length=255)
+    contact_title: str | None = Field(None, max_length=100)
+    contact_phone: str | None = Field(None, max_length=30)
+
+    @model_validator(mode="after")
+    def _account_and_contact(self):
+        if self.account_id is None and not (self.account_name or "").strip():
+            raise ValueError("Choose an account or enter the company name")
+        if self.primary_contact_id is None and not (self.contact_last_name or "").strip():
+            raise ValueError("Choose a contact or enter the contact's last name")
+        return self
+
+
+class OpportunityCreated(BaseModel):
+    opportunity: OpportunityOut
+    account: AccountOut
+    contact: ContactOut
+    new_task: TaskOut | None
+    reused: dict[str, bool]
+
+
 class OpportunityStageChange(NeedsTask):
     stage: OpportunityOpenStage
     note: StageNote
@@ -700,6 +738,7 @@ class ConvertResult(BaseModel):
     opportunity: OpportunityOut
     tasks_auto_closed: int
     new_task: TaskOut | None
+    reused: dict[str, bool] = {}  # {"account": True} = the company's existing account was used (no duplicate)
 
 
 # ---------- Notifications and search ----------

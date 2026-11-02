@@ -126,10 +126,15 @@ def test_a_cancelled_demo_goes_back_to_revisit_on_the_task_date(client):
         "Revisit", None, TASK["due_date"], "Demo cancelled")
 
 
+DEALS = iter(range(1, 1000))
+
+
 def opportunity(client):
     lead = new_lead(client)
+    # each one is a different deal: the same open opportunity for one person and company can't be created twice
     res = client.post(f"/api/leads/{lead['id']}/convert", json={
-        "task": TASK, "note": NOTE, "expected_value": 1000, "completed_stages": ["Nurturing", "Demo"]})
+        "task": TASK, "note": NOTE, "expected_value": 1000, "completed_stages": ["Nurturing", "Demo"],
+        "opportunity_name": f"Stage deal {next(DEALS)}"})
     assert res.status_code == 200, res.text
     return res.json()["opportunity"]
 

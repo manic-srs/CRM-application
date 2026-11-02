@@ -1,5 +1,6 @@
 import React from "react";
 import { EmailList, useEmails } from "./Email";
+import { canCreateSales } from "./permissions";
 import { amount, dateTime, shortDate } from "./format";
 import { Card, Icon, ObjectIcon, PhoneReveal, StageBadge } from "./ui";
 
@@ -54,7 +55,7 @@ function FieldGrid({ rows }) {
 const owner = (data, id) => data.users.find((u) => u.id === id)?.full_name || "";
 const site = (url) => (url ? <a href={/^https?:/.test(url) ? url : `https://${url}`} target="_blank" rel="noreferrer">{url}</a> : "");
 
-export function AccountPage({ id, data, openNew, openEmail, emailVersion }) {
+export function AccountPage({ id, data, user, openNew, openEmail, emailVersion }) {
   const account = data.accounts.find((a) => String(a.id) === id);
   const { emails } = useEmails("account_id", account?.id, emailVersion);
   if (!account) return <NotFound collection="accounts" />;
@@ -91,6 +92,11 @@ export function AccountPage({ id, data, openNew, openEmail, emailVersion }) {
         <button className="sf-button" onClick={() => openNew("contact", { account_id: account.id })}>
           New Contact
         </button>
+        {canCreateSales(user) && (
+          <button className="sf-button" onClick={() => openNew("newOpportunity", { account_id: account.id })}>
+            New Opportunity
+          </button>
+        )}
       </Highlights>
       <div className="record-columns">
         <section className="card record-main">
