@@ -39,8 +39,6 @@ export default function Modal({ modal, close, data, run, notify, user }) {
     [submitting, setSubmitting] = useState(false);
   const record = modal.record;
   const type = modal.type;
-  // duplicate email on a new lead: { email, matches, has_open_lead } from the backend
-  const [duplicate, setDuplicate] = useState(null);
   // other leads / accounts with the same company, looked up while the company is typed (lead form only)
   const [companyMatches, setCompanyMatches] = useState(null);
   const companyTimer = useRef(null);
@@ -123,6 +121,7 @@ export default function Modal({ modal, close, data, run, notify, user }) {
   // Every stage change (Change Stage, Convert, Won, Lost, cancelling a demo) needs a note; checked before anything is sent
   const noteField = stageNoteField(type, demoChoice);
   const [noteError, setNoteError] = useState(false);
+  const [emailError, setEmailError] = useState(""); // lead email already in the CRM, or not on the company domain
   // ...and all of them but Lost a New Task (task_* fields, checked with the note before anything is sent)
   const taskNeeded = stageTaskNeeded(type, demoChoice);
   const [taskErrors, setTaskErrors] = useState({});
@@ -203,7 +202,15 @@ export default function Modal({ modal, close, data, run, notify, user }) {
               ? 200
               : undefined
         }
+        aria-invalid={name === "email" && !!emailError ? true : undefined}
+        aria-describedby={name === "email" && emailError ? "email-error" : undefined}
+        onInput={name === "email" && emailError ? () => setEmailError("") : undefined}
       />
+      {name === "email" && emailError && (
+        <small id="email-error" className="field-error">
+          {emailError}
+        </small>
+      )}
     </label>
   );
   // Stage order: a record can't skip a stage. Stages skipped on the way must be confirmed as done (saved in history);
@@ -398,46 +405,6 @@ export default function Modal({ modal, close, data, run, notify, user }) {
     if (type === "contact") return `Contact "${saved.full_name || v.last_name}" was created.`;
     return "Your changes were saved.";
   };
-  const duplicateBox = () =>
-    duplicate && (
-      <div className="dup-box blocked" role="alert">
-        <p>
-          <Icon name="warn" size={14} />
-          This email is already in the CRM. Each email can belong to one lead only: use the record below, or ask its
-          owner or a Manager.
-        </p>
-        <ul>
-          {duplicate.matches.map((m) => (
-            <li key={m.type + m.id}>
-              {m.can_open ? (
-                <a href={`#/${m.type === "Lead" ? "leads" : "contacts"}/${m.id}`} onClick={close}>
-                  {m.name}
-                </a>
-              ) : (
-                <b>{m.name}</b>
-              )}{" "}
-              <small>
-                {m.type}
-                {m.company ? ` • ${m.company}` : ""}
-                {m.stage ? ` • ${m.stage}` : ""} • Owner: {m.owner_name}
-              </small>
-            </li>
-          ))}
-        </ul>
-        <div className="dup-actions">
-          <button
-            type="button"
-            className="sf-button small"
-            onClick={() => {
-              setDuplicate(null);
-              ref.current.querySelector("input[name=email]")?.focus();
-            }}
-          >
-            Use a different email
-          </button>
-        </div>
-      </div>
-    );
   const submit = async (event) => {
     event.preventDefault();
     if (lock.current) return;
@@ -455,6 +422,7 @@ export default function Modal({ modal, close, data, run, notify, user }) {
     lock.current = true;
     setSubmitting(true);
     setError("");
+    setEmailError("");
     const v = Object.fromEntries(new FormData(event.target));
     try {
       let saved;
@@ -469,14 +437,21 @@ export default function Modal({ modal, close, data, run, notify, user }) {
         ].filter(([name]) => !(v[name] || "").trim());
         if (missing.length) throw new Error(`Please fill in: ${missing.map(([, label]) => label).join(", ")}.`);
         const email = (v.email || "").trim().toLowerCase();
+        const emailProblem = (text) => {
+          setEmailError(text);
+          ref.current.querySelector("input[name=email]")?.focus();
+        };
         const domainProblem = emailWebsiteProblem(email, v.company_website);
-        if (domainProblem) throw new Error(domainProblem);
+        if (domainProblem) return emailProblem(domainProblem);
         if (email && email !== (record?.email || "").trim().toLowerCase()) {
           const check = await api.leadDuplicates(email);
           const others = check.matches.filter((m) => !(m.type === "Lead" && String(m.id) === String(record?.id)));
           if (others.length) {
-            setDuplicate({ ...check, matches: others }); // show who has it (emails are unique)
-            return;
+            // emails are unique: say who has it (the name only if this user may open that record)
+            const m = others[0];
+            return emailProblem(
+              `This email is already in the CRM${m.can_open ? ` (${m.type}: ${m.name}, owner ${m.owner_name})` : ""}. Use a different email.`,
+            );
           }
         }
         saved = await run("saveLead", v, record?.id, user?.id);
@@ -629,7 +604,6 @@ export default function Modal({ modal, close, data, run, notify, user }) {
               {owner()}
             </div>
           )}
-          {type === "lead" && duplicateBox()}
           {type === "lead" && (
             <>
             <LinkedInField
