@@ -2,8 +2,8 @@ import React, { useState } from "react";
 import OpportunityAttachments from "./Attachments";
 import { EmailList, useEmails } from "./Email";
 import { can, canCreateSales, canTransferLead } from "./permissions";
-import { amount, dateTime, formatPhone, shortDate } from "./format";
-import { ActionMenu, Card, Icon, ObjectIcon, PathBar, StageBadge } from "./ui";
+import { amount, dateTime, shortDate } from "./format";
+import { ActionMenu, Card, Icon, ObjectIcon, PathBar, PhoneReveal, StageBadge } from "./ui";
 
 const LEAD_PATH = ["New", "Nurturing", "Demo", "Converted"];
 const OPP_PATH = ["Opportunity", "Proposal", "Won"];
@@ -185,7 +185,7 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
     ? [
         ["Title", item.title],
         ["Company", item.company],
-        ["Phone", formatPhone(item.phone)],
+        ["Phone", item.phone && <PhoneReveal key="ph" value={item.phone} />],
         ["Email", item.email && <a href={`mailto:${item.email}`}>{item.email}</a>],
         ["LinkedIn", <ExternalLink key="li" href={item.linkedin_url}>Profile</ExternalLink>],
         ["Company Links", (item.company_website || item.company_linkedin_url) && (
@@ -325,7 +325,7 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
                 <Field label="Title" onEdit={edit}>{item.title}</Field>
                 <Field label="Industry" onEdit={edit}>{item.industry}</Field>
                 <Field label="Email" onEdit={edit}>{item.email && <a href={`mailto:${item.email}`}>{item.email}</a>}</Field>
-                <Field label="Phone" onEdit={edit}>{item.phone}</Field>
+                <Field label="Phone" onEdit={edit}><PhoneReveal value={item.phone} /></Field>
                 <Field label="Lead LinkedIn URL" onEdit={edit}><ExternalLink href={item.linkedin_url} /></Field>
                 <Field label="Location" onEdit={edit}>{item.location}</Field>
                 <Field label="Lead Source" onEdit={edit}>{item.source}</Field>

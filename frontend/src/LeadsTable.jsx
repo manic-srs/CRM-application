@@ -1,12 +1,14 @@
 // The Leads list: every list view (All Open Leads, My Open Leads, Uploaded Leads...) is loaded from the server
 // page by page with search and sorting, so it stays fast with 100,000s of leads. Uploaded leads have Lead Source "Upload".
 // The Kanban view uses the same query: one request per status column, each with its own total.
-import React, { useEffect, useState } from "react";
-import { apiRequest } from "./api";
+// Tick the checkboxes to transfer or delete several leads at once (the server checks each lead and skips the ones you can't change).
+import React, { useEffect, useRef, useState } from "react";
+import { api, apiRequest } from "./api";
 import { leadBoardColumns } from "./domain";
 import LeadsKanban from "./LeadsKanban";
-import { DateCell, Icon, StageBadge } from "./ui";
-import { dateTime, maskPhone } from "./format";
+import { can } from "./permissions";
+import { DateCell, Icon, PhoneReveal, StageBadge } from "./ui";
+import { dateTime } from "./format";
 import { filterSummary, rangeBounds, Th } from "./Filters";
 
 const PAGE = 100;
@@ -17,7 +19,7 @@ const COLUMNS = [
   ["Company", "company", 125],
   ["Title", "title", 95],
   ["Email", "email", 130],
-  ["Phone", "phone", 134],
+  ["Phone", "phone", 168],
   ["Status", "stage", 100],
   ["Source", "source", 90],
   ["Owner", "owner", 115],
@@ -32,8 +34,131 @@ const Cell = ({ children, title, className = "" }) => (
   </td>
 );
 
-export default function LeadsTable({ view, stage, filters = {}, defs = [], onFilter, refresh = 0, mode = "table", onMode,
-                                     user, setModal }) {
+const plural = (n, word = "lead") => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+// One line about the leads that were left out, e.g. "2 skipped: Ana Ruiz (converted), Lead 41 (not found)"
+const skippedText = (skipped) =>
+  skipped.length
+    ? ` ${plural(skipped.length)} skipped: ${skipped
+        .slice(0, 3)
+        .map((s) => `${s.name} (${s.reason})`)
+        .join("; ")}${skipped.length > 3 ? ` and ${skipped.length - 3} more` : ""}.`
+    : "";
+
+// A select-all checkbox that also shows the "some selected" dash
+function Check({ checked, some = false, onChange, label }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = some && !checked;
+  }, [some, checked]);
+  return <input ref={ref} type="checkbox" className="row-check" checked={checked} onChange={onChange} aria-label={label} />;
+}
+
+// Transfer / delete dialog for the selected leads
+function BulkDialog({ action, count, users, me, onClose, onDone }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const transfer = action.type === "transfer";
+  useEffect(() => {
+    const key = (e) => e.key === "Escape" && !busy && onClose();
+    document.addEventListener("keydown", key);
+    return () => document.removeEventListener("keydown", key);
+  }, [busy, onClose]);
+  const submit = async (e) => {
+    e.preventDefault();
+    const v = Object.fromEntries(new FormData(e.currentTarget));
+    setBusy(true);
+    setError("");
+    try {
+      const res = transfer
+        ? await api.bulkTransferLeads(action.ids, Number(v.to_user_id), v.note)
+        : await api.bulkDeleteLeads(action.ids);
+      onDone(res);
+    } catch (err) {
+      setError(err.message);
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && !busy && onClose()}>
+      <section className="modal small-modal" role="dialog" aria-modal="true" aria-labelledby="bulk-title">
+        <button className="modal-close" aria-label="Close dialog" onClick={onClose} disabled={busy}>
+          <Icon name="close" size={18} />
+        </button>
+        <header className="modal-header">
+          <h2 id="bulk-title">{transfer ? `Transfer ${plural(count)}` : `Delete ${plural(count)}`}</h2>
+        </header>
+        <form onSubmit={submit}>
+          <div className="modal-body bulk-form">
+            {transfer ? (
+              <>
+                <p className="field-hint">
+                  Only the owner changes. Details, stage, tasks and emails stay with each lead, and every transfer is saved in the lead's
+                  history. Converted or closed leads, and leads you can't transfer, are skipped.
+                </p>
+                <label className="field">
+                  <span>
+                    <abbr title="required">*</abbr> Transfer to
+                  </span>
+                  <select name="to_user_id" required defaultValue="">
+                    <option value="" disabled>
+                      Select a user…
+                    </option>
+                    {users
+                      .filter((u) => u.is_active !== false)
+                      .map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.full_name} ({u.role}){u.id === me?.id ? " - me" : ""}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Note</span>
+                  <textarea name="note" rows={3} maxLength={300} />
+                </label>
+              </>
+            ) : (
+              <p className="modal-subtitle">
+                Delete {plural(count)} with their tasks, notes and history? This can't be undone. Converted leads, and leads you can't
+                change, are skipped.
+              </p>
+            )}
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
+          </div>
+          <div className="modal-footer">
+            <button type="button" className="sf-button" onClick={onClose} disabled={busy}>
+              Cancel
+            </button>
+            <button type="submit" className={`sf-button ${transfer ? "brand" : "danger"}`} disabled={busy} aria-busy={busy}>
+              {busy ? "Working…" : transfer ? "Transfer" : "Delete"}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+export default function LeadsTable({
+  view,
+  stage,
+  filters = {},
+  defs = [],
+  onFilter,
+  refresh = 0,
+  mode = "table",
+  onMode,
+  user,
+  setModal,
+  users = [],
+  notify = () => {},
+  reload = () => Promise.resolve(),
+}) {
   const [search, setSearch] = useState("");
   const [term, setTerm] = useState("");
   const [sort, setSort] = useState({ col: "created", dir: "desc" });
@@ -41,6 +166,9 @@ export default function LeadsTable({ view, stage, filters = {}, defs = [], onFil
   const [result, setResult] = useState(null);
   const [board, setBoard] = useState(null); // Kanban: { stage: { total, items } } for the columns this list can have
   const [error, setError] = useState("");
+  const [selected, setSelected] = useState(() => new Set());
+  const [bulk, setBulk] = useState(null); // { type: "transfer" | "delete", ids }
+  const [again, setAgain] = useState(0); // reloads the list after a bulk action
   const kanban = mode === "kanban";
   const columns = leadBoardColumns(view, stage || filters.stage);
 
@@ -50,6 +178,7 @@ export default function LeadsTable({ view, stage, filters = {}, defs = [], onFil
   }, [search]);
   const filterKey = JSON.stringify(filters);
   useEffect(() => setPage(0), [view, stage, filterKey]);
+  useEffect(() => setSelected(new Set()), [view, stage, filterKey, term, kanban]); // a new list starts with nothing ticked
 
   useEffect(() => {
     const params = new URLSearchParams({ view, sort: sort.col, direction: sort.dir });
@@ -77,7 +206,7 @@ export default function LeadsTable({ view, stage, filters = {}, defs = [], onFil
     return () => {
       current = false;
     };
-  }, [kanban, view, stage, filterKey, term, sort, page, refresh]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [kanban, view, stage, filterKey, term, sort, page, refresh, again]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loaded = kanban ? board : result;
   const total = kanban
@@ -89,6 +218,43 @@ export default function LeadsTable({ view, stage, filters = {}, defs = [], onFil
     setPage(0);
   };
   const sortLabel = COLUMNS.find(([, c]) => c === sort.col)?.[0];
+
+  // Selection: ticks stay when you change pages, so you can pick leads from several pages
+  const items = result?.items || [];
+  const canTransferAny = !!user && (user.role === "Admin" || can(user, "reassign_owner") || can(user, "transfer_leads"));
+  const pageIds = items.map((l) => l.id);
+  const pageTicked = pageIds.filter((id) => selected.has(id)).length;
+  const allOnPage = pageIds.length > 0 && pageTicked === pageIds.length;
+  const toggle = (id) =>
+    setSelected((s) => {
+      const next = new Set(s);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  const togglePage = () =>
+    setSelected((s) => {
+      const next = new Set(s);
+      pageIds.forEach((id) => (allOnPage ? next.delete(id) : next.add(id)));
+      return next;
+    });
+  const finish = (res) => {
+    const transfer = bulk.type === "transfer";
+    const done = transfer ? res.transferred : res.deleted;
+    notify(
+      (done
+        ? transfer
+          ? `${plural(done)} transferred to ${res.to}.`
+          : `${plural(done)} deleted.`
+        : transfer
+          ? "No leads were transferred."
+          : "No leads were deleted.") + skippedText(res.skipped || []),
+    );
+    setBulk(null);
+    setSelected(new Set());
+    setAgain((n) => n + 1);
+    reload().catch(() => {});
+  };
+
 
   return (
     <>
@@ -124,6 +290,25 @@ export default function LeadsTable({ view, stage, filters = {}, defs = [], onFil
             )}
           </div>
         </div>
+        {!kanban && selected.size > 0 && (
+          <div className="bulk-bar" role="region" aria-label="Selected leads">
+            <span>
+              <b>{selected.size.toLocaleString()}</b> selected
+            </span>
+            {canTransferAny && (
+              <button className="sf-button small" disabled={selected.size > 500} onClick={() => setBulk({ type: "transfer", ids: [...selected] })}>
+                <Icon name="transfer" size={14} /> Transfer
+              </button>
+            )}
+            <button className="sf-button small danger" disabled={selected.size > 500} onClick={() => setBulk({ type: "delete", ids: [...selected] })}>
+              <Icon name="trash" size={14} /> Delete
+            </button>
+            <button className="link" onClick={() => setSelected(new Set())}>
+              Clear selection
+            </button>
+            {selected.size > 500 && <span className="bulk-limit">Up to 500 leads at a time.</span>}
+          </div>
+        )}
         {error && (
           <div className="alert" role="alert">
             <Icon name="warn" size={16} />
@@ -137,6 +322,7 @@ export default function LeadsTable({ view, stage, filters = {}, defs = [], onFil
         <div className="table-scroll">
           <table className="sf-table leads-table">
             <colgroup>
+              <col style={{ width: 38 }} />
               <col style={{ width: 52 }} />
               {COLUMNS.map(([, col, width]) => (
                 <col key={col} style={{ width }} />
@@ -144,6 +330,9 @@ export default function LeadsTable({ view, stage, filters = {}, defs = [], onFil
             </colgroup>
             <thead>
               <tr>
+                <th className="select-col">
+                  <Check checked={allOnPage} some={pageTicked > 0} onChange={togglePage} label="Select all leads on this page" />
+                </th>
                 <th className="rownum" aria-label="Row number" />
                 {COLUMNS.map(([label, col]) => (
                   <Th
@@ -160,8 +349,17 @@ export default function LeadsTable({ view, stage, filters = {}, defs = [], onFil
               </tr>
             </thead>
             <tbody>
-              {(result?.items || []).map((l, i) => (
-                <tr key={l.id}>
+              {items.map((l, i) => (
+                <tr key={l.id} className={selected.has(l.id) ? "row-selected" : ""}>
+                  <td className="select-col">
+                    <input
+                      type="checkbox"
+                      className="row-check"
+                      checked={selected.has(l.id)}
+                      onChange={() => toggle(l.id)}
+                      aria-label={`Select ${l.name}`}
+                    />
+                  </td>
                   <td className="rownum">{page * PAGE + i + 1}</td>
                   <Cell title={l.name}>
                     <a href={`#/leads/${l.id}`}>{l.name}</a>
@@ -169,7 +367,9 @@ export default function LeadsTable({ view, stage, filters = {}, defs = [], onFil
                   <Cell>{l.company || ""}</Cell>
                   <Cell>{l.title || ""}</Cell>
                   <Cell title={l.email || ""}>{l.email && <a href={`mailto:${l.email}`}>{l.email}</a>}</Cell>
-                  <Cell className="phone">{maskPhone(l.phone)}</Cell>
+                  <Cell className="phone">
+                    <PhoneReveal value={l.phone} />
+                  </Cell>
                   <td className="cell">
                     <StageBadge stage={l.stage} />
                   </td>
@@ -206,6 +406,16 @@ export default function LeadsTable({ view, stage, filters = {}, defs = [], onFil
         </>
         )}
       </section>
+      {bulk && (
+        <BulkDialog
+          action={bulk}
+          count={bulk.ids.length}
+          users={users}
+          me={user}
+          onClose={() => setBulk(null)}
+          onDone={finish}
+        />
+      )}
     </>
   );
 }

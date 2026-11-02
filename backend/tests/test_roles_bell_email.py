@@ -481,3 +481,67 @@ def test_activity_log_records_admin_changes(client, outbox):
     assert [r["action"] for r in log[:3]] == ["Permission changed", "Team access given", "User added"]
     assert log[2]["by"] == "Asha Rao" and log[2]["target"] == "New Seller"
     assert login_as(client, 1).get("/api/activity-log").status_code == 403
+
+
+# ---------- bulk transfer and bulk delete (several selected leads) ----------
+
+def test_bulk_transfer(client, outbox):
+    mine = [lead(client, name=f"Bulk {i}") for i in range(3)]
+    priyas = lead(login_as(client, 1), name="Priya Lead")
+    login_as(client, 2)
+    outbox.clear()
+    res = client.post("/api/leads/bulk-transfer", json={"lead_ids": [l["id"] for l in mine] + [priyas["id"]], "to_user_id": 1,
+                                                        "note": "Region change"}).json()
+    # Ravi moves his 3; Priya's lead isn't his, so it's skipped with the reason
+    assert res["transferred"] == 3 and res["to"] == "Priya Sharma"
+    assert res["skipped"] == [{"id": priyas["id"], "name": f"Lead {priyas['id']}",
+                               "reason": "Not found, or you don't have access to it"}]  # not named: Ravi can't see it
+    for l in mine:
+        detail = login_as(client, 1).get(f"/api/leads/{l['id']}").json()
+        assert detail["owner_id"] == 1 and detail["transfers"][0]["note"] == "Region change"
+    # one summary notification for the new owner, and one for the Admin (not one per lead)
+    priya_bell = [n for n in login_as(client, 1).get("/api/notifications").json() if n["title"] == "Leads assigned to you"]
+    assert len(priya_bell) == 1 and "transferred 3 leads to you" in priya_bell[0]["message"]
+    admin_bell = [n for n in login_as(client, 3).get("/api/notifications").json() if n["title"] == "Leads transferred"]
+    assert len(admin_bell) == 1
+    log = login_as(client, 3).get("/api/activity-log").json()
+    assert sum(r["action"] == "Lead reassigned" for r in log) == 3
+
+
+def test_bulk_transfer_rules(client):
+    ravis = lead(client, name="Rv")
+    # a Manager can bulk transfer anyone's leads; a closed lead is skipped
+    closed = lead(client, name="Closed")
+    client.post(f"/api/leads/{closed['id']}/lost", json={"lost_reason": "Price", "notify_customer": False, "lost_notes": "Synthetic test note"})
+    res = login_as(client, 1).post("/api/leads/bulk-transfer", json={"lead_ids": [ravis["id"], closed["id"], 99999], "to_user_id": 1}).json()
+    assert res["transferred"] == 1 and len(res["skipped"]) == 2
+    assert login_as(client, 1).post("/api/leads/bulk-transfer", json={"lead_ids": [ravis["id"]], "to_user_id": 424242}).status_code == 400
+
+
+def test_bulk_delete(client, outbox):
+    a, b = lead(client, name="Del A"), lead(client, name="Del B")
+    converted = lead(client, name="Conv")
+    client.post(f"/api/leads/{converted['id']}/convert", json={"task": TASK, "completed_stages": ["Nurturing", "Demo"], "note": "Synthetic test note"})
+    priyas = lead(login_as(client, 1), name="Theirs")
+    login_as(client, 2)
+    res = client.post("/api/leads/bulk-delete", json={"lead_ids": [a["id"], b["id"], converted["id"], priyas["id"]]}).json()
+    assert res["deleted"] == 2 and {s["id"] for s in res["skipped"]} == {converted["id"], priyas["id"]}
+    assert client.get(f"/api/leads/{a['id']}").status_code == 404
+    assert login_as(client, 1).get(f"/api/leads/{priyas['id']}").status_code == 200
+    admin_bell = [n for n in login_as(client, 3).get("/api/notifications").json() if n["title"] == "Leads deleted"]
+    assert len(admin_bell) == 1 and "deleted 2 leads" in admin_bell[0]["message"]
+    # a Manager can bulk delete the team's leads
+    res = login_as(client, 1).post("/api/leads/bulk-delete", json={"lead_ids": [priyas["id"]]}).json()
+    assert res["deleted"] == 1
+
+
+def test_transferred_lead_can_be_deleted(client, outbox):
+    """A lead with transfer history is deleted with it (the history used to block the delete)."""
+    login_as(client, 1)  # Manager
+    one, two = lead(client, name="Moved One"), lead(client, name="Moved Two")
+    for item in (one, two):
+        assert client.post(f"/api/leads/{item['id']}/transfer", json={"to_user_id": 2}).status_code == 200
+    assert client.delete(f"/api/leads/{one['id']}").status_code == 200
+    assert client.get(f"/api/leads/{one['id']}").status_code == 404
+    res = client.post("/api/leads/bulk-delete", json={"lead_ids": [two["id"]]}).json()
+    assert res["deleted"] == 1 and not res["skipped"]
