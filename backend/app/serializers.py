@@ -70,6 +70,7 @@ def opportunity_out(o: Opportunity) -> schemas.OpportunityOut:
         update={
             "account_name": o.account.name if o.account else None,
             "primary_contact_name": o.primary_contact.full_name if o.primary_contact else None,
+            "lead_name": o.lead.name if o.lead else None,
             "owner_name": o.owner.full_name if o.owner else None,
         }
     )

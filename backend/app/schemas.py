@@ -635,6 +635,7 @@ class OpportunityOut(Out):
     primary_contact_id: int | None
     primary_contact_name: str | None = None
     lead_id: int | None
+    lead_name: str | None = None
     owner_id: int
     owner_name: str | None = None
     created_at: datetime | None

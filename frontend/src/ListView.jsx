@@ -86,6 +86,7 @@ function columns(collection, data) {
     ],
     opportunities: [
       ["Opportunity Name", (r) => r.name, (r) => link(r, r.name)],
+      ["Client Name", (r) => r.lead_name || "", (r) => r.lead_id && r.lead_name ? <a href={`#/leads/${r.lead_id}`}>{r.lead_name}</a> : "—"],
       ["Account Name", (r) => r.account_name || "", account],
       ["Amount", (r) => Number(r.value ?? -1), (r) => amount(r.value), "num"],
       ["Close Date", (r) => r.expected_close_date || "", (r) => shortDate(r.expected_close_date)],
