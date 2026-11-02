@@ -85,6 +85,111 @@ function Dialog({ title, onClose, busy, children, footer, wide }) {
 
 const n = (x) => Number(x || 0).toLocaleString();
 
+// The rows that weren't imported (duplicates, invalid) and the ones imported with a note (a wrong value left blank,
+// an unknown owner), with the name / company / email from the file so each one is easy to find and fix.
+const ISSUE_TYPES = {
+  Duplicate: ["Skipped: duplicate", "pill-warn"],
+  Invalid: ["Skipped: invalid", "pill-bad"],
+  Changed: ["Imported with a note", "pill-upcoming"],
+};
+// the Email and Result columns already say which email and that it's a duplicate
+const shortReason = (reason) =>
+  reason.replace(/ \(duplicate\)$/, "").replace(/^Email \S+ is already in the CRM/, "Email is already in the CRM");
+
+function IssueList({ result, file, company = true, open = false }) {
+  const issues = [...(result.errors || []), ...(result.warnings || [])].sort((a, b) => a.row - b.row);
+  const [tab, setTab] = useState("all");
+  if (!issues.length) return null;
+  const count = (type) => issues.filter((i) => i.type === type).length;
+  const tabs = [
+    ["all", "All", issues.length],
+    ["Duplicate", "Duplicates", count("Duplicate")],
+    ["Invalid", "Invalid", count("Invalid")],
+    ["Changed", "Imported with a note", count("Changed")],
+  ].filter(([key, , total]) => key === "all" || total > 0);
+  const shown = tab === "all" ? issues : issues.filter((i) => i.type === tab);
+  const skipped = (result.duplicates || 0) + (result.invalid || 0);
+  const quote = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const download = () =>
+    saveText(
+      `${(file || "upload").replace(/\.[^.]+$/, "")}-rows-to-review.csv`,
+      [
+        ["Row", "Result", "Name", ...(company ? ["Company"] : []), "Email", "Reason"].join(","),
+        ...issues.map((i) =>
+          [i.row, ISSUE_TYPES[i.type]?.[0] || i.type, i.name, ...(company ? [i.company] : []), i.email, i.reason].map(quote).join(","),
+        ),
+      ].join("\n"),
+    );
+  return (
+    <section className="issue-list" aria-label="Rows to review">
+      <div className="issue-head">
+        <h3>
+          Rows to review <span className="muted">({n(issues.length)})</span>
+        </h3>
+        <div className="issue-tabs" role="tablist">
+          {tabs.map(([key, label, total]) => (
+            <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? "on" : ""} onClick={() => setTab(key)}>
+              {label} <b>{n(total)}</b>
+            </button>
+          ))}
+        </div>
+        <button type="button" className="sf-button small" onClick={download}>
+          Download list
+        </button>
+      </div>
+      <div className={`table-scroll issue-scroll ${open ? "tall" : ""}`}>
+        <table className="sf-table issue-table">
+          <thead>
+            <tr>
+              <th>Row</th>
+              <th>Result</th>
+              <th>Name</th>
+              {company && <th>Company</th>}
+              <th>Email</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((i, index) => (
+              <tr key={`${i.row}-${index}`}>
+                <td className="nowrap">{i.row}</td>
+                <td className="issue-result">
+                  <span className={`pill ${ISSUE_TYPES[i.type]?.[1] || ""}`}>{ISSUE_TYPES[i.type]?.[0] || i.type}</span>
+                </td>
+                <td title={i.name}>{i.name || <span className="muted">—</span>}</td>
+                {company && <td title={i.company}>{i.company || <span className="muted">—</span>}</td>}
+                <td className="issue-email" title={i.email}>{i.email || <span className="muted">—</span>}</td>
+                <td className="issue-reason">{shortReason(i.reason)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {skipped > (result.errors || []).length && (
+        <p className="field-hint">The first {n((result.errors || []).length)} skipped rows are listed.</p>
+      )}
+    </section>
+  );
+}
+
+function UploadDone({ result, word }) {
+  const skipped = (result.duplicates || 0) + (result.invalid || 0);
+  return (
+    <div className="upload-done" role="status">
+      <Icon name="check" size={18} />
+      <div>
+        <b>
+          {n(result.created)} {word} {result.created === 1 ? "was" : "were"} added.
+        </b>
+        <span>
+          {skipped ? ` ${n(skipped)} row${skipped === 1 ? " was" : "s were"} skipped (${n(result.duplicates)} duplicate, ${n(result.invalid)} invalid).` : " No rows were skipped."}
+          {result.with_blanks ? ` ${n(result.with_blanks)} added with a note.` : ""}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export function UploadLeads({ object = "leads", user, data, onClose, onDone, notify }) {
   const info = OBJECTS[object];
   const admin = user.role === "Admin";
@@ -98,6 +203,7 @@ export function UploadLeads({ object = "leads", user, data, onClose, onDone, not
   const leads = object === "leads";
   const changed = (fn) => (...args) => (fn(...args), setCheck(null));
   const [check, setCheck] = useState(null);
+  const [done, setDone] = useState(null); // the result after uploading, kept on screen when rows were skipped
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const input = useRef(null);
@@ -126,7 +232,8 @@ export function UploadLeads({ object = "leads", user, data, onClose, onDone, not
       else {
         const word = result.created === 1 ? info.one : info.label.toLowerCase();
         notify(`${n(result.created)} ${word} uploaded and assigned to ${result.owner}.`);
-        onDone();
+        if (result.errors?.length || result.warnings?.length) setDone(result);
+        else onDone();
       }
     } catch (err) {
       setError(err.message);
@@ -134,10 +241,21 @@ export function UploadLeads({ object = "leads", user, data, onClose, onDone, not
       setBusy("");
     }
   };
-  const errorFile = () =>
-    saveText(
-      `${(check.file || "upload").replace(/\.[^.]+$/, "")}-skipped-rows.csv`,
-      ["Row,Reason", ...check.errors.map((e) => `${e.row},"${e.reason.replace(/"/g, '""')}"`)].join("\n"),
+  if (done)
+    return (
+      <Dialog
+        title={`Upload ${info.label}`}
+        wide
+        onClose={onDone}
+        footer={
+          <button className="sf-button brand" onClick={onDone}>
+            Done
+          </button>
+        }
+      >
+        <UploadDone result={done} word={done.created === 1 ? info.one : info.label.toLowerCase()} />
+        <IssueList result={done} file={done.file} company open />
+      </Dialog>
     );
 
   return (
@@ -306,37 +424,7 @@ export function UploadLeads({ object = "leads", user, data, onClose, onDone, not
               </table>
             </div>
           )}
-          {check.errors.length > 0 && (
-            <details className="upload-errors">
-              <summary>
-                {n(check.duplicates + check.invalid)} row{check.duplicates + check.invalid === 1 ? "" : "s"} skipped
-              </summary>
-              <ul>
-                {check.errors.slice(0, 20).map((e) => (
-                  <li key={e.row}>
-                    Row {e.row}: {e.reason}
-                  </li>
-                ))}
-              </ul>
-              <button type="button" className="link" onClick={errorFile}>
-                Download skipped rows
-              </button>
-            </details>
-          )}
-          {check.warnings?.length > 0 && (
-            <details className="upload-errors">
-              <summary>
-                {n(check.with_blanks)} row{check.with_blanks === 1 ? "" : "s"} with invalid values (imported with those fields blank)
-              </summary>
-              <ul>
-                {check.warnings.slice(0, 20).map((w) => (
-                  <li key={w.row}>
-                    Row {w.row}: {w.reason.replace("Uploaded; left blank: ", "")}
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
+          <IssueList result={check} file={check.file} />
           {check.ready === 0 && <p className="form-error">No new records to import.</p>}
         </div>
       )}
@@ -491,6 +579,7 @@ const SAMPLE_USERS = "Full Name,Email,Role\nPriya Menon,priya.menon@srsconsultin
 export function UploadUsers({ onClose, onDone, notify }) {
   const [file, setFile] = useState(null);
   const [check, setCheck] = useState(null);
+  const [done, setDone] = useState(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const input = useRef(null);
@@ -504,7 +593,8 @@ export function UploadUsers({ onClose, onDone, notify }) {
       if (dryRun) setCheck(result);
       else {
         notify(`${n(result.created)} user${result.created === 1 ? "" : "s"} added. Each one was emailed their login details.`);
-        onDone();
+        if (result.errors?.length) setDone(result);
+        else onDone();
       }
     } catch (err) {
       setError(err.message);
@@ -512,6 +602,23 @@ export function UploadUsers({ onClose, onDone, notify }) {
       setBusy("");
     }
   };
+  if (done)
+    return (
+      <Dialog
+        title="Upload Users"
+        wide
+        onClose={onDone}
+        footer={
+          <button className="sf-button brand" onClick={onDone}>
+            Done
+          </button>
+        }
+      >
+        <UploadDone result={done} word={done.created === 1 ? "user" : "users"} />
+        <IssueList result={done} file={done.file} company={false} open />
+      </Dialog>
+    );
+
   return (
     <Dialog
       title="Upload Users"
@@ -599,20 +706,7 @@ export function UploadUsers({ onClose, onDone, notify }) {
               </table>
             </div>
           )}
-          {check.errors.length > 0 && (
-            <details className="upload-errors" open={check.ready === 0}>
-              <summary>
-                {n(check.errors.length)} row{check.errors.length === 1 ? "" : "s"} skipped
-              </summary>
-              <ul>
-                {check.errors.map((e) => (
-                  <li key={e.row}>
-                    Row {e.row}: {e.reason}
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
+          <IssueList result={check} file={check.file} company={false} />
           {check.ready === 0 && <p className="form-error">No new users to add.</p>}
         </div>
       )}

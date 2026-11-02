@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.constants import OPPORTUNITY_OPEN_STAGES, OPPORTUNITY_STAGES, STAGE_PROBABILITY
 from app.database import get_db
 from app.models import Account, Contact, Opportunity, StageHistory, User
-from app.routers.lead_files import EMAIL_RE, MAX_FILE_BYTES, MAX_ROWS, key, number, read_rows, text_of
+from app.routers.lead_files import EMAIL_RE, MAX_FILE_BYTES, MAX_ROWS, issue_list, key, number, read_rows, text_of
 from app.security import owner_for_new, require, visible
 from app.services import log_activity, notify
 
@@ -161,7 +161,7 @@ async def import_opportunities(
     result = {
         "file": file.filename, "rows": len(rows), "ready": len(keep), "duplicates": duplicates,
         "invalid": len(errors) - duplicates, "owner": target.full_name, "columns_used": mapped,
-        "columns_ignored": ignored, "errors": [{"row": e["row"], "reason": e["reason"]} for e in errors[:500]],
+        "columns_ignored": ignored, "errors": issue_list(errors, header, rows, LOOKUP),
         "preview": [{"name": d["name"], "company": d["company"], "stage": d["stage"],
                      "amount": float(d["amount"]) if d["amount"] is not None else None,
                      "close_date": d["close"].isoformat() if d["close"] else None,

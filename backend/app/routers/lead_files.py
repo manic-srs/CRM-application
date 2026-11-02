@@ -66,6 +66,30 @@ def key(heading: str) -> str:
     return re.sub(r"[^a-z0-9]", "", (heading or "").lower().replace("#", "no"))
 
 
+ISSUE_LIMIT = 5000  # rows listed on screen and in the downloaded list
+
+
+def issue_list(items: list[dict], header: list, rows: list, lookup: dict, kind: str | None = None) -> list[dict]:
+    """Each skipped (or changed) row with what identifies it: name, company and email from the file, the type
+    (Duplicate / Invalid / Changed) and the reason, so the person can see exactly which records weren't imported."""
+    fields = [lookup.get(key(h)) for h in header]
+    out = []
+    for item in items[:ISSUE_LIMIT]:
+        raw = {}
+        source = rows[item["row"] - 2] if 0 <= item["row"] - 2 < len(rows) else []
+        for field, value in zip(fields, source):
+            if field and field not in raw:
+                raw[field] = text_of(value)
+        name = raw.get("full_name") or raw.get("name") or " ".join(
+            x for x in (raw.get("first_name"), raw.get("last_name")) if x)
+        out.append({"row": item["row"],
+                    "type": kind or ("Duplicate" if item.get("duplicate") else "Invalid"),
+                    "reason": item["reason"],
+                    "name": (name or "")[:120], "company": (raw.get("company") or "")[:120],
+                    "email": (raw.get("email") or "")[:200]})
+    return out
+
+
 def read_rows(upload: UploadFile, content: bytes) -> tuple[list[str], list[list]]:
     name = (upload.filename or "").lower()
     if name.endswith((".xlsx", ".xlsm")):
@@ -189,7 +213,7 @@ def parse(header: list[str], rows: list[list]):
             blank.append(f"email '{lead['email']}' isn't on the company's domain ({website_host(lead['company_website'])})")
             lead["email"] = None
         if blank:
-            warnings.append({"row": number_in_file, "reason": "Uploaded; left blank: " + "; ".join(blank)})
+            warnings.append({"row": number_in_file, "reason": "Left blank: " + "; ".join(blank)})
         lead["_owner"] = (raw.get("owner") or "").strip()
         lead["_row"] = number_in_file
         leads.append(lead)
@@ -326,9 +350,9 @@ async def import_leads(
         "owners": owners,
         "columns_used": mapped,
         "columns_ignored": ignored,
-        "errors": [{"row": e["row"], "reason": e["reason"]} for e in errors[:500]],
+        "errors": issue_list(errors, header, rows, LOOKUP),
         "with_blanks": len({w["row"] for w in warnings}),  # uploaded, with a note (a wrong value left blank, owner...)
-        "warnings": warnings[:500],
+        "warnings": issue_list(warnings, header, rows, LOOKUP, "Changed"),
         "preview": [{k: (float(v) if isinstance(v, Decimal) else v) for k, v in l.items() if not k.startswith("_")}
                     | {"owner_name": l["_owner_user"].full_name} for l in leads[:5]],
         "created": 0,

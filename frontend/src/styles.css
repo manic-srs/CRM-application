@@ -3850,3 +3850,101 @@ body:has(.ai-page) .popups {
   background: #eef4ff;
   color: #0b5cab;
 }
+
+/* Upload: rows to review (skipped duplicates / invalid rows, and rows imported with a note) */
+.issue-list {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.issue-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-alt, #f8f9fb);
+}
+.issue-head h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.issue-head .sf-button {
+  margin-left: auto;
+}
+.issue-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.issue-tabs button {
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  color: inherit;
+}
+.issue-tabs button.on {
+  border-color: var(--brand, #0176d3);
+  background: var(--brand-light, #e5f1fb);
+  color: #014486;
+}
+.issue-scroll {
+  max-height: 240px;
+  overflow: auto;
+}
+.issue-scroll.tall {
+  max-height: 360px;
+}
+.issue-table {
+  font-size: 13px;
+  width: 100%;
+  table-layout: fixed;
+}
+.issue-table th:nth-child(1) {
+  width: 48px;
+}
+.issue-table th:nth-child(2) {
+  width: 150px;
+}
+.issue-table th:last-child {
+  width: 30%;
+}
+.issue-table th {
+  position: sticky;
+  top: 0;
+  background: #fff;
+  z-index: 1;
+}
+.issue-table td {
+  max-width: none;
+}
+.issue-table td.issue-reason {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.pill-warn {
+  background: #fde7cf;
+  color: #8c4b02;
+}
+.pill-bad {
+  background: #fddde1;
+  color: #8e030f;
+}
+.upload-done {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #e8f6e5;
+  color: #194e31;
+}
+.upload-done span {
+  color: var(--text-weak);
+}

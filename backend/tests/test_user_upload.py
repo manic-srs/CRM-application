@@ -89,3 +89,11 @@ def test_only_the_admin_can_add_users_in_bulk(client):
         assert upload(login_as(client, user_id), PEOPLE, dry_run=True).status_code == 403
     res = upload(login_as(client, 3), [["Email"], ["x@srs-example.com"]], dry_run=True)
     assert res.status_code == 400 and "Full Name" in res.json()["detail"]
+
+
+def test_skipped_users_are_listed_with_name_and_email(client, outbox):
+    body = upload(login_as(client, 3), PEOPLE, dry_run=True).json()
+    first = body["errors"][0]
+    assert first == {"row": 4, "type": "Duplicate", "reason": "kiran@srs-example.com is repeated in this file",
+                     "name": "Repeat", "company": "", "email": "kiran@srs-example.com"}
+    assert {e["type"] for e in body["errors"]} == {"Duplicate", "Invalid"}

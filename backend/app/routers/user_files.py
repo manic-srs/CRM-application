@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User
 from app.routers.auth import EMAIL_RE, account_email, allowed_domains, hash_password
-from app.routers.lead_files import key, read_rows, text_of
+from app.routers.lead_files import issue_list, key, read_rows, text_of
 from app.security import require_admin
 from app.services import log_activity
 
@@ -104,7 +104,7 @@ async def import_users(file: UploadFile = File(...), dry_run: bool = Form(True),
         "ready": len(ready),
         "duplicates": duplicates,
         "invalid": len(errors) - duplicates,
-        "errors": [{"row": e["row"], "reason": e["reason"]} for e in errors],
+        "errors": issue_list(errors, header, rows, LOOKUP),
         "roles": {r: sum(1 for u in ready if u["role"] == r) for r in ("Salesperson", "Manager", "Admin")},
         "preview": [{k: u[k] for k in ("full_name", "email", "role")} for u in ready[:10]],
         "created": 0,
