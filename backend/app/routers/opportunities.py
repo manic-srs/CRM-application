@@ -21,7 +21,6 @@ from app.serializers import history_out, opportunity_detail, opportunity_out
 from app.services import (
     add_stage_task,
     confirm_skipped,
-    assignment_notice,
     auto_close_open_tasks,
     get_for_update,
     get_or_404,
@@ -30,6 +29,7 @@ from app.services import (
     now,
     record_stage_change,
     reassign_system_tasks,
+    handover_lines,
     resolve_user_id,
     schedule_close_date_task,
     stage_notice,
@@ -96,8 +96,15 @@ def update_opportunity(opportunity_id: int, data: schemas.OpportunityUpdate, db:
         setattr(opp, field, value)
     if opp.owner_id != old_owner:
         db.flush()
-        reassign_system_tasks(db, opp.owner_id, opportunity_id=opp.id)  # follow-ups and reminders go to the new owner
-        assignment_notice(db, owner_id=opp.owner_id, actor_id=actor, kind="Opportunity", name=opp.name, link=f"/opportunities/{opp.id}")
+        # the deal keeps its stage and history; its open follow-ups and reminders go to the new owner
+        tasks = reassign_system_tasks(db, opp.owner_id, opportunity_id=opp.id, previous_owner_id=old_owner)
+        if opp.owner_id != actor:
+            by = db.get(User, actor)
+            notify(db, opp.owner_id, "Opportunity assigned to you", "\n".join([
+                f'{by.full_name if by else "Someone"} gave you opportunity "{opp.name}".',
+                *handover_lines(db, stage=opp.stage, tasks=tasks, opportunity_id=opp.id)]),
+                link=f"/opportunities/{opp.id}", category="assignment")
+        log_activity(db, actor, "Opportunity reassigned", opp.name, f"{len(tasks)} open task(s) moved")
     if "expected_close_date" in changes and opp.stage in OPPORTUNITY_OPEN_STAGES:
         schedule_close_date_task(db, opp)  # move the close-date reminder to the new date
     db.commit()
@@ -424,9 +431,10 @@ def bulk_transfer(data: schemas.BulkOpportunityTransfer, db: Session = Depends(g
                 raise HTTPException(status_code=403, detail="You can only transfer your own opportunities")
             if opp.owner_id == target.id:
                 raise HTTPException(status_code=400, detail=f"Already owned by {target.full_name}")
+            previous_owner = opp.owner_id
             opp.owner_id = target.id
             db.flush()
-            reassign_system_tasks(db, target.id, opportunity_id=opp.id)
+            reassign_system_tasks(db, target.id, opportunity_id=opp.id, previous_owner_id=previous_owner)
             log_activity(db, me.id, "Opportunity reassigned", opp.name,
                          f"New owner: {target.full_name} (bulk)" + (f" • Note: {data.note}" if data.note else ""))
             moved.append({"id": opp.id, "name": opp.name})

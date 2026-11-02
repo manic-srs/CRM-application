@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app import mailer, schemas
 from app.constants import LEAD_OPEN_STAGES, OPPORTUNITY_OPEN_STAGES
 from app.database import get_db
-from app.models import Account, Contact, Lead, Opportunity, Task, User
+from app.models import Account, Contact, Lead, LeadTransfer, Opportunity, Task, User
 from app.models import ActivityLog, RolePermission
 from app.security import (PERMISSION_GROUPS, PERMISSIONS, ROLES, acting_user, default_permissions, authenticate, make_token, require, require_admin,
                           role_permissions, user_permissions)
@@ -226,6 +226,10 @@ def transfer_records(user_id: int, data: schemas.TransferRecords, db: Session = 
         raise HTTPException(status_code=400, detail="Pick a different user to receive the records")
     if not target.is_active:
         raise HTTPException(status_code=400, detail=f"{target.full_name} is deactivated")
+    # each open lead's Transfer History shows the move (the stage, history and tasks stay as they are)
+    for lead_id in db.scalars(select(Lead.id).where(Lead.owner_id == source.id, Lead.stage.in_(LEAD_OPEN_STAGES))).all():
+        db.add(LeadTransfer(lead_id=lead_id, from_user_id=source.id, to_user_id=target.id, transferred_by_id=me.id,
+                            note=f"{source.full_name}'s records moved to {target.full_name}"))
     moved = {}
     for label, model, extra in (
         ("leads", Lead, Lead.stage.in_(LEAD_OPEN_STAGES)),

@@ -330,5 +330,5 @@ def test_new_owner_gets_the_reminders(client):
     login_as(client, 3).put(f"/api/leads/{lead['id']}", json={"owner_id": 1})  # the Admin transfers it to Priya
     tasks = open_tasks(client.get(f"/api/leads/{lead['id']}").json())
     assert {t["owner_id"] for t in tasks if t["is_auto"]} == {1}  # system reminders follow the new owner
-    assert [t["owner_id"] for t in tasks if not t["is_auto"]] == [2]  # the user's task stays with its assignee
+    assert [t["owner_id"] for t in tasks if not t["is_auto"]] == [1]  # Ravi's own follow-up moves to Priya too
 
