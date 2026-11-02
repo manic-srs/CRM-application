@@ -48,7 +48,7 @@ export function OpportunityBulkDialog({ action, users, me, onClose, onDone }) {
             {owner ? (
               <>
                 <p className="field-hint">
-                  Only the owner changes; follow-ups and reminders go to the new owner. Closed deals, and deals you can't transfer, are
+                  Each deal continues at its stage; its open follow-ups and reminders go to the new owner. Closed deals, and deals you can't transfer, are
                   skipped.
                 </p>
                 <label className="field">
