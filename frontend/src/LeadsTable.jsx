@@ -95,8 +95,8 @@ function BulkDialog({ action, count, users, me, onClose, onDone }) {
             {transfer ? (
               <>
                 <p className="field-hint">
-                  Only the owner changes. Details, stage, tasks and emails stay with each lead, and every transfer is saved in the lead's
-                  history. Converted or closed leads, and leads you can't transfer, are skipped.
+                  Each lead continues at its stage with its history. Its open follow-ups, due dates and reminders go to the new owner, who
+                  is told what's next. Converted or closed leads, and leads you can't transfer, are skipped.
                 </p>
                 <label className="field">
                   <span>

@@ -246,11 +246,37 @@ def schedule_close_date_task(db: Session, opp) -> Task | None:
 
 
 def reassign_system_tasks(db: Session, owner_id: int, *, lead_id: int | None = None,
-                          opportunity_id: int | None = None) -> None:
-    """When a record gets a new owner, its open system tasks (and their reminders) go to the new owner."""
-    query = update(Task).where(Task.status == "Open", Task.is_auto.is_(True))
-    query = query.where(Task.lead_id == lead_id) if lead_id is not None else query.where(Task.opportunity_id == opportunity_id)
-    db.execute(query.values(owner_id=owner_id))
+                          opportunity_id: int | None = None, previous_owner_id: int | None = None) -> list[Task]:
+    """When a record gets a new owner, its open follow-ups go with it, so work continues from the same stage:
+    the system's tasks (demo, close-date and stage reminders) and every open task the previous owner had on the
+    record (their own follow-ups), with the same due dates and reminders. Tasks someone else was given stay theirs.
+    Returns the open tasks the new owner now has on the record."""
+    on_record = Task.lead_id == lead_id if lead_id is not None else Task.opportunity_id == opportunity_id
+    mine = Task.is_auto.is_(True)
+    if previous_owner_id is not None:
+        mine = mine | (Task.owner_id == previous_owner_id)
+    db.execute(update(Task).where(Task.status == "Open", on_record, mine).values(owner_id=owner_id))
+    return db.scalars(select(Task).where(Task.status == "Open", on_record, Task.owner_id == owner_id)
+                      .order_by(Task.due_date)).all()
+
+
+def handover_lines(db: Session, *, stage: str, tasks: list[Task], lead_id: int | None = None,
+                   opportunity_id: int | None = None) -> list[str]:
+    """What the new owner needs to carry on: the stage, the latest stage note and the open tasks with due dates."""
+    lines = [f"Stage: {stage} (continue from here; the full history is on the record)."]
+    last = db.scalars(select(StageHistory).where(
+        StageHistory.lead_id == lead_id if lead_id is not None else StageHistory.opportunity_id == opportunity_id,
+        StageHistory.note.is_not(None)).order_by(StageHistory.id.desc()).limit(1)).first()
+    if last is not None:
+        lines.append(f"Last note: {last.note[:200]}")
+    if tasks:
+        lines.append(f"Open tasks now yours ({len(tasks)}):")
+        lines += [f"- {t.title}, due {t.due_date:%d %b %Y %I:%M %p}" for t in tasks[:8]]
+        if len(tasks) > 8:
+            lines.append(f"- and {len(tasks) - 8} more")
+    else:
+        lines.append("No open tasks: add the next follow-up.")
+    return lines
 
 
 def task_line(label: str, task: Task | None) -> list[str]:

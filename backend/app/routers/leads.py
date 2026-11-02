@@ -33,6 +33,7 @@ from app.services import (
     now,
     open_system_task,
     reassign_system_tasks,
+    handover_lines,
     record_link,
     record_stage_change,
     resolve_user_id,
@@ -235,17 +236,29 @@ def transfer_lead(db: Session, lead: Lead, to_user_id: int, note: str | None, ac
     lead.owner_id = target.id
     db.flush()
     db.refresh(lead)
-    reassign_system_tasks(db, target.id, lead_id=lead.id)  # follow-ups and reminders go to the new owner
+    # the lead stays at its stage with its history; its open follow-ups (the previous owner's and the system's,
+    # with their due dates and reminders) go to the new owner
+    tasks = reassign_system_tasks(db, target.id, lead_id=lead.id, previous_owner_id=previous.id if previous else None)
     if quiet:
         log_activity(db, actor_id, "Lead reassigned", lead.name,
-                     f"New owner: {target.full_name} (bulk transfer)" + (f" • Note: {record.note}" if record.note else ""))
+                     f"New owner: {target.full_name} (bulk transfer) • {len(tasks)} open task(s) moved"
+                     + (f" • Note: {record.note}" if record.note else ""))
         return record
-    assignment_notice(db, owner_id=target.id, actor_id=actor_id, kind="Lead", name=lead.name, link=f"/leads/{lead.id}")
+    actor = db.get(User, actor_id)
+    if target.id != actor_id:
+        lines = [f'{actor.full_name if actor else "Someone"} transferred lead "{lead.name}" ({lead.company or "no company"}) '
+                 f'to you{f" from {previous.full_name}" if previous else ""}.',
+                 *handover_lines(db, stage=lead.stage, tasks=tasks, lead_id=lead.id)]
+        if record.note:
+            lines.append(f"Transfer note: {record.note}")
+        notify(db, target.id, "Lead assigned to you", "\n".join(lines), link=f"/leads/{lead.id}", category="assignment")
+    log_activity(db, actor_id, "Lead reassigned", lead.name,
+                 f"New owner: {target.full_name} • {len(tasks)} open task(s) moved"
+                 + (f" • Note: {record.note}" if record.note else ""))
     if previous and previous.id != actor_id:  # e.g. the Admin moved it: tell the previous owner too
         notify(db, previous.id, "Lead transferred", f'Lead "{lead.name}" was transferred to {target.full_name}.',
                link=f"/leads/{lead.id}", category="assignment")
     # every active Manager and Admin hears about it too (bell + email), except whoever was already told above
-    actor = db.get(User, actor_id)
     told = {actor_id, target.id, previous.id if previous else None}
     message = (f'Lead "{lead.name}" ({lead.company or "no company"}) was transferred from '
                f'{previous.full_name if previous else "no owner"} to {target.full_name}'

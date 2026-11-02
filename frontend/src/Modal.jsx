@@ -930,8 +930,8 @@ export default function Modal({ modal, close, data, run, notify, user }) {
           {type === "transfer" && (
             <>
               <p className="field-hint">
-                Only the owner changes. Details, stage, tasks and emails stay with the lead, and the transfer is saved with the date and
-                time. No approval is needed.
+                The lead continues at its stage with its history, notes and emails. Its open follow-ups, due dates and reminders go to the
+                new owner, who is told the stage and what's next. The transfer is saved with the date and time; no approval is needed.
               </p>
               {select(
                 "Transfer to",
