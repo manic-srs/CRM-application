@@ -136,7 +136,7 @@ CREATE TABLE leads (
   source       VARCHAR(20) NOT NULL DEFAULT 'Other'
                CHECK (source IN ('Website','Referral','Phone','Email','Event','Social Media','Other','Upload')),
   stage        VARCHAR(20) NOT NULL DEFAULT 'New'
-               CHECK (stage IN ('New','Nurturing','Revisit','Demo','Converted','Unqualified','Lost')),
+               CHECK (stage IN ('Unqualified','New','Nurturing','Revisit','Demo','Converted','Lost')),
   demo_date    TIMESTAMP,
   lost_reason  VARCHAR(20)
                CHECK (lost_reason IN ('Price','Competitor','No response','No budget','Not interested','Other')),

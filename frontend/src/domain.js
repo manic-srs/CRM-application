@@ -2,8 +2,10 @@
 // New. Revisit is optional ("not now": the lead asked to be contacted on a later date), so it can be passed over;
 // every other stage must be done or confirmed as done. Closed without converting, from any open stage:
 // Unqualified (not eligible, with a reason; can be reopened) or Lost.
-export const LEAD_STAGES = ["New", "Nurturing", "Revisit", "Demo", "Converted", "Unqualified", "Lost"];
-// Leads Kanban: the open stages, then Converted, Unqualified and Lost as separate closed (terminal) columns
+// Shown in this order (path and board): Unqualified first, as the requirement lists it. New leads start at New;
+// Unqualified is chosen for a lead that isn't eligible (a reason is required).
+export const LEAD_STAGES = ["Unqualified", "New", "Nurturing", "Revisit", "Demo", "Converted", "Lost"];
+// Leads Kanban: one column per status in that order; Unqualified, Converted and Lost are closed (terminal) columns
 export const LEAD_OPEN_STAGES = ["New", "Nurturing", "Revisit", "Demo"];
 export const LEAD_FLOW = LEAD_OPEN_STAGES; // then Convert
 export const LEAD_OPTIONAL_STAGES = ["Revisit"];

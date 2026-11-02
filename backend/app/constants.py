@@ -5,7 +5,8 @@
 #   Unqualified = not eligible / not a fit (a reason is required; the lead can be reopened later, Salesforce "recycle")
 #   Lost        = was a fit but didn't go ahead (price, competitor...)
 # Leads start at New (created by hand, uploaded or from the assistant).
-LEAD_STAGES = ["New", "Nurturing", "Revisit", "Demo", "Converted", "Unqualified", "Lost"]
+# Shown in this order (the lead path and board): Unqualified first, as the requirement lists it
+LEAD_STAGES = ["Unqualified", "New", "Nurturing", "Revisit", "Demo", "Converted", "Lost"]
 LEAD_OPEN_STAGES = ["New", "Nurturing", "Revisit", "Demo"]
 LEAD_CLOSED_STAGES = ["Converted", "Unqualified", "Lost"]
 LEAD_START = "New"

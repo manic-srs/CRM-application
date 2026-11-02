@@ -7,7 +7,9 @@ import { ActionMenu, Card, Icon, ObjectIcon, PathBar, PhoneReveal, StageBadge } 
 
 import { LEAD_FLOW, LEAD_OPTIONAL_STAGES, OPPORTUNITY_FLOW } from "./domain";
 
-const LEAD_PATH = [...LEAD_FLOW, "Converted"];
+// Unqualified comes first, as in the requirement: new leads start at New, and Unqualified is chosen (with a reason)
+// for a lead that isn't eligible
+const LEAD_PATH = ["Unqualified", ...LEAD_FLOW, "Converted"];
 const OPP_PATH = [...OPPORTUNITY_FLOW, "Won"];
 
 // A research link (LinkedIn, website) that opens in a new tab
@@ -176,17 +178,25 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
 
   const path = lead ? LEAD_PATH : OPP_PATH;
   // a closed lead shows how it ended in the last step (Lost / Unqualified) instead of Converted
-  const pathStages = ["Lost", "Unqualified"].includes(item.stage) ? [...path.slice(0, -1), item.stage] : path;
+  const pathStages = item.stage === "Lost" ? [...path.slice(0, -1), "Lost"] : path;
   // an optional stage (Revisit) the lead went past without entering is shown as skipped, not as done
   const reached = (stage) => item.activity.some((a) => a.text?.includes(`→ ${stage}`) || a.text?.startsWith(`Created at ${stage}`));
   const skippedStages = lead ? LEAD_OPTIONAL_STAGES.filter((stage) => !reached(stage)) : [];
   // a lead closed as Lost / Unqualified: only the stages it really reached are ticked
   const notReached = lead && ["Lost", "Unqualified"].includes(item.stage)
-    ? LEAD_PATH.filter((stage) => stage !== "Converted" && !reached(stage))
+    ? LEAD_PATH.filter((stage) => stage !== "Converted" && stage !== item.stage && !reached(stage))
     : [];
+  // the Unqualified step: red when the lead is Unqualified, otherwise never ticked (it's an outcome, not a step done)
+  const stepState = (stage) => {
+    if (!lead) return undefined;
+    if (stage === "Unqualified") return item.stage === "Unqualified" ? "lost" : "incomplete";
+    if (item.stage === "Unqualified") return reached(stage) && stage !== "Converted" ? "complete" : "incomplete";
+    return undefined;
+  };
   // "Mark as Complete" goes to the next required stage: an optional one (Revisit) is chosen on the path itself
   const nextStage = path.slice(path.indexOf(item.stage) + 1).find((stage) => !LEAD_OPTIONAL_STAGES.includes(stage));
   const selectStage = (stage) => {
+    if (stage === "Unqualified") return setModal({ type: "unqualified", record: item });
     if (stage === "Converted") return canConvert ? convert(item.id) : undefined;
     if (stage === "Won") return setModal({ type: "won", record: item });
     if (stage !== item.stage) setModal({ type: "stage", collection, record: item, stage });
@@ -294,10 +304,11 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
           stages={pathStages}
           skipped={skippedStages}
           notReached={notReached}
+          stepState={stepState}
           current={item.stage}
           closed={closed}
           onSelect={canEdit ? selectStage : () => {}}
-          lostLabel={item.stage === "Lost" ? (lead ? "Lost" : "Closed Lost") : item.stage === "Unqualified" ? "Unqualified" : null}
+          lostLabel={item.stage === "Lost" ? (lead ? "Lost" : "Closed Lost") : null}
         />
         {!canEdit && !closed && (
           <span className="read-only-note">
