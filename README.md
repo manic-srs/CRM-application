@@ -253,11 +253,20 @@ See [backend/README.md](backend/README.md) and [frontend/README.md](frontend/REA
 
 In **New Email → Message**, type directly into **Describe your message** at the bottom
 of the message box. Press **Enter** or click the arrow to generate a subject and message.
-There is no popup or four-option menu. A compact **Email stage** dropdown sits above
-the description input. It defaults to **Use current stage**, read from the CRM record,
-and lists all lead and opportunity stages. Choose another stage to guide this email's
-wording; this never changes the record itself. You can choose a stage, describe your
-message, or both. Unconfirmed milestones should be phrased conditionally or use placeholders.
+There is no popup or stage dropdown. Four optional suggestion buttons appear inline
+under the description field, based on the related record's saved stage. Click one to
+fill the description, edit it as needed, then press Enter or the arrow. Suggestions
+refresh when the composer opens, the description receives focus, you return to the
+browser window, and after generation. If suggestions cannot load, free-text drafting
+remains available. The backend reads the record's latest CRM stage again when generating
+and combines it with your description. Drafting
+does not change the saved stage. Unconfirmed milestones should be phrased conditionally
+or use placeholders.
+
+The LLM is given the lead lifecycle (New → Nurturing → Demo → Converted) and opportunity
+lifecycle (Opportunity → Proposal → Won), including Lost outcomes. Conversion is not
+a won deal. Nurturing focuses on helpful, low-pressure relationship building; later
+stages address demos, proposals, or customer onboarding only as supported by the facts.
 
 Example: "Write a friendly follow-up asking about their priorities. Keep it under 100 words."
 

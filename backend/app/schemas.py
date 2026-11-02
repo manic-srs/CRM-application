@@ -372,6 +372,15 @@ class LeadTransfer(BaseModel):
     note: str | None = Field(None, max_length=300)
 
 
+class BulkLeads(BaseModel):
+    lead_ids: list[int] = Field(..., min_length=1, max_length=500)
+
+
+class BulkTransfer(BulkLeads):
+    to_user_id: int
+    note: str | None = Field(None, max_length=300)
+
+
 class CancelDemo(BaseModel):
     """reschedule_to set: the demo moves to that date and the lead stays at Demo.
     Not set: the demo is cancelled and the lead goes back to Nurturing; that is a stage change, so the reason and a

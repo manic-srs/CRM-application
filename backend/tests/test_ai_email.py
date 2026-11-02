@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from app import ai_email, mailer
 from app.database import get_db
 from app.main import app
-from app.models import Email, Lead, RolePermission
+from app.models import Account, Email, Lead, Opportunity, RolePermission
 from conftest import login_as
 
 
@@ -238,11 +238,11 @@ def test_quota_errors_have_actionable_sanitized_messages(client, record, provide
 
 
 @pytest.mark.parametrize('stage,labels', [
-    ('New', ['Introduce our company', 'Ask about their requirements', 'Offer helpful information', 'Schedule an introductory call']),
-    ('Nurturing', ['Check in on their interest', 'Offer helpful information', 'Offer to answer questions', 'Arrange a follow-up conversation']),
-    ('Demo', ['Invite them to a demo', 'Confirm demo arrangements', 'Follow up on the demo', 'Ask for demo questions']),
-    ('Converted', ['Thank them for moving forward', 'Introduce the account team', 'Confirm the next steps', 'Arrange a follow-up conversation']),
-    ('Lost', ['Thank them for their time', 'Ask for feedback', 'Leave the door open', 'Send a polite closing email']),
+    ('New', ['Introduce yourself and your company', 'Understand their needs and priorities', 'Share information relevant to their needs', 'Offer a brief discovery conversation']),
+    ('Nurturing', ['Follow up on their current priorities', 'Share information relevant to their needs', 'Ask what questions they need answered', 'Offer a conversation when they’re ready']),
+    ('Demo', ['Offer a demo focused on their needs', 'Confirm the demo agenda and availability', 'Request feedback after a completed demo', 'Ask which topics the demo should cover']),
+    ('Converted', ['Thank them for continuing the discussion', 'Introduce the account team', 'Align on priorities and next steps', 'Offer a conversation when they’re ready']),
+    ('Lost', ['Thank them for their time', 'Invite optional feedback on their decision', 'Offer to reconnect if their needs change', 'Close the conversation respectfully']),
 ])
 def test_lead_menus_and_all_four_drafts_follow_database_stage(client, record, monkeypatch, stage, labels):
     monkeypatch.setenv('EMAIL_DRAFT_MODE', 'sample')
@@ -328,6 +328,72 @@ def test_free_text_drafts_receive_actual_stage_and_preserve_user_intent(client, 
     assert payload['stage_guidance'] == ai_email.STAGE_GUIDANCE[stage]
     assert payload['email_action'] == 'custom'
     assert response.json()['body'].count('Best regards,') == 1
+    db.close()
+
+
+@pytest.mark.parametrize('stage', ['New', 'Nurturing', 'Demo', 'Converted', 'Lost'])
+def test_inline_suggestion_can_be_edited_before_generation(client, record, provider, stage):
+    db = next(app.dependency_overrides[get_db]())
+    db.get(Lead, record['id']).stage = stage
+    db.commit()
+    menu = client.get('/api/emails/draft-options', params={
+        'record_field': 'lead_id', 'record_id': record['id'],
+    }).json()
+    assert menu['stage'] == stage
+    assert len(menu['options']) == 4
+    description = menu['options'][0]['prompt'] + ' Focus on reporting needs; keep it under 70 words.'
+    response = client.post('/api/emails/draft', json=request(record, action='custom', instructions=description))
+    assert response.status_code == 200
+    payload = json.loads(json.loads(provider[0][0].content)['input'])
+    assert payload['user_request'] == description
+    assert payload['email_stage'] == stage
+    assert client.get(f"/api/leads/{record['id']}").json()['stage'] == stage
+    db.close()
+
+
+def test_generation_rechecks_stage_after_suggestions_were_loaded(client, record, provider):
+    menu = client.get('/api/emails/draft-options', params={
+        'record_field': 'lead_id', 'record_id': record['id'],
+    }).json()
+    db = next(app.dependency_overrides[get_db]())
+    db.get(Lead, record['id']).stage = 'Nurturing'
+    db.commit()
+    response = client.post('/api/emails/draft', json=request(
+        record, action='custom', instructions=menu['options'][0]['prompt']))
+    assert response.status_code == 200
+    assert response.json()['record_stage'] == 'Nurturing'
+    payload = json.loads(json.loads(provider[0][0].content)['input'])
+    assert payload['stage_guidance'] == ai_email.STAGE_GUIDANCE['Nurturing']
+    db.close()
+
+
+@pytest.mark.parametrize('stage', ['Opportunity', 'Proposal', 'Won', 'Lost'])
+def test_opportunity_suggestions_and_drafts_follow_opportunity_stage(client, provider, stage):
+    db = next(app.dependency_overrides[get_db]())
+    account = Account(name='Example customer', owner_id=2)
+    db.add(account)
+    db.flush()
+    opportunity = Opportunity(name='Reporting project', account_id=account.id, owner_id=2, stage=stage)
+    db.add(opportunity)
+    db.commit()
+    menu = client.get('/api/emails/draft-options', params={
+        'record_field': 'opportunity_id', 'record_id': opportunity.id,
+    }).json()
+    assert menu['stage'] == stage
+    assert len(menu['options']) == 4
+    description = menu['options'][0]['prompt'] + ' Keep the tone friendly.'
+    response = client.post('/api/emails/draft', json={
+        'record_field': 'opportunity_id', 'record_id': opportunity.id,
+        'action': 'custom', 'instructions': description,
+    })
+    assert response.status_code == 200, response.text
+    payload = json.loads(json.loads(provider[0][0].content)['input'])
+    assert payload['crm_context']['record_type'] == 'Opportunity'
+    assert payload['crm_context']['current_stage'] == stage
+    assert payload['stage_guidance'] == ai_email.STAGE_GUIDANCE[stage]
+    assert payload['user_request'] == description
+    db.refresh(opportunity)
+    assert opportunity.stage == stage
     db.close()
 
 

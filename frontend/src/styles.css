@@ -2977,10 +2977,13 @@ a.pill:hover {
 .field .email-editor > textarea { display: block; width: 100%; min-height: 240px; padding: 12px; border: 0; border-radius: 7px 7px 0 0; resize: vertical; }
 .field .email-editor > textarea:focus { outline: 0; border: 0; box-shadow: none; }
 .email-assistant-inline { padding: 8px 12px 12px; }
-.email-assistant-stage-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; margin: 0 4px 9px; }
-.email-assistant-stage-row label { color: #42546a; font-size: 12px; font-weight: 500; }
-.field .email-assistant-stage-row select { width: auto; max-width: 100%; min-width: 170px; height: 30px; padding: 0 28px 0 9px; border: 1px solid #d0dbe9; border-radius: 6px; background-color: #fff; color: #35465e; font-size: 12px; }
-.email-assistant-stage-row > span { color: #788699; font-size: 11px; }
+.email-assistant-suggestions { margin: 10px 4px 0; }
+.email-assistant-suggestions-label { display: block; margin: 6px 4px; color: #69788c; font-size: 12px; line-height: 1.5; }
+.email-assistant-suggestion-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.email-assistant-suggestion-list button { padding: 6px 10px; border: 1px solid #cbd9ec; border-radius: 16px; background: #f7faff; color: #315b88; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.email-assistant-suggestion-list button:hover { background: #eaf2ff; }
+.email-assistant-suggestion-list button:focus-visible { outline: 2px solid #1976d2; outline-offset: 2px; }
+.email-assistant-suggestion-list button:disabled { opacity: .55; cursor: default; }
 .email-assistant-input-row { display: flex; align-items: center; gap: 10px; padding: 5px 6px 5px 15px; border: 1px solid transparent; border-radius: 25px; background: #f0f4fa; color: #42546a; }
 .email-assistant-input-row:focus-within { border-color: #8eb9ee; background: #edf4ff; }
 .email-assistant-wand { width: 21px; height: 21px; flex-shrink: 0; }
@@ -3721,6 +3724,7 @@ body:has(.ai-page) .popups {
   bottom: 96px;
 }
 
+
 /* top right: avatar, full name and role (opens the profile menu) */
 .header-user {
   display: inline-flex;
@@ -3947,4 +3951,81 @@ body:has(.ai-page) .popups {
 }
 .upload-done span {
   color: var(--text-weak);
+}
+
+
+/* ---------- phone numbers: masked, with an eye button to show / hide ---------- */
+.phone-reveal {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+.phone-reveal .phone-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.eye-button {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-weak);
+  cursor: pointer;
+}
+.eye-button:hover,
+.eye-button:focus-visible {
+  background: #eef4ff;
+  color: #0b5cab;
+}
+
+/* ---------- Leads list: checkboxes and the bulk action bar ---------- */
+.leads-table .select-col {
+  padding: 0 0 0 10px;
+  text-align: center;
+}
+.row-check {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: #0176d3;
+}
+.leads-table tbody tr.row-selected td {
+  background: #eef4ff;
+}
+.bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 0 16px 10px;
+  padding: 8px 12px;
+  border: 1px solid #b0c7e4;
+  border-radius: 6px;
+  background: #f3f8ff;
+  font-size: 13px;
+}
+.bulk-bar .sf-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.bulk-limit {
+  color: #ba0517;
+}
+.bulk-form {
+  display: grid;
+  gap: 12px;
+}
+.bulk-form .field-hint,
+.bulk-form .modal-subtitle {
+  margin: 0;
 }

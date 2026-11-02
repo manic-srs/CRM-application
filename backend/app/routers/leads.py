@@ -214,8 +214,10 @@ def update_lead(lead_id: int, data: schemas.LeadUpdate, db: Session = Depends(ge
 
 # ---------- transfer ----------
 
-def transfer_lead(db: Session, lead: Lead, to_user_id: int, note: str | None, actor_id: int) -> LeadTransfer:
-    """Gives the lead to another user and saves who, when, from and to. Only the owner changes."""
+def transfer_lead(db: Session, lead: Lead, to_user_id: int, note: str | None, actor_id: int,
+                  quiet: bool = False) -> LeadTransfer:
+    """Gives the lead to another user and saves who, when, from and to. Only the owner changes.
+    quiet=True (bulk transfer): no notifications here; the caller sends one summary instead."""
     target = db.get(User, resolve_user_id(db, to_user_id))
     if not target.is_active:
         raise HTTPException(status_code=400, detail=f"{target.full_name} is deactivated. Choose an active user.")
@@ -229,6 +231,10 @@ def transfer_lead(db: Session, lead: Lead, to_user_id: int, note: str | None, ac
     db.flush()
     db.refresh(lead)
     reassign_system_tasks(db, target.id, lead_id=lead.id)  # follow-ups and reminders go to the new owner
+    if quiet:
+        log_activity(db, actor_id, "Lead reassigned", lead.name,
+                     f"New owner: {target.full_name} (bulk transfer)" + (f" • Note: {record.note}" if record.note else ""))
+        return record
     assignment_notice(db, owner_id=target.id, actor_id=actor_id, kind="Lead", name=lead.name, link=f"/leads/{lead.id}")
     if previous and previous.id != actor_id:  # e.g. the Admin moved it: tell the previous owner too
         notify(db, previous.id, "Lead transferred", f'Lead "{lead.name}" was transferred to {target.full_name}.',
@@ -243,6 +249,98 @@ def transfer_lead(db: Session, lead: Lead, to_user_id: int, note: str | None, ac
         if user.id not in told:
             notify(db, user.id, "Lead transferred", message, link=f"/leads/{lead.id}", category="assignment")
     return record
+
+
+# ---------- bulk: several selected leads at once ----------
+
+def _bulk_leads(db: Session, ids: list[int]) -> list[tuple[int, Lead | None]]:
+    seen, out = set(), []
+    for lead_id in ids:
+        if lead_id not in seen:
+            seen.add(lead_id)
+            out.append((lead_id, db.get(Lead, lead_id)))
+    return out
+
+
+def _skip(lead_id: int, lead: Lead | None, exc: HTTPException) -> dict:
+    """A lead that was left out, and why. Leads the user can't see are not named (and look like they don't exist)."""
+    hidden = lead is None or exc.status_code == 404
+    return {"id": lead_id, "name": f"Lead {lead_id}" if hidden else lead.name,
+            "reason": "Not found, or you don't have access to it" if hidden else str(exc.detail)}
+
+
+def _summary_notice(db: Session, title: str, lines: list[str], told: set[int], skip: set[int]) -> None:
+    for user_id in told - skip:
+        notify(db, user_id, title, "\n".join(lines)[:500], link="/leads", category="assignment")
+
+
+@router.post("/bulk-transfer")
+def bulk_transfer(data: schemas.BulkTransfer, db: Session = Depends(get_db)):
+    """Transfer several leads to one user. Each lead follows the same rules as Transfer (Admin and Managers:
+    any lead they can see; others: their own leads). Leads that can't be moved are skipped with the reason.
+    One summary notification goes to the new owner, the previous owners, and the Managers and Admins."""
+    me = acting_user()
+    target = db.get(User, data.to_user_id)
+    if target is None or not target.is_active:
+        raise HTTPException(status_code=400, detail="Choose an active user to transfer the leads to")
+    moved, skipped, previous_owners = [], [], {}
+    for lead_id, lead in _bulk_leads(db, data.lead_ids):
+        try:
+            if lead is None:
+                raise HTTPException(status_code=404, detail="Not found")
+            require_view(lead.owner_id, "lead")
+            ensure_open(lead)
+            require_transfer(lead.owner_id)
+            previous_owners.setdefault(lead.owner_id, []).append(lead.name)
+            transfer_lead(db, lead, target.id, data.note, me.id, quiet=True)
+            moved.append({"id": lead.id, "name": lead.name})
+        except HTTPException as exc:
+            skipped.append(_skip(lead_id, lead, exc))
+    if moved:
+        names = ", ".join(m["name"] for m in moved[:10]) + (f" and {len(moved) - 10} more" if len(moved) > 10 else "")
+        note = [f"Note: {data.note.strip()}"] if data.note and data.note.strip() else []
+        _summary_notice(db, "Leads assigned to you",
+                        [f"{me.full_name} transferred {len(moved)} lead{'s' if len(moved) != 1 else ''} to you: {names}.", *note],
+                        {target.id}, {me.id})
+        for owner_id, lead_names in previous_owners.items():
+            _summary_notice(db, "Leads transferred",
+                            [f"{len(lead_names)} of your leads were transferred to {target.full_name} by {me.full_name}: "
+                             f"{', '.join(lead_names[:10])}.", *note], {owner_id}, {me.id, target.id})
+        managers = set(db.scalars(select(User.id).where(User.role.in_(("Manager", "Admin")), User.is_active.is_(True))).all())
+        _summary_notice(db, "Leads transferred",
+                        [f"{me.full_name} transferred {len(moved)} lead{'s' if len(moved) != 1 else ''} to {target.full_name}: {names}.",
+                         *note], managers, {me.id, target.id, *previous_owners})
+    db.commit()
+    return {"transferred": len(moved), "to": target.full_name, "moved": moved, "skipped": skipped}
+
+
+@router.post("/bulk-delete")
+def bulk_delete(data: schemas.BulkLeads, db: Session = Depends(get_db)):
+    """Delete several leads. Each lead follows the same rules as Delete (its owner, a Manager or the Admin;
+    converted leads can't be deleted). Leads that can't be deleted are skipped with the reason.
+    One summary notification goes to the Managers and Admins and to owners whose leads someone else deleted."""
+    me = acting_user()
+    deleted, skipped, by_owner = [], [], {}
+    for lead_id, lead in _bulk_leads(db, data.lead_ids):
+        try:
+            if lead is None:
+                raise HTTPException(status_code=404, detail="Not found")
+            require_edit(lead.owner_id, "lead")
+            name, _, owner_id = delete_one(db, lead, me.id)
+            deleted.append({"id": lead_id, "name": name})
+            by_owner.setdefault(owner_id, []).append(name)
+        except HTTPException as exc:
+            skipped.append(_skip(lead_id, lead, exc))
+    if deleted:
+        names = ", ".join(d["name"] for d in deleted[:10]) + (f" and {len(deleted) - 10} more" if len(deleted) > 10 else "")
+        managers = set(db.scalars(select(User.id).where(User.role.in_(("Manager", "Admin")), User.is_active.is_(True))).all())
+        _summary_notice(db, "Leads deleted", [f"{me.full_name} deleted {len(deleted)} lead{'s' if len(deleted) != 1 else ''}: {names}."],
+                        managers, {me.id})
+        for owner_id, lead_names in by_owner.items():
+            _summary_notice(db, "Leads deleted", [f"{me.full_name} deleted {len(lead_names)} of your leads: {', '.join(lead_names[:10])}."],
+                            {owner_id}, {me.id, *managers})
+    db.commit()
+    return {"deleted": len(deleted), "removed": deleted, "skipped": skipped}
 
 
 @router.post("/{lead_id}/transfer", response_model=schemas.LeadDetail)
@@ -490,6 +588,19 @@ def delete_lead(lead_id: int, db: Session = Depends(get_db)):
     and it is recorded in the Activity Log (name, company, email, owner, stage)."""
     lead = get_or_404(db, Lead, lead_id, "Lead")
     me = require_edit(lead.owner_id, "lead")
+    name, summary, owner_id = delete_one(db, lead, me.id)
+    # the Admin and Managers, and the owner when someone else deleted it
+    told = db.scalars(select(User).where(or_(User.role.in_(("Admin", "Manager")), User.id == owner_id),
+                                          User.is_active.is_(True), User.id != me.id)).all()
+    for user in told:
+        notify(db, user.id, "Lead deleted", f'Lead "{name}" was deleted by {me.full_name}.\n{summary}', link="/leads")
+    db.commit()
+    return {"message": f'Lead "{name}" was deleted.'}
+
+
+def delete_one(db: Session, lead: Lead, actor_id: int) -> tuple[str, str, int]:
+    """Deletes a lead that is not converted, with its tasks, notes, emails and history, and logs it.
+    Permission is checked by the caller. Returns (name, summary, owner id) for the notifications."""
     if lead.stage == "Converted" or lead.opportunity is not None:
         raise HTTPException(status_code=400, detail="A converted lead can't be deleted: it has an opportunity.")
     owner = lead.owner.full_name if lead.owner else "Unknown"
@@ -502,17 +613,12 @@ def delete_lead(lead_id: int, db: Session = Depends(get_db)):
     task_ids = select(Task.id).where(Task.lead_id == lead.id)
     db.execute(delete(Notification).where(Notification.task_id.in_(task_ids)))
     db.execute(delete(Notification).where(Notification.link == record_link(lead_id=lead.id)))
-    for model in (Task, Note, StageHistory):
+    for model in (Task, Note, StageHistory, LeadTransfer):  # transfer history too, or a transferred lead can't be deleted
         db.execute(delete(model).where(model.lead_id == lead.id))
+    db.expire(lead)
     db.delete(lead)
-    log_activity(db, me.id, "Lead deleted", name, summary)
-    # the Admin and Managers, and the owner when someone else deleted it
-    told = db.scalars(select(User).where(or_(User.role.in_(("Admin", "Manager")), User.id == owner_id),
-                                          User.is_active.is_(True), User.id != me.id)).all()
-    for user in told:
-        notify(db, user.id, "Lead deleted", f'Lead "{name}" was deleted by {me.full_name}.\n{summary}', link="/leads")
-    db.commit()
-    return {"message": f'Lead "{name}" was deleted.'}
+    log_activity(db, actor_id, "Lead deleted", name, summary)
+    return name, summary, owner_id
 
 
 @router.get("/{lead_id}/history", response_model=list[schemas.StageHistoryOut])
