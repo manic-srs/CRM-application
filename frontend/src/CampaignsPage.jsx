@@ -291,7 +291,8 @@ export function NewCampaign({ user, users = [], leadIds = null, onClose, onCreat
             <b>{fill(subject, sample, user)}</b>
             <pre>{fill(body, sample, user)}</pre>
             <pre className="email-footer">
-              {"--\n"}You are receiving this email from your company.{"\n"}Unsubscribe or subscribe again: <u>link added automatically</u>
+              {"--\n"}You are receiving this email from your company.{"\n"}Unsubscribe: <u>link added automatically</u>{"\n"}Subscribe again:{" "}
+              <u>link added automatically</u>
             </pre>
           </div>
         </fieldset>
@@ -535,7 +536,7 @@ function CampaignDetail({ id, user, notify }) {
           <div className="pad">
             <b>{c.subject}</b>
             <pre>{c.body}</pre>
-            <p className="field-hint">An unsubscribe link is added at the end of every email.</p>
+            <p className="field-hint">Unsubscribe and Subscribe links are added at the end of every email.</p>
           </div>
         </section>
       </div>

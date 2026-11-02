@@ -124,10 +124,12 @@ def lead_from_token(token: str) -> int | None:
     return int(lead_id) if hmac.compare_digest(unsubscribe_token(int(lead_id)), token) else None
 
 
-def unsubscribe_link(lead_id: int) -> str:
-    """The page that unsubscribes (and subscribes again). APP_URL must be reachable by the people you email."""
+def unsubscribe_link(lead_id: int, action: str = "unsubscribe") -> str:
+    """The page that unsubscribes (action=unsubscribe) or subscribes again (action=subscribe); it asks before changing
+    anything. PUBLIC_URL (else APP_URL) must be an address the people you email can open."""
     base = os.getenv("PUBLIC_URL", "").rstrip("/") or mailer.settings()["app_url"]
-    return f"{base}/api/public/unsubscribe?t={unsubscribe_token(lead_id)}"
+    extra = "" if action == "unsubscribe" else f"&action={action}"
+    return f"{base}/api/public/unsubscribe?t={unsubscribe_token(lead_id)}{extra}"
 
 
 # ---------- the email ----------
@@ -144,8 +146,10 @@ def fill(text: str, lead: Lead, sender: User) -> str:
 
 
 def footer(lead_id: int) -> str:
+    """Every campaign email ends with both links: stop these emails, or (after stopping) start them again."""
     return (f"\n\n--\nYou are receiving this email from {mailer.company_name()}.\n"
-            f"Unsubscribe or subscribe again: {unsubscribe_link(lead_id)}")
+            f"Unsubscribe: {unsubscribe_link(lead_id)}\n"
+            f"Subscribe again: {unsubscribe_link(lead_id, 'subscribe')}")
 
 
 @dataclass

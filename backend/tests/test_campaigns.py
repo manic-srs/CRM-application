@@ -213,3 +213,19 @@ def test_same_email_twice_in_one_campaign_goes_once(client, sent):
     db.close()
     preview = client.post("/api/campaigns/preview", json={"lead_ids": [a["id"], b["id"]]}).json()
     assert (preview["eligible"], preview["reasons"]["other"]) == (1, 1)
+
+
+def test_every_email_has_both_unsubscribe_and_subscribe_links(client, sent):
+    one = lead(client)
+    make(client, [one["id"]])
+    run_round()
+    body = sent.items[0]["body"]
+    token = campaigns.unsubscribe_token(one["id"])
+    assert f"Unsubscribe: " in body and f"unsubscribe?t={token}\n" in body
+    assert f"Subscribe again: " in body and f"unsubscribe?t={token}&action=subscribe" in body
+    # the Subscribe link asks first, and subscribes an unsubscribed lead again
+    unsubscribe(client, one["id"])
+    page = client.get("/api/public/unsubscribe", params={"t": token, "action": "subscribe"})
+    assert "Subscribe again" in page.text and client.get(f"/api/leads/{one['id']}").json()["unsubscribed_at"]
+    client.post("/api/public/unsubscribe", data={"t": token, "action": "subscribe"})
+    assert client.get(f"/api/leads/{one['id']}").json()["unsubscribed_at"] is None

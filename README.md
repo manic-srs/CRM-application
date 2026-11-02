@@ -47,6 +47,12 @@ email, tasks and reminders, notifications, lead conversion, closing a deal, and 
 - While typing the company on a lead, existing leads and accounts for that company are shown (only owner and stage
   for records the user can't open), so two people don't work the same company.
 
+**Email campaigns**
+- One email to many leads (Leads > select > Actions > Email, or Email Campaigns > New Campaign), sent now or at a
+  set time, paced under Outlook's limits (20 a minute, 1,800 a day by default) with retries and a progress page.
+- Every email ends with Unsubscribe and Subscribe links; unsubscribed leads and invalid emails (bad address, no mail
+  server, or rejected by the server) are listed under Leads and left out of every later campaign.
+
 **Bulk upload and download**
 - Upload up to 100,000 leads at a time from Excel (.xlsx) or CSV. The file is checked
   first (rows ready, duplicates of open leads, invalid rows), then uploaded. No emails are sent to uploaded leads.
@@ -89,6 +95,8 @@ email, tasks and reminders, notifications, lead conversion, closing a deal, and 
 | Testing | Pytest (backend), Node test runner (frontend) |
 
 ## Getting started
+
+Deploying on a server: see **[DEPLOY.md](DEPLOY.md)** (settings, Outlook email, HTTPS, updates and backups).
 
 ### Prerequisites
 

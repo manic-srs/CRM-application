@@ -323,13 +323,19 @@ def _lead(db: Session, token: str) -> Lead | None:
 
 
 @public.get("/unsubscribe", response_class=HTMLResponse, include_in_schema=False)
-def unsubscribe_page(t: str = Query(""), db: Session = Depends(get_db)):
-    """Asks before changing anything: mail scanners open links, and must not unsubscribe people by themselves."""
+def unsubscribe_page(t: str = Query(""), action: str = Query("unsubscribe"), db: Session = Depends(get_db)):
+    """Asks before changing anything: mail scanners open links, and must not unsubscribe people by themselves.
+    action=subscribe (the "Subscribe again" link) offers to subscribe."""
     lead = _lead(db, t)
     company = engine.mailer.company_name()
     if lead is None:
         return page("Link not valid", "This unsubscribe link isn't valid. Please use the link from the latest email.",
                     t, None)
+    if action == "subscribe":
+        if lead.unsubscribed_at:
+            return page("Subscribe again", f"Get campaign emails from {company} at {lead.email} again?", t, "subscribe")
+        return page("You're subscribed", f"{lead.email} gets emails from {company}. Want to stop them?", t,
+                    "unsubscribe")
     if lead.unsubscribed_at:
         return page("You're unsubscribed", f"{lead.email} won't get campaign emails from {company}. "
                                            "Changed your mind?", t, "subscribe")

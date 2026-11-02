@@ -18,7 +18,7 @@ services:
       TZ: America/New_York     # same clock for PostgreSQL and the API, so "today" matches
       PGTZ: America/New_York
     ports:
-      - "5433:5432"
+      - "${DB_PORT:-5433}:5432"      # on a server: DB_PORT=127.0.0.1:5433 (not reachable from outside)
     volumes:
       - crm_pg_data:/var/lib/postgresql/data
       # run in this order on the first start only (create-user.sql is not needed: POSTGRES_USER/DB above create them).
@@ -46,7 +46,7 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_TLS: ${SMTP_TLS:-false}
       MAIL_FROM: ${MAIL_FROM:-crm@salestrack.local}
-      COMPANY_NAME: ${COMPANY_NAME:-}   # shown to customers in the lead welcome email
+      COMPANY_NAME: ${COMPANY_NAME:-}   # used in email wording and at the bottom of campaign emails
       # Outlook / Microsoft 365 with OAuth instead of an SMTP password (see .env.example)
       MAIL_PROVIDER: ${MAIL_PROVIDER:-smtp}
       MS_TENANT_ID: ${MS_TENANT_ID:-}
@@ -76,7 +76,7 @@ services:
     secrets:
       - ai_settings
     ports:
-      - "8001:8000"
+      - "${API_PORT:-8001}:8000"     # API docs; on a server: API_PORT=127.0.0.1:8001 (the app reaches it through the frontend)
     depends_on:
       db:
         condition: service_healthy
@@ -86,12 +86,12 @@ services:
   mailpit:
     image: axllent/mailpit:latest
     ports:
-      - "8026:8025"   # web inbox
+      - "${MAILPIT_PORT:-8026}:8025"   # test inbox; on a server: MAILPIT_PORT=127.0.0.1:8026
 
   frontend:
     build: ./frontend
     ports:
-      - "5173:80"
+      - "${APP_PORT:-5173}:80"       # the app; on a server e.g. APP_PORT=80 (or behind a reverse proxy with HTTPS)
     depends_on:
       - api
 
