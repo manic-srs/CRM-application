@@ -86,28 +86,24 @@ function Dialog({ title, onClose, busy, children, footer, wide }) {
 const n = (x) => Number(x || 0).toLocaleString();
 
 // The rows that weren't imported (duplicates, invalid) and the ones imported with a note (a wrong value left blank,
-// an unknown owner), with the name / company / email from the file so each one is easy to find and fix.
-const ISSUE_TYPES = {
-  Duplicate: ["Skipped: duplicate", "pill-warn"],
-  Invalid: ["Skipped: invalid", "pill-bad"],
-  Changed: ["Imported with a note", "pill-upcoming"],
-};
-// the Email and Result columns already say which email and that it's a duplicate
+// an unknown owner): a count for each, and a click shows those rows with the name / company / email from the file.
+const ISSUE_GROUPS = [
+  ["Duplicate", "Duplicates skipped", "warn"],
+  ["Invalid", "Invalid rows skipped", "bad"],
+  ["Changed", "Imported with a note", "note"],
+];
+// the Email column already says which email, and the group says it's a duplicate
 const shortReason = (reason) =>
   reason.replace(/ \(duplicate\)$/, "").replace(/^Email \S+ is already in the CRM/, "Email is already in the CRM");
 
-function IssueList({ result, file, company = true, open = false }) {
+function IssueList({ result, file, company = true }) {
   const issues = [...(result.errors || []), ...(result.warnings || [])].sort((a, b) => a.row - b.row);
-  const [tab, setTab] = useState("all");
+  const [shown, setShown] = useState("");
   if (!issues.length) return null;
-  const count = (type) => issues.filter((i) => i.type === type).length;
-  const tabs = [
-    ["all", "All", issues.length],
-    ["Duplicate", "Duplicates", count("Duplicate")],
-    ["Invalid", "Invalid", count("Invalid")],
-    ["Changed", "Imported with a note", count("Changed")],
-  ].filter(([key, , total]) => key === "all" || total > 0);
-  const shown = tab === "all" ? issues : issues.filter((i) => i.type === tab);
+  const groups = ISSUE_GROUPS.map(([type, label, tone]) => ({ type, label, tone, rows: issues.filter((i) => i.type === type) })).filter(
+    (g) => g.rows.length,
+  );
+  const open = groups.find((g) => g.type === shown);
   const skipped = (result.duplicates || 0) + (result.invalid || 0);
   const quote = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
   const download = () =>
@@ -116,55 +112,63 @@ function IssueList({ result, file, company = true, open = false }) {
       [
         ["Row", "Result", "Name", ...(company ? ["Company"] : []), "Email", "Reason"].join(","),
         ...issues.map((i) =>
-          [i.row, ISSUE_TYPES[i.type]?.[0] || i.type, i.name, ...(company ? [i.company] : []), i.email, i.reason].map(quote).join(","),
+          [i.row, ISSUE_GROUPS.find(([t]) => t === i.type)?.[1] || i.type, i.name, ...(company ? [i.company] : []), i.email, shortReason(i.reason)]
+            .map(quote)
+            .join(","),
         ),
       ].join("\n"),
     );
   return (
     <section className="issue-list" aria-label="Rows to review">
-      <div className="issue-head">
-        <h3>
-          Rows to review <span className="muted">({n(issues.length)})</span>
-        </h3>
-        <div className="issue-tabs" role="tablist">
-          {tabs.map(([key, label, total]) => (
-            <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? "on" : ""} onClick={() => setTab(key)}>
-              {label} <b>{n(total)}</b>
-            </button>
-          ))}
-        </div>
-        <button type="button" className="sf-button small" onClick={download}>
+      <div className="issue-cards">
+        {groups.map((g) => (
+          <button
+            key={g.type}
+            type="button"
+            className={`issue-card ${g.tone} ${shown === g.type ? "on" : ""}`}
+            aria-expanded={shown === g.type}
+            onClick={() => setShown(shown === g.type ? "" : g.type)}
+          >
+            <b>{n(g.type === "Duplicate" ? result.duplicates : g.type === "Invalid" ? result.invalid : g.rows.length)}</b>
+            <span>{g.label}</span>
+            <small>{shown === g.type ? "Hide" : "View"}</small>
+          </button>
+        ))}
+        <button type="button" className="link issue-download" onClick={download}>
           Download list
         </button>
       </div>
-      <div className={`table-scroll issue-scroll ${open ? "tall" : ""}`}>
-        <table className="sf-table issue-table">
-          <thead>
-            <tr>
-              <th>Row</th>
-              <th>Result</th>
-              <th>Name</th>
-              {company && <th>Company</th>}
-              <th>Email</th>
-              <th>Reason</th>
-            </tr>
-          </thead>
-          <tbody>
-            {shown.map((i, index) => (
-              <tr key={`${i.row}-${index}`}>
-                <td className="nowrap">{i.row}</td>
-                <td className="issue-result">
-                  <span className={`pill ${ISSUE_TYPES[i.type]?.[1] || ""}`}>{ISSUE_TYPES[i.type]?.[0] || i.type}</span>
-                </td>
-                <td title={i.name}>{i.name || <span className="muted">—</span>}</td>
-                {company && <td title={i.company}>{i.company || <span className="muted">—</span>}</td>}
-                <td className="issue-email" title={i.email}>{i.email || <span className="muted">—</span>}</td>
-                <td className="issue-reason">{shortReason(i.reason)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {open && (
+        <div className="issue-preview">
+          <h4>
+            {open.label} <span className="muted">({n(open.rows.length)})</span>
+          </h4>
+          <div className="table-scroll issue-scroll">
+            <table className="sf-table issue-table">
+              <thead>
+                <tr>
+                  <th>Row</th>
+                  <th>Name</th>
+                  {company && <th>Company</th>}
+                  <th>Email</th>
+                  <th>Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {open.rows.map((i, index) => (
+                  <tr key={`${i.row}-${index}`}>
+                    <td className="nowrap">{i.row}</td>
+                    <td title={i.name}>{i.name || <span className="muted">—</span>}</td>
+                    {company && <td title={i.company}>{i.company || <span className="muted">—</span>}</td>}
+                    <td title={i.email}>{i.email || <span className="muted">—</span>}</td>
+                    <td className="issue-reason">{shortReason(i.reason)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
       {skipped > (result.errors || []).length && (
         <p className="field-hint">The first {n((result.errors || []).length)} skipped rows are listed.</p>
       )}
@@ -254,7 +258,7 @@ export function UploadLeads({ object = "leads", user, data, onClose, onDone, not
         }
       >
         <UploadDone result={done} word={done.created === 1 ? info.one : info.label.toLowerCase()} />
-        <IssueList result={done} file={done.file} company open />
+        <IssueList result={done} file={done.file} />
       </Dialog>
     );
 
@@ -376,18 +380,13 @@ export function UploadLeads({ object = "leads", user, data, onClose, onDone, not
             <span className="ok">
               <b>{n(check.ready)}</b> ready to upload
             </span>
-            <span className="warn">
-              <b>{n(check.duplicates)}</b> duplicates
-            </span>
-            <span className="bad">
-              <b>{n(check.invalid)}</b> invalid
-            </span>
-            {check.with_blanks > 0 && (
-              <span className="warn">
-                <b>{n(check.with_blanks)}</b> with blank fields
+            {check.duplicates + check.invalid > 0 && (
+              <span className="bad">
+                <b>{n(check.duplicates + check.invalid)}</b> skipped
               </span>
             )}
           </div>
+          <IssueList result={check} file={check.file} />
           {check.owners?.length > 0 && (
             <div className="owner-split" aria-label="Owners">
               <span>Assigned to</span>
@@ -424,7 +423,6 @@ export function UploadLeads({ object = "leads", user, data, onClose, onDone, not
               </table>
             </div>
           )}
-          <IssueList result={check} file={check.file} />
           {check.ready === 0 && <p className="form-error">No new records to import.</p>}
         </div>
       )}
@@ -615,7 +613,7 @@ export function UploadUsers({ onClose, onDone, notify }) {
         }
       >
         <UploadDone result={done} word={done.created === 1 ? "user" : "users"} />
-        <IssueList result={done} file={done.file} company={false} open />
+        <IssueList result={done} file={done.file} company={false} />
       </Dialog>
     );
 
@@ -671,13 +669,13 @@ export function UploadUsers({ onClose, onDone, notify }) {
             <span className="ok">
               <b>{n(check.ready)}</b> ready to add
             </span>
-            <span className="warn">
-              <b>{n(check.duplicates)}</b> already have an account
-            </span>
-            <span className="bad">
-              <b>{n(check.invalid)}</b> invalid
-            </span>
+            {check.duplicates + check.invalid > 0 && (
+              <span className="bad">
+                <b>{n(check.duplicates + check.invalid)}</b> skipped
+              </span>
+            )}
           </div>
+          <IssueList result={check} file={check.file} company={false} />
           {check.ready > 0 && (
             <p className="field-hint">
               {Object.entries(check.roles).filter(([, count]) => count).map(([role, count]) => `${count} ${role}${count === 1 ? "" : "s"}`).join(" • ")}
@@ -706,7 +704,6 @@ export function UploadUsers({ onClose, onDone, notify }) {
               </table>
             </div>
           )}
-          <IssueList result={check} file={check.file} company={false} />
           {check.ready === 0 && <p className="form-error">No new users to add.</p>}
         </div>
       )}

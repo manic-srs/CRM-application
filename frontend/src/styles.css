@@ -3855,54 +3855,88 @@ body:has(.ai-page) .popups {
   color: #0b5cab;
 }
 
-/* Upload: rows to review (skipped duplicates / invalid rows, and rows imported with a note) */
+/* Upload: rows to review: a count for duplicates / invalid / imported with a note; a click shows those rows */
 .issue-list {
-  margin-top: 14px;
+  margin: 12px 0;
+}
+.issue-cards {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 8px;
+}
+.issue-card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 8px;
+  align-items: baseline;
+  min-width: 170px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.issue-card b {
+  grid-row: span 2;
+  font-size: 20px;
+  line-height: 1.1;
+}
+.issue-card span {
+  font-size: 13px;
+}
+.issue-card small {
+  color: #0176d3;
+  font-size: 12px;
+}
+.issue-card:hover,
+.issue-card.on {
+  background: #f3f8ff;
+}
+.issue-card.on {
+  border-color: #0176d3;
+}
+.issue-card.warn {
+  border-left-color: #dd7a01;
+}
+.issue-card.bad {
+  border-left-color: #ba0517;
+}
+.issue-card.note {
+  border-left-color: #2e844a;
+}
+.issue-card.warn b {
+  color: #8c4b02;
+}
+.issue-card.bad b {
+  color: #8e030f;
+}
+.issue-card.note b {
+  color: #194e31;
+}
+.issue-download {
+  align-self: center;
+  margin-left: auto;
+}
+.issue-preview {
+  margin-top: 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
 }
-.issue-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-alt, #f8f9fb);
-}
-.issue-head h3 {
+.issue-preview h4 {
   margin: 0;
-  font-size: 14px;
-}
-.issue-head .sf-button {
-  margin-left: auto;
-}
-.issue-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.issue-tabs button {
-  border: 1px solid var(--border);
-  background: #fff;
-  border-radius: 999px;
-  padding: 3px 10px;
-  font-size: 12px;
-  cursor: pointer;
-  color: inherit;
-}
-.issue-tabs button.on {
-  border-color: var(--brand, #0176d3);
-  background: var(--brand-light, #e5f1fb);
-  color: #014486;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
 }
 .issue-scroll {
-  max-height: 240px;
+  max-height: 260px;
   overflow: auto;
-}
-.issue-scroll.tall {
-  max-height: 360px;
 }
 .issue-table {
   font-size: 13px;
@@ -3910,13 +3944,10 @@ body:has(.ai-page) .popups {
   table-layout: fixed;
 }
 .issue-table th:nth-child(1) {
-  width: 48px;
-}
-.issue-table th:nth-child(2) {
-  width: 150px;
+  width: 52px;
 }
 .issue-table th:last-child {
-  width: 30%;
+  width: 34%;
 }
 .issue-table th {
   position: sticky;
