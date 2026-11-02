@@ -166,13 +166,14 @@ export function Ring({ segments, size = 150, stroke = 9, children, label }) {
 }
 
 // Salesforce-style path: chevrons, completed steps get a check
-export function PathBar({ stages, current, closed, onSelect, lostLabel, skipped = [], notReached = [] }) {
+export function PathBar({ stages, current, closed, onSelect, lostLabel, skipped = [], notReached = [], stepState = () => undefined }) {
   const index = stages.indexOf(current);
   return (
     <ol className="path">
       {stages.map((stage, i) => {
         const state =
-          lostLabel && i === stages.length - 1
+          stepState(stage) ??
+          (lostLabel && i === stages.length - 1
             ? "lost"
             : notReached.includes(stage)
               ? "incomplete"
@@ -182,7 +183,7 @@ export function PathBar({ stages, current, closed, onSelect, lostLabel, skipped 
               ? "complete"
               : i === index
                 ? "current"
-                : "incomplete";
+                : "incomplete");
         return (
           <li key={stage} className={`path-step ${state}`}>
             <button

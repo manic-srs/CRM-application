@@ -183,7 +183,8 @@ def test_stage_lists_agree_everywhere():
     assert list(get_args(schemas.UnqualifiedReason)) == constants.UNQUALIFIED_REASONS
     assert list(get_args(schemas.RevisitReason)) == constants.REVISIT_REASONS
     assert set(constants.LEAD_OPTIONAL_STAGES) <= set(constants.LEAD_FLOW)
-    assert constants.LEAD_STAGES == constants.LEAD_OPEN_STAGES + constants.LEAD_CLOSED_STAGES
+    assert set(constants.LEAD_STAGES) == set(constants.LEAD_OPEN_STAGES + constants.LEAD_CLOSED_STAGES)
+    assert constants.LEAD_STAGES[:5] == ["Unqualified", "New", "Nurturing", "Revisit", "Demo"]  # the order shown
     assert set(constants.STAGE_PROBABILITY) == set(constants.OPPORTUNITY_STAGES)
     sql = (Path(__file__).resolve().parents[2] / "database" / "schema.sql").read_text()
 

@@ -7,7 +7,7 @@ from conftest import login_as
 TASK = {"title": "Synthetic follow-up task", "due_date": "2030-01-15T10:00:00"}  # every stage change needs one
 
 EMAILS = itertools.count(1)
-BOARD = ["New", "Nurturing", "Revisit", "Demo", "Converted", "Unqualified", "Lost"]
+BOARD = ["Unqualified", "New", "Nurturing", "Revisit", "Demo", "Converted", "Lost"]
 
 
 def lead(client, last_name, **extra):

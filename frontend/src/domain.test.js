@@ -247,19 +247,19 @@ test("every stage change popup has a required note; creating and editing records
 });
 test("the Leads board has seven columns in order; Converted, Unqualified and Lost are closed; the list view decides which can fill", () => {
   const all = leadBoardColumns("all", null);
-  assert.deepEqual(all.map((c) => c.stage), ["New", "Nurturing", "Revisit", "Demo", "Converted", "Unqualified", "Lost"]);
-  assert.deepEqual(all.filter((c) => c.closed).map((c) => c.stage), ["Converted", "Unqualified", "Lost"]);
+  assert.deepEqual(all.map((c) => c.stage), ["Unqualified", "New", "Nurturing", "Revisit", "Demo", "Converted", "Lost"]);
+  assert.deepEqual(all.filter((c) => c.closed).map((c) => c.stage), ["Unqualified", "Converted", "Lost"]);
   assert.ok(all.every((c) => c.excluded === ""));
   const excluded = (view, stage) => leadBoardColumns(view, stage).filter((c) => c.excluded).map((c) => c.stage);
   const open = ["New", "Nurturing", "Revisit", "Demo"];
-  assert.deepEqual(excluded("all_open"), ["Converted", "Unqualified", "Lost"]);
-  assert.deepEqual(excluded("my_open"), ["Converted", "Unqualified", "Lost"]);
-  assert.deepEqual(excluded("converted"), [...open, "Unqualified", "Lost"]);
-  assert.deepEqual(excluded("lost"), [...open, "Converted", "Unqualified"]);
+  assert.deepEqual(excluded("all_open"), ["Unqualified", "Converted", "Lost"]);
+  assert.deepEqual(excluded("my_open"), ["Unqualified", "Converted", "Lost"]);
+  assert.deepEqual(excluded("converted"), ["Unqualified", ...open, "Lost"]);
+  assert.deepEqual(excluded("lost"), ["Unqualified", ...open, "Converted"]);
   assert.deepEqual(excluded("unqualified"), [...open, "Converted", "Lost"]);
-  assert.deepEqual(excluded("revisit_due"), ["New", "Nurturing", "Demo", "Converted", "Unqualified", "Lost"]);
+  assert.deepEqual(excluded("revisit_due"), ["Unqualified", "New", "Nurturing", "Demo", "Converted", "Lost"]);
   assert.deepEqual(excluded("uploaded"), []);
-  assert.deepEqual(excluded("all", "Demo"), ["New", "Nurturing", "Revisit", "Converted", "Unqualified", "Lost"]); // the Lead Status filter
+  assert.deepEqual(excluded("all", "Demo"), ["Unqualified", "New", "Nurturing", "Revisit", "Converted", "Lost"]); // the Lead Status filter
   assert.equal(leadBoardColumns("all_open", "Demo").find((c) => c.stage === "New").excluded, "Hidden by the Lead Status filter");
   assert.equal(leadBoardColumns("all_open", null).find((c) => c.stage === "Lost").excluded, "Not in this list view");
 });
