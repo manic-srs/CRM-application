@@ -62,7 +62,7 @@ def test_lead_validation(client):
     assert client.post("/api/leads", json={"last_name": "x"}).status_code == 422  # company required
     assert client.post("/api/leads", json={"last_name": "x", "company": "c", "source": "Fax"}).status_code == 422
     assert client.post("/api/leads", json={"last_name": "x", "company": "c", "salutation": "Sir"}).status_code == 422
-    assert client.post("/api/leads", json={"last_name": "x", "company": "c", "owner_id": 99}).status_code == 403  # salesperson
+    assert client.post("/api/leads", json={"last_name": "x", "company": "c", "owner_id": 99}).status_code == 400  # no such user
     assert login_as(client, 1).post("/api/leads", json={"last_name": "x", "company": "c", "owner_id": 99}).status_code == 400
     assert client.get("/api/leads/999").status_code == 404
 

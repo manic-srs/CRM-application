@@ -197,13 +197,15 @@ function UploadDone({ result, word }) {
 export function UploadLeads({ object = "leads", user, data, onClose, onDone, notify }) {
   const info = OBJECTS[object];
   const admin = user.role === "Admin";
-  const canAssign = admin || can(user, "reassign_owner");
+  // leads: anyone who uploads can assign them to teammates (each person is told); opportunities: Reassign owner
+  const canAssign = object === "leads" || admin || can(user, "reassign_owner");
   const owners = (data.users || []).filter((u) => u.is_active !== false && u.role !== "Admin");
   const [file, setFile] = useState(null);
   const [owner, setOwner] = useState(admin ? "" : String(user.id));
   // Leads only: who owns them, as in Salesforce's Data Import Wizard
   const [assign, setAssign] = useState("one");
   const [team, setTeam] = useState([]); // "even": the people to share between
+  const [quota, setQuota] = useState([{ id: "", count: "" }]); // "counts": how many leads each person gets
   const leads = object === "leads";
   const changed = (fn) => (...args) => (fn(...args), setCheck(null));
   const [check, setCheck] = useState(null);
@@ -220,6 +222,12 @@ export function UploadLeads({ object = "leads", user, data, onClose, onDone, not
   const send = async (dryRun) => {
     if (!file) return setError("Choose an Excel (.xlsx) or CSV file.");
     if (assign === "even" && team.length < 1) return setError("Choose the people to share the leads between.");
+    const quotaRows = quota.filter((q) => q.id || q.count);
+    if (assign === "counts") {
+      if (!quotaRows.length) return setError("Choose who gets how many leads.");
+      if (quotaRows.some((q) => !q.id || !(Number(q.count) >= 1))) return setError("Give each person a number of leads (1 or more).");
+      if (new Set(quotaRows.map((q) => q.id)).size !== quotaRows.length) return setError("Each person can be listed once.");
+    }
     if (assign !== "even" && admin && !owner)
       return setError(assign === "column"
         ? "Choose who gets the rows without a Lead Owner."
@@ -230,7 +238,13 @@ export function UploadLeads({ object = "leads", user, data, onClose, onDone, not
       const result = await api.importData(object, file, {
         ownerId: assign === "even" ? "" : owner,
         dryRun,
-        ...(leads ? { assign, ownerIds: assign === "even" ? team : [] } : {}),
+        ...(leads
+          ? {
+              assign,
+              ownerIds: assign === "even" ? team : [],
+              counts: assign === "counts" ? quotaRows.map((q) => `${q.id}:${Number(q.count)}`) : [],
+            }
+          : {}),
       });
       if (dryRun) setCheck(result);
       else {
@@ -330,12 +344,60 @@ export function UploadLeads({ object = "leads", user, data, onClose, onDone, not
             ["one", "Assign all to one person"],
             ["column", "Use the Lead Owner column in the file", "The owner's email or full name. Rows without one go to:"],
             ["even", "Share evenly between people (round-robin)"],
+            ["counts", "Set how many each person gets", "The rest of the leads go to:"],
           ].map(([value, label, hint]) => (
             <div key={value} className={`assign-option ${assign === value ? "on" : ""}`}>
               <label className="assign-choice">
                 <input type="radio" name="assign" value={value} checked={assign === value} onChange={changed(() => setAssign(value))} />
                 <span>{label}</span>
               </label>
+              {assign === value && value === "counts" && (
+                <div className="assign-detail assign-quota">
+                  {quota.map((q, i) => (
+                    <div key={i} className="quota-row">
+                      <select
+                        value={q.id}
+                        aria-label={`Person ${i + 1}`}
+                        onChange={changed((e) => setQuota((all) => all.map((x, j) => (j === i ? { ...x, id: e.target.value } : x))))}
+                      >
+                        <option value="">Choose a teammate</option>
+                        {owners.map((u) => (
+                          <option key={u.id} value={u.id} disabled={quota.some((x, j) => j !== i && x.id === String(u.id))}>
+                            {u.full_name} ({u.role})
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        min="1"
+                        placeholder="Leads"
+                        aria-label={`How many leads for person ${i + 1}`}
+                        value={q.count}
+                        onChange={changed((e) => setQuota((all) => all.map((x, j) => (j === i ? { ...x, count: e.target.value } : x))))}
+                      />
+                      {quota.length > 1 && (
+                        <button
+                          type="button"
+                          className="link"
+                          aria-label={`Remove person ${i + 1}`}
+                          onClick={changed(() => setQuota((all) => all.filter((_, j) => j !== i)))}
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  <button type="button" className="link" onClick={() => setQuota((all) => [...all, { id: "", count: "" }])}>
+                    + Add person
+                  </button>
+                  <small>
+                    {(() => {
+                      const total = quota.reduce((sum, q) => sum + (Number(q.count) || 0), 0);
+                      return total ? `${n(total)} leads assigned in file order (top rows first).` : "Rows are given out in file order.";
+                    })()}
+                  </small>
+                </div>
+              )}
               {assign === value && value !== "even" && (
                 <div className="assign-detail">
                   {hint && <small>{hint}</small>}
@@ -389,6 +451,7 @@ export function UploadLeads({ object = "leads", user, data, onClose, onDone, not
           <IssueList result={check} file={check.file} />
           {check.owners?.length > 0 && (
             <div className="owner-split" aria-label="Owners">
+              {check.assign_note && <small className="assign-note">{check.assign_note}</small>}
               <span>Assigned to</span>
               {check.owners.map((o) => (
                 <span key={o.id} className="owner-pill">

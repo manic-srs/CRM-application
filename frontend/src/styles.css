@@ -4070,3 +4070,32 @@ body:has(.ai-page) .popups {
 .sf-table tbody tr.row-selected td {
   background: #eef4ff;
 }
+/* Upload: "Set how many each person gets" */
+.assign-quota {
+  display: grid;
+  gap: 6px;
+}
+.quota-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.quota-row select {
+  flex: 1;
+  min-width: 0;
+}
+.quota-row input[type="number"] {
+  width: 90px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+}
+.assign-quota .link {
+  justify-self: start;
+}
+.owner-split .assign-note {
+  flex-basis: 100%;
+  color: var(--text-weak);
+}

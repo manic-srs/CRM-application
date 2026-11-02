@@ -11,9 +11,11 @@ HEADER = ["First Name", "Last Name", "Company", "Email", "Website", "Lead Owner"
 def upload(client, rows, dry_run=False, **form):
     out = io.StringIO()
     csv.writer(out).writerows([HEADER, *rows])
-    data = {"dry_run": str(dry_run).lower(), **{k: v for k, v in form.items() if k != "owner_ids"}}
+    data = {"dry_run": str(dry_run).lower(), **{k: v for k, v in form.items() if k not in ("owner_ids", "counts")}}
     if "owner_ids" in form:
         data["owner_ids"] = [str(i) for i in form["owner_ids"]]
+    if "counts" in form:
+        data["counts"] = form["counts"]
     return client.post("/api/leads/import", files={"file": ("team.csv", out.getvalue().encode(), "text/csv")}, data=data)
 
 
@@ -56,12 +58,34 @@ def test_emails_already_in_the_crm_are_skipped_whatever_the_stage(client):
     assert "old@acme-example.com is already in the CRM" in body["errors"][0]["reason"]
 
 
-def test_a_salesperson_uploads_for_themselves_only(client):
-    login_as(client, 2)  # Ravi, Salesperson: no Reassign owner permission
+def test_a_salesperson_can_assign_uploads_to_teammates(client):
+    login_as(client, 2)  # Ravi, Salesperson
     assert upload(client, rows(2), dry_run=True).json()["owners"] == [{"id": 2, "name": "Ravi Kumar", "count": 2}]
-    assert upload(client, rows(2), dry_run=True, assign="column", owner_id="2").status_code == 403
-    assert upload(client, rows(2), dry_run=True, assign="even", owner_ids=[2, 1]).status_code == 403
-    assert upload(client, rows(2), dry_run=True, owner_id="1").status_code == 403  # someone else
+    assert upload(client, rows(2), dry_run=True, owner_id="1").json()["owners"] == [{"id": 1, "name": "Priya Sharma", "count": 2}]
+    assert upload(client, rows(2), dry_run=True, assign="even", owner_ids=[2, 1]).status_code == 200
+    assert upload(client, rows(2), dry_run=True, owner_id="3").status_code == 400  # the Admin doesn't own leads
+
+
+def test_set_how_many_each_person_gets_and_they_are_told(client):
+    tara = add_salesperson(client, "Tara Nair", "tara@crm.test")
+    ravi = login_as(client, 2)
+    res = upload(ravi, rows(6), dry_run=True, assign="counts", counts=[f"{tara}:3", "1:2"])
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["owners"] == [{"id": tara, "name": "Tara Nair", "count": 3}, {"id": 1, "name": "Priya Sharma", "count": 2},
+                              {"id": 2, "name": "Ravi Kumar", "count": 1}]
+    assert body["assign_note"] == "The other 1 go to Ravi Kumar."
+    done = upload(ravi, rows(6), assign="counts", counts=[f"{tara}:3", "1:2"]).json()
+    assert done["created"] == 6
+    got = owners_of(client, *[f"Row{i}" for i in range(6)])
+    assert [got[f"Row{i}"] for i in range(6)] == [tara, tara, tara, 1, 1, 2]
+    bell = login_as(client, tara).get("/api/notifications").json()
+    assert any(n["title"] == "Leads assigned to you" and "Ravi Kumar uploaded 3 leads" in n["message"] for n in bell)
+    # asking for more than the file has: the last people get fewer, and the screen says so
+    short = upload(login_as(client, 2), rows(2, prefix="Short"), dry_run=True, assign="counts", counts=["1:5"]).json()
+    assert short["owners"] == [{"id": 1, "name": "Priya Sharma", "count": 2}] and "asked for 5" in short["assign_note"]
+    assert upload(client, rows(1), dry_run=True, assign="counts", counts=["1:0"]).status_code == 400
+    assert upload(client, rows(1), dry_run=True, assign="counts").status_code == 400
 
 
 def test_share_evenly_round_robin(client):

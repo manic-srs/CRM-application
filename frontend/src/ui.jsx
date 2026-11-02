@@ -164,7 +164,7 @@ export function Ring({ segments, size = 150, stroke = 9, children, label }) {
 }
 
 // Salesforce-style path: chevrons, completed steps get a check
-export function PathBar({ stages, current, closed, onSelect, lostLabel, skipped = [] }) {
+export function PathBar({ stages, current, closed, onSelect, lostLabel, skipped = [], notReached = [] }) {
   const index = stages.indexOf(current);
   return (
     <ol className="path">
@@ -172,7 +172,9 @@ export function PathBar({ stages, current, closed, onSelect, lostLabel, skipped 
         const state =
           lostLabel && i === stages.length - 1
             ? "lost"
-            : i < index && skipped.includes(stage)
+            : notReached.includes(stage)
+              ? "incomplete"
+              : i < index && skipped.includes(stage)
               ? "skipped"
               : i < index || (closed && i <= index)
               ? "complete"
@@ -255,9 +257,9 @@ export function Avatar({ name, size = 32 }) {
 // ---------- paging for long tables ----------
 // const { pageRows, pager } = usePaged(rows, resetKey);  ...  <Pagination {...pager} />
 // resetKey: anything that changes the list (view, search), so the table goes back to page 1.
-export const PAGE_SIZES = [10, 25, 50, 100];
+export const PAGE_SIZES = [15, 25, 50, 100];
 
-export function usePaged(rows, resetKey = "", initialSize = 25) {
+export function usePaged(rows, resetKey = "", initialSize = 15) {
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(initialSize);
   useEffect(() => setPage(1), [resetKey, size]);

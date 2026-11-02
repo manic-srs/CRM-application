@@ -140,7 +140,12 @@ def check_lead_email(db: Session, email: str | None, website: str | None, *, exc
 def create_lead(data: schemas.LeadCreate, db: Session = Depends(get_db)):
     """Create a lead at stage New. The system adds a 'Make first contact' task for the owner.
     Admins can create leads too, and choose who owns them."""
-    owner_id = resolve_user_id(db, owner_for_new(data.owner_id))
+    # anyone can assign a new lead to an active teammate (Manager or Salesperson); the owner is told
+    owner_id = acting_user_id() if data.owner_id is None else resolve_user_id(db, data.owner_id)
+    if owner_id != acting_user_id():
+        owner = db.get(User, owner_id)
+        if not owner.is_active or owner.role == "Admin":
+            raise HTTPException(status_code=400, detail="Leads can only be assigned to active Managers and Salespeople")
     actor_id = acting_user_id()
     check_lead_email(db, data.email, data.company_website)
     lead = Lead(**data.model_dump(exclude={"owner_id", "created_by_id"}),

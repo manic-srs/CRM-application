@@ -307,7 +307,8 @@ export default function Modal({ modal, close, data, run, notify, user }) {
   );
   // Only Managers and Admins can give a record to someone else; a Salesperson sees the owner read-only.
   // An existing lead's owner is changed with the Transfer button (it keeps a dated transfer history).
-  const canAssign = can(user, "reassign_owner") && !(type === "lead" && record);
+  // a new lead can be assigned to any teammate (the owner is told); other records need Reassign owner
+  const canAssign = type === "lead" ? !record : can(user, "reassign_owner");
   const owner = () =>
     !canAssign ? (
       <label className="field">

@@ -358,13 +358,14 @@ export const api = {
   importLeads: (file, options) => api.importData("leads", file, options),
   // assign (leads): "one" (all to ownerId), "column" (the file's Lead Owner column, ownerId for the rest) or
   // "even" (shared round-robin between ownerIds)
-  importData: (object, file, { ownerId, dryRun, assign, ownerIds }) => {
+  importData: (object, file, { ownerId, dryRun, assign, ownerIds, counts }) => {
     const form = new FormData();
     form.append("file", file);
     form.append("dry_run", dryRun ? "true" : "false");
     if (ownerId) form.append("owner_id", ownerId);
     if (assign) form.append("assign", assign);
     for (const id of ownerIds || []) form.append("owner_ids", id);
+    for (const item of counts || []) form.append("counts", item); // "user_id:how_many"
     return upload(`/${object}/import`, form, { timeout: 10 * 60 * 1000, failed: "The file could not be uploaded.", tooLarge: "The file is too large." });
   },
   // Admin: add many users from Excel / CSV (dry run first: nothing is saved)

@@ -12,7 +12,7 @@ import { ActionMenu, DateCell, Icon, PhoneReveal, StageBadge } from "./ui";
 import { dateTime } from "./format";
 import { filterSummary, rangeBounds, Th } from "./Filters";
 
-const PAGE = 100;
+const PAGE = 15; // leads per page (Previous / Next for the rest)
 const BOARD_CARDS = 100; // cards per Kanban column; the column says when there are more
 // [heading, sort key, column width]
 const COLUMNS = [
