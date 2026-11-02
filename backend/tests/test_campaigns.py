@@ -103,7 +103,7 @@ def test_server_rejection_marks_the_email_invalid_and_later_campaigns_skip_it(cl
     assert [l["id"] for l in page["items"]] == [bad["id"]]
     assert "550 5.1.1" in page["items"][0]["email_invalid_reason"]
     # the next campaign to everyone leaves the bad address out
-    second = make(client, [], stages=["Unqualified"]).json()
+    second = make(client, [], stages=["New"]).json()
     assert second["counts"]["Queued"] == 1 and second["counts"]["Skipped"] == 1
     run_round()
     assert sent.to().count(bad["email"]) == 1  # only the first try
