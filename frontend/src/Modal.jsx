@@ -23,6 +23,8 @@ import {
   stageTaskNeeded,
   stageTaskPayload,
   stageTaskProblems,
+  UNQUALIFIED_REASONS,
+  REVISIT_REASONS,
 } from "./domain";
 import { can } from "./permissions";
 import { Icon } from "./ui";
@@ -141,6 +143,8 @@ export default function Modal({ modal, close, data, run, notify, user }) {
     transfer: `Transfer Lead: ${record?.name}`,
     cancelDemo: `Cancel or Reschedule Demo: ${record?.name}`,
     delete: `Delete Lead: ${record?.name}`,
+    unqualified: `Mark as Unqualified: ${record?.name}`,
+    reopen: `Reopen Lead: ${record?.name}`,
   };
   useEffect(() => {
     const first = ref.current.querySelector("input,select,textarea,button");
@@ -354,15 +358,30 @@ export default function Modal({ modal, close, data, run, notify, user }) {
     stage: "The next follow-up for this stage (instead of the system's automatic one).",
     convert: "The first task of the new opportunity.",
     won: "A post-sale task, such as handover or onboarding. It stays open after the deal is won.",
-    cancelDemo: "The next follow-up now that the lead is back in Revisit.",
+    cancelDemo: "When to come back to the lead: the lead waits in Revisit until this date.",
+    reopen: "The first follow-up now that the lead is open again.",
   };
+  const revisit = type === "stage" && modal.collection === "leads" && modal.stage === "Revisit";
+  // moving a deal to Discovery: what the customer needs (required), budget, decision maker, timeline
+  const discovery = type === "stage" && modal.collection === "opportunities" && modal.stage === "Discovery";
+  const discoveryPayload = (v) => ({
+    discovery_needs: stageNote(v.discovery_needs) || null,
+    discovery_budget: stageNote(v.discovery_budget) || null,
+    discovery_decision_maker: stageNote(v.discovery_decision_maker) || null,
+    discovery_timeline: stageNote(v.discovery_timeline) || null,
+  });
   const taskSection = () => (
     <fieldset className="stage-task">
       <legend>New Task</legend>
-      <p className="field-hint">{TASK_HINTS[type]}</p>
+      <p className="field-hint">
+        {revisit ? "When to come back to the lead. You get a reminder on that day, and the lead shows under Revisit Due." : TASK_HINTS[type]}
+      </p>
       <div className="form-grid">
-        {taskInput("Subject", "task_title", "text", true, { maxLength: 200 })}
-        {taskInput("Due Date", "task_due_date", "datetime-local", true)}
+        {taskInput("Subject", "task_title", "text", true, {
+          maxLength: 200,
+          ...(revisit ? { defaultValue: `Revisit ${record?.name || "lead"}` } : {}),
+        })}
+        {taskInput(revisit || type === "cancelDemo" ? "Revisit On" : "Due Date", "task_due_date", "datetime-local", true)}
         {select("Priority", "task_priority", PRIORITIES, "Normal", true)}
         {can(user, "reassign_owner") ? (
           select("Assigned To", "task_owner_id", [
@@ -394,6 +413,8 @@ export default function Modal({ modal, close, data, run, notify, user }) {
     if (type === "stage") return `"${name}" moved to ${modal.stage}. The next follow-up task was created.${attachedText}`;
     if (type === "won") return `"${name}" was marked as Won. The new task was created.${attachedText}`;
     if (type === "lost") return `"${name}" was marked as Lost.`;
+    if (type === "unqualified") return `"${name}" was marked as Unqualified. It's listed under Unqualified Leads and can be reopened.`;
+    if (type === "reopen") return `"${name}" is open again at New, with your follow-up task.`;
     if (type === "task") return record ? "Task updated." : "Task created.";
     if (type === "note") return "Note added.";
     if (type === "transfer") return `"${name}" was transferred to ${saved?.owner_name || "the new owner"}.`;
@@ -470,6 +491,13 @@ export default function Modal({ modal, close, data, run, notify, user }) {
         if (!v.last_name.trim()) throw new Error("Last name is required.");
         saved = await run("saveContact", v);
       }
+      if (revisit && !v.revisit_reason) throw new Error("Choose why the lead should be revisited.");
+      const today = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD, local
+      if (revisit && (v.task_due_date || "").slice(0, 10) <= today) throw new Error("Choose a revisit date after today.");
+      if (discovery && stageNote(v.discovery_needs).length < 5) throw new Error("Describe what the customer needs.");
+      if (type === "unqualified")
+        await run("unqualifyLead", record.id, { reason: v.reason, notes: stageNote(v.notes) });
+      if (type === "reopen") await run("reopenLead", record.id, { note: stageNote(v.note), task: stageTaskPayload(v) });
       if (type === "lost")
         await run("lost", modal.collection, record.id, {
           lost_reason: v.lost_reason,
@@ -496,7 +524,7 @@ export default function Modal({ modal, close, data, run, notify, user }) {
           ...skipPayload(v),
         });
       if (type === "stage" && stageFilesOn && stageFiles.length)
-        await run("stageWithFiles", record.id, { stage: modal.stage, note: stageNote(v.note), task: stageTaskPayload(v), ...skipPayload(v) }, stageFiles);
+        await run("stageWithFiles", record.id, { stage: modal.stage, note: stageNote(v.note), task: stageTaskPayload(v), ...skipPayload(v), ...(discovery ? discoveryPayload(v) : {}) }, stageFiles);
       else if (type === "stage")
         await run("stage", modal.collection, record.id, {
           stage: modal.stage,
@@ -506,6 +534,8 @@ export default function Modal({ modal, close, data, run, notify, user }) {
           ...(modal.collection === "leads" && modal.stage === "Demo"
             ? { demo_date: v.demo_date || null }
             : {}),
+          ...(revisit ? { revisit_date: v.task_due_date, revisit_reason: v.revisit_reason } : {}),
+          ...(discovery ? discoveryPayload(v) : {}),
         });
       if (type === "delete") {
         // not through run(): the page of a deleted lead can't be reloaded, so go to the Leads list instead
@@ -662,6 +692,20 @@ export default function Modal({ modal, close, data, run, notify, user }) {
               {owner()}
             </div>
           )}
+          {type === "opportunity" && (
+            <fieldset className="stage-task">
+              <legend>Discovery</legend>
+              <label className="field">
+                <span>Needs / pain points</span>
+                <textarea name="discovery_needs" rows={3} defaultValue={record.discovery_needs || ""} maxLength={2000} />
+              </label>
+              <div className="form-grid">
+                {field("Budget", "discovery_budget", "text", false, record.discovery_budget || "")}
+                {field("Decision maker", "discovery_decision_maker", "text", false, record.discovery_decision_maker || "")}
+                {field("Timeline", "discovery_timeline", "text", false, record.discovery_timeline || "")}
+              </div>
+            </fieldset>
+          )}
           {type === "task" && (
             <>
               <div className="form-grid">
@@ -800,9 +844,46 @@ export default function Modal({ modal, close, data, run, notify, user }) {
               {taskSection()}
             </>
           )}
+          {type === "unqualified" && (
+            <>
+              <p className="field-hint">
+                For a lead that isn't eligible. It closes, its open tasks are closed, and it stays under Unqualified Leads. You can reopen it
+                later if things change. (Use Mark as Lost when a qualified lead chose not to go ahead.)
+              </p>
+              {select("Reason", "reason", UNQUALIFIED_REASONS, "", true)}
+              {noteBox("Notes", "notes")}
+            </>
+          )}
+          {type === "reopen" && (
+            <>
+              <p className="field-hint">
+                Unqualified: {record.unqualified_reason}. The lead goes back to New.
+              </p>
+              {noteBox("Why reopen it?", "note")}
+              {taskSection()}
+            </>
+          )}
           {type === "stage" && (
             <>
               {skippedChecklist()}
+              {revisit && select("Why revisit later?", "revisit_reason", REVISIT_REASONS, "", true)}
+              {discovery && (
+                <fieldset className="stage-task">
+                  <legend>Discovery</legend>
+                  <p className="field-hint">What the customer needs, their budget, who decides and when (Salesforce Needs Analysis).</p>
+                  <label className="field">
+                    <span>
+                      Needs / pain points <i>*</i>
+                    </span>
+                    <textarea name="discovery_needs" rows={3} defaultValue={record.discovery_needs || ""} maxLength={2000} />
+                  </label>
+                  <div className="form-grid">
+                    {field("Budget", "discovery_budget", "text", false, record.discovery_budget || "")}
+                    {field("Decision maker", "discovery_decision_maker", "text", false, record.discovery_decision_maker || "")}
+                    {field("Timeline", "discovery_timeline", "text", false, record.discovery_timeline || "")}
+                  </div>
+                </fieldset>
+              )}
               {modal.stage === "Demo" &&
                 field(
                   "Demo Date",
@@ -915,7 +996,11 @@ export default function Modal({ modal, close, data, run, notify, user }) {
                             : "Cancel demo"
                           : type === "delete"
                             ? "Delete lead"
-                            : "Save"}
+                            : type === "unqualified"
+                              ? "Mark as Unqualified"
+                              : type === "reopen"
+                                ? "Reopen lead"
+                                : "Save"}
             </button>
           </div>
         </form>

@@ -14,10 +14,13 @@ from pydantic_core import PydanticCustomError
 
 LeadSource = Literal["Website", "Referral", "Phone", "Email", "Event", "Social Media", "Other", "Upload"]
 LostReason = Literal["Price", "Competitor", "No response", "No budget", "Not interested", "Other"]
+UnqualifiedReason = Literal["Not a fit", "No budget", "No authority", "No current need", "Bad timing", "Bad data", "Other"]
+RevisitReason = Literal["Bad timing", "Budget next period", "Asked to call back", "No response yet", "Demo cancelled",
+                        "Other"]
 Priority = Literal["Low", "Normal", "High"]
 Salutation = Literal["Mr.", "Ms.", "Mrs.", "Dr.", "Prof."]
 UserRole = Literal["Salesperson", "Manager", "Admin"]
-LeadOpenStage = Literal["Unqualified", "New", "Nurturing", "Revisit", "Demo"]      # constants.LEAD_FLOW
+LeadOpenStage = Literal["New", "Nurturing", "Revisit", "Demo"]      # constants.LEAD_FLOW
 OpportunityOpenStage = Literal["Opportunity", "Discovery", "Proposal"]            # constants.OPPORTUNITY_FLOW
 
 
@@ -331,6 +334,10 @@ class LeadOut(Out):
     demo_date: datetime | None
     lost_reason: str | None
     lost_notes: str | None
+    unqualified_reason: str | None = None
+    unqualified_notes: str | None = None
+    revisit_date: datetime | None = None
+    revisit_reason: str | None = None
     converted_at: datetime | None
     closed_at: datetime | None
     owner_id: int
@@ -377,6 +384,15 @@ class BulkLeads(BaseModel):
 
 
 class BulkTransfer(BulkLeads):
+    to_user_id: int
+    note: str | None = Field(None, max_length=300)
+
+
+class BulkOpportunities(BaseModel):
+    opportunity_ids: list[int] = Field(..., min_length=1, max_length=500)
+
+
+class BulkOpportunityTransfer(BulkOpportunities):
     to_user_id: int
     note: str | None = Field(None, max_length=300)
 
@@ -484,10 +500,29 @@ class NeedsTask(BaseModel):
 class LeadStageChange(NeedsTask):
     stage: LeadOpenStage
     demo_date: datetime | None = None  # used when moving to Demo: the demo task is due then
+    # moving to Revisit: when to come back to the lead (the new task is due then) and why
+    revisit_date: datetime | None = None
+    revisit_reason: RevisitReason | None = None
     note: StageNote
     changed_by_id: int | None = None  # default: the lead owner
     completed_stages: list[str] = []  # stages skipped on the way, confirmed as already done by the salesperson
     completed_note: str | None = Field(None, max_length=500)  # e.g. "Demo was done on a call"
+
+
+class MarkUnqualified(BaseModel):
+    """Close the lead as not eligible. The reason is required; notes say why (internal)."""
+    reason: UnqualifiedReason
+    notes: StageNote
+
+
+class ReopenLead(NeedsTask):
+    """Bring an Unqualified lead back (Salesforce "recycle"): it goes to New with the user's new task."""
+    note: StageNote
+
+
+class BulkOpportunityLost(BulkOpportunities):
+    lost_reason: LostReason
+    lost_notes: StageNote
 
 
 class MarkLost(BaseModel):
@@ -586,6 +621,10 @@ class OpportunityOut(Out):
     probability: int
     lost_reason: str | None
     lost_notes: str | None
+    discovery_needs: str | None = None
+    discovery_budget: str | None = None
+    discovery_decision_maker: str | None = None
+    discovery_timeline: str | None = None
     closed_at: datetime | None
     account_id: int
     account_name: str | None = None
@@ -621,11 +660,20 @@ class OpportunityUpdate(BaseModel):
     primary_contact_id: int | None = None
     owner_id: int | None = None
     changed_by_id: int | None = None  # logged-in user (not saved; used for the assignment notification)
+    discovery_needs: str | None = Field(None, max_length=2000)
+    discovery_budget: str | None = Field(None, max_length=100)
+    discovery_decision_maker: str | None = Field(None, max_length=150)
+    discovery_timeline: str | None = Field(None, max_length=100)
 
 
 class OpportunityStageChange(NeedsTask):
     stage: OpportunityOpenStage
     note: StageNote
+    # moving to Discovery (Salesforce "Needs Analysis"): what the customer needs is required, the rest optional
+    discovery_needs: str | None = Field(None, max_length=2000)
+    discovery_budget: str | None = Field(None, max_length=100)
+    discovery_decision_maker: str | None = Field(None, max_length=150)
+    discovery_timeline: str | None = Field(None, max_length=100)
     changed_by_id: int | None = None
     completed_stages: list[str] = []  # stages skipped on the way (e.g. Discovery), confirmed as already done
     completed_note: str | None = Field(None, max_length=500)

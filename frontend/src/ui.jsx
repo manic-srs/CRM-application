@@ -313,7 +313,7 @@ export function Pagination({ page, pages, size, total, start, setPage, setSize }
 // "Actions ▾" button at the end of a record's buttons (Edit, Transfer, Delete...), like HubSpot / Zoho.
 // items: [{ label, onClick, danger }] or "-" for a divider. Opens under the button, right-aligned;
 // arrow keys move between items, Esc or a click outside closes it.
-export function ActionMenu({ items, label = "Actions" }) {
+export function ActionMenu({ items, label = "Actions", badge }) {
   const [open, setOpen] = React.useState(null);
   const ref = React.useRef(null);
   const list = React.useRef(null);
@@ -359,6 +359,7 @@ export function ActionMenu({ items, label = "Actions" }) {
         }}
       >
         {label}
+        {badge ? <span className="menu-badge">{badge}</span> : null}
         <Icon name="down" size={14} />
       </button>
       {open && (
@@ -372,9 +373,11 @@ export function ActionMenu({ items, label = "Actions" }) {
                 type="button"
                 role="menuitem"
                 className={item.danger ? "danger" : ""}
+                disabled={item.disabled}
+                title={item.title}
                 onClick={() => {
                   setOpen(null);
-                  item.onClick();
+                  item.onClick?.();
                 }}
               >
                 {item.label}

@@ -426,7 +426,7 @@ def test_stages_cannot_be_skipped(client, outbox):
     record = lead(client)
     lid = record["id"]
     res = client.put(f"/api/leads/{lid}/stage", json={"task": TASK, "stage": "Demo", "note": "Synthetic test note"})
-    assert res.status_code == 409 and "Complete New and Nurturing" in res.json()["detail"]
+    assert res.status_code == 409 and "Complete Nurturing" in res.json()["detail"]
     assert client.post(f"/api/leads/{lid}/convert", json={"task": TASK, "note": "Synthetic test note"}).status_code == 409
     # confirm the skipped stage: saved in the history
     res = client.put(f"/api/leads/{lid}/stage", json={"task": TASK, "stage": "Demo", "completed_stages": ["New", "Nurturing"],

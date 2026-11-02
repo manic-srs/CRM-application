@@ -143,7 +143,7 @@ def test_lead_created_notifies_owner_on_bell_and_email(client, outbox):
     assert len(outbox) == 1  # one email per step (the follow-up task is inside it)
     mail = outbox[0]
     assert mail["to"] == ["ravi@crm.test"] and mail["subject"] == "[SalesTrack] Lead created"
-    assert "Next follow-up: Qualify lead - Maria Lopez" in mail["body"]
+    assert "Next follow-up: Make first contact - Maria Lopez" in mail["body"]
 
 
 def test_every_step_sends_one_notification_and_email(client, outbox):

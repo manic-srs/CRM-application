@@ -127,10 +127,15 @@ class Lead(Base):
     untouched: Mapped[bool] = mapped_column(default=False, server_default="false")
     uploaded_from: Mapped[str | None] = mapped_column(String(255))  # file name, for leads created by an upload
     source: Mapped[str] = mapped_column(String(20), default="Other")
-    stage: Mapped[str] = mapped_column(String(20), default="Unqualified")   # constants.LEAD_STAGES
+    stage: Mapped[str] = mapped_column(String(20), default="New")   # constants.LEAD_STAGES
     demo_date: Mapped[datetime | None]
     lost_reason: Mapped[str | None] = mapped_column(String(20))
     lost_notes: Mapped[str | None] = mapped_column(Text)
+    # Unqualified (not eligible): why, and notes. Revisit ("not now"): when to come back to the lead, and why.
+    unqualified_reason: Mapped[str | None] = mapped_column(String(20))
+    unqualified_notes: Mapped[str | None] = mapped_column(Text)
+    revisit_date: Mapped[datetime | None]
+    revisit_reason: Mapped[str | None] = mapped_column(String(30))
     converted_at: Mapped[datetime | None]
     closed_at: Mapped[datetime | None]
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
@@ -176,6 +181,11 @@ class Opportunity(Base):
     probability: Mapped[int] = mapped_column(default=20)  # % chance to win, set by stage
     lost_reason: Mapped[str | None] = mapped_column(String(20))
     lost_notes: Mapped[str | None] = mapped_column(Text)
+    # Discovery (Salesforce "Needs Analysis"): what the customer needs, budget, who decides, timeline
+    discovery_needs: Mapped[str | None] = mapped_column(Text)
+    discovery_budget: Mapped[str | None] = mapped_column(String(100))
+    discovery_decision_maker: Mapped[str | None] = mapped_column(String(150))
+    discovery_timeline: Mapped[str | None] = mapped_column(String(100))
     closed_at: Mapped[datetime | None]
     account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"))
     primary_contact_id: Mapped[int | None] = mapped_column(ForeignKey("contacts.id"))

@@ -5,7 +5,8 @@ import { applyFilters, filterSummary, opts, ownerOptions, Th, useFilters } from 
 import { LEAD_OPEN_STAGES, LEAD_SOURCES, LEAD_STAGES, OPPORTUNITY_OPEN_STAGES, OPPORTUNITY_STAGES, UPLOAD_SOURCE } from "./domain";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { amount, compact, maskPhone, shortDate } from "./format";
-import { DateCell, Icon, ObjectIcon, Pagination, PhoneReveal, StageBadge, usePaged } from "./ui";
+import { ActionMenu, DateCell, Icon, ObjectIcon, Pagination, PhoneReveal, StageBadge, usePaged } from "./ui";
+import { bulkResultMessage, OpportunityBulkDialog } from "./OpportunityBulk";
 
 const OPEN_LEAD = LEAD_OPEN_STAGES;
 const OPEN_OPP = OPPORTUNITY_OPEN_STAGES;
@@ -20,6 +21,8 @@ const LEAD_VIEWS = {
   "All Leads": "all",
   "Converted Leads": "converted",
   "Lost Leads": "lost",
+  "Unqualified Leads": "unqualified",
+  "Revisit Due": "revisit_due",
   "Uploaded Leads": "uploaded",
   "My Uploaded Leads": "my_uploaded",
 };
@@ -34,6 +37,8 @@ function views(collection, user) {
       ["All Leads", () => true],
       ["Converted Leads", (r) => r.stage === "Converted"],
       ["Lost Leads", (r) => r.stage === "Lost"],
+      ["Unqualified Leads", (r) => r.stage === "Unqualified"],
+      ["Revisit Due", (r) => r.stage === "Revisit" && r.revisit_date && new Date(r.revisit_date) < new Date(new Date().toDateString()).getTime() + 864e5],
       ["Uploaded Leads", () => true],
       ["My Uploaded Leads", () => true],
     ],
@@ -223,6 +228,10 @@ function Kanban({ records, setModal }) {
 
 export default function ListView({ collection, data, user, openNew, setModal, query, notify, reload }) {
   const [files, setFiles] = useState(null); // "upload" | "download" | "history" (Leads and Opportunities)
+  // Opportunities: the deals ticked in the list, and the Actions dialog open for them ({ type: "owner" | "lost", ids })
+  const [picked, setPicked] = useState(() => new Set());
+  const [oppBulk, setOppBulk] = useState(null);
+  const ticks = collection === "opportunities";
   const dataList = collection === "leads" || collection === "opportunities";
   const [uploads, setUploads] = useState(0); // reloads the Leads list after an upload
   const params = new URLSearchParams(query);
@@ -318,6 +327,33 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
             </div>
           </div>
           <div className="list-buttons">
+            {/* Leads: Actions for the leads ticked in the list (Email, Transfer, Delete), filled in by LeadsTable */}
+            {collection === "leads" && <span id="lead-bulk-actions" className="bulk-actions-slot" />}
+            {ticks && mode !== "kanban" && (
+              <ActionMenu
+                label="Actions"
+                badge={picked.size ? picked.size.toLocaleString() : null}
+                items={
+                  picked.size
+                    ? [
+                        (user.role === "Admin" || can(user, "reassign_owner") || can(user, "transfer_leads")) && {
+                          label: "Change Owner",
+                          disabled: picked.size > 500,
+                          onClick: () => setOppBulk({ type: "owner", ids: [...picked] }),
+                        },
+                        {
+                          label: "Mark as Lost",
+                          danger: true,
+                          disabled: picked.size > 500,
+                          onClick: () => setOppBulk({ type: "lost", ids: [...picked] }),
+                        },
+                        "-",
+                        { label: "Clear Selection", onClick: () => setPicked(new Set()) },
+                      ]
+                    : [{ label: "Tick opportunities in the list first", disabled: true }]
+                }
+              />
+            )}
             {dataList && can(user, "import_leads") && (
               <button className="sf-button" onClick={() => setFiles("upload")}>
                 Upload
@@ -403,6 +439,23 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
             <table className="sf-table">
               <thead>
                 <tr>
+                  {ticks && (
+                    <th className="select-col">
+                      <input
+                        type="checkbox"
+                        className="row-check"
+                        aria-label="Select all opportunities on this page"
+                        checked={pageRows.length > 0 && pageRows.every((r) => picked.has(r.id))}
+                        onChange={(e) =>
+                          setPicked((old) => {
+                            const next = new Set(old);
+                            pageRows.forEach((r) => (e.target.checked ? next.add(r.id) : next.delete(r.id)));
+                            return next;
+                          })
+                        }
+                      />
+                    </th>
+                  )}
                   <th className="rownum" aria-label="Row number" />
                   {cols.map(([label, , , kind], i) => (
                     <Th
@@ -421,7 +474,24 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
               </thead>
               <tbody>
                 {pageRows.map((r, i) => (
-                  <tr key={r.id}>
+                  <tr key={r.id} className={ticks && picked.has(r.id) ? "row-selected" : undefined}>
+                    {ticks && (
+                      <td className="select-col">
+                        <input
+                          type="checkbox"
+                          className="row-check"
+                          aria-label={`Select ${r.name}`}
+                          checked={picked.has(r.id)}
+                          onChange={(e) =>
+                            setPicked((old) => {
+                              const next = new Set(old);
+                              e.target.checked ? next.add(r.id) : next.delete(r.id);
+                              return next;
+                            })
+                          }
+                        />
+                      </td>
+                    )}
                     <td className="rownum">{start + i + 1}</td>
                     {cols.map(([label, get, render, kind]) => {
                       const text = get(r);
@@ -453,6 +523,27 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
               setViewName("My Open Leads");
               setUploads((n) => n + 1);
             }
+            reload?.().catch(() => {});
+          }}
+        />
+      )}
+      {oppBulk && (
+        <OpportunityBulkDialog
+          action={oppBulk}
+          users={data.users || []}
+          me={user}
+          onClose={() => setOppBulk(null)}
+          onDone={(res) => {
+            setOppBulk(null);
+            setPicked(new Set());
+            notify(
+              bulkResultMessage(
+                res,
+                oppBulk.type === "owner"
+                  ? `${res.transferred} opportunit${res.transferred === 1 ? "y" : "ies"} moved to ${res.to}.`
+                  : `${res.closed} opportunit${res.closed === 1 ? "y" : "ies"} marked as Lost.`,
+              ),
+            );
             reload?.().catch(() => {});
           }}
         />

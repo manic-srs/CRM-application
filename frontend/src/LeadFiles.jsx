@@ -22,7 +22,7 @@ const OBJECTS = {
     one: "lead",
     sample: SAMPLE_LEADS,
     intro: "Import leads from an Excel (.xlsx) or CSV file.",
-    rules: ["Required: Last Name, Company", "Email must match the company website", "Emails already in the CRM are skipped", "Leads start at Unqualified"],
+    rules: ["Required: Last Name, Company", "Email must match the company website", "Emails already in the CRM are skipped", "Leads start at New"],
     columns: [
       ["Name", (l) => [l.first_name, l.last_name].filter(Boolean).join(" ")],
       ["Title", (l) => l.title],

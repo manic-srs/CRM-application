@@ -2,13 +2,13 @@
 
 Every upload and download is recorded in the Activity Log (who, when, what, how many, and the reason for downloads),
 and the Admin is notified of downloads.
-Uploaded leads start at Unqualified. They get no welcome email, no notification each and no automatic task, so a file of
+Uploaded leads start at New. They get no welcome email, no notification each and no automatic task, so a file of
 100,000 leads doesn't flood the bell or the task list. Rows whose email is already in the CRM are skipped.
 """
 import csv
 import io
 import re
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -390,6 +390,10 @@ LIST_VIEWS = {
     "all": lambda q, me: q,
     "converted": lambda q, me: q.where(Lead.stage == "Converted"),
     "lost": lambda q, me: q.where(Lead.stage == "Lost"),
+    "unqualified": lambda q, me: q.where(Lead.stage == "Unqualified"),
+    # Revisit leads whose date has come (today or earlier)
+    "revisit_due": lambda q, me: q.where(Lead.stage == "Revisit",
+                                         Lead.revisit_date < datetime.combine(date.today() + timedelta(days=1), time())),
     "uploaded": lambda q, me: q.where(Lead.uploaded_from.is_not(None)),
     "my_uploaded": lambda q, me: q.where(Lead.uploaded_from.is_not(None), Lead.owner_id == me.id),
 }

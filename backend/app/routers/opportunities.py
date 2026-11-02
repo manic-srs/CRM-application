@@ -13,8 +13,8 @@ from starlette.datastructures import UploadFile
 from app import schemas
 from app.constants import OPPORTUNITY_FLOW, OPPORTUNITY_OPEN_STAGES, OPPORTUNITY_STAGES, STAGE_PROBABILITY
 from app.database import get_db
-from app.security import acting_user_id, check_owner_change, require_edit, require_view, visible
-from app.models import Contact, Opportunity, OpportunityAttachment
+from app.security import acting_user, acting_user_id, check_owner_change, require_edit, require_view, visible
+from app.models import Contact, Opportunity, OpportunityAttachment, User
 from app.routers.attachments import (MAX_REQUEST_BYTES, checked_type, clean_filename, header_login_only,
                                      locked_opportunity, read_upload)
 from app.serializers import history_out, opportunity_detail, opportunity_out
@@ -25,6 +25,8 @@ from app.services import (
     auto_close_open_tasks,
     get_for_update,
     get_or_404,
+    log_activity,
+    notify,
     now,
     record_stage_change,
     reassign_system_tasks,
@@ -112,6 +114,12 @@ def check_stage_change(opp: Opportunity, stage: str) -> int:
     return acting_user_id()
 
 
+# Discovery (Salesforce "Needs Analysis"): saved on the deal when it moves to Discovery; editable afterwards (Edit)
+DISCOVERY_FIELDS = ("discovery_needs", "discovery_budget", "discovery_decision_maker", "discovery_timeline")
+DISCOVERY_LABELS = (("discovery_needs", "Needs"), ("discovery_budget", "Budget"),
+                    ("discovery_decision_maker", "Decision maker"), ("discovery_timeline", "Timeline"))
+
+
 def move_stage(db: Session, opp: Opportunity, data: schemas.OpportunityStageChange, task_owner: int, by: int) -> None:
     """Between Opportunity, Discovery and Proposal: stage history (with the user's note), the user's new task (instead
     of the system follow-up), old follow-ups closed and the owner's notification (the caller saves). Moving forward
@@ -121,6 +129,16 @@ def move_stage(db: Session, opp: Opportunity, data: schemas.OpportunityStageChan
         opp.stage = confirm_skipped(db, flow=OPPORTUNITY_FLOW, current=opp.stage,
                                     target_index=OPPORTUNITY_FLOW.index(stage), completed=data.completed_stages,
                                     note=data.completed_note, by=by, opportunity_id=opp.id, what=stage)
+    details = [f"Note: {note}"]
+    if stage == "Discovery":  # Salesforce "Needs Analysis": what the customer needs is required
+        needs = (data.discovery_needs or "").strip()
+        if len(needs) < 5:
+            raise HTTPException(status_code=422, detail="Describe what the customer needs (Discovery)")
+        for field in DISCOVERY_FIELDS:
+            value = getattr(data, field)
+            if value is not None and value.strip():
+                setattr(opp, field, value.strip())
+        details += [f"{label}: {getattr(opp, field)}" for field, label in DISCOVERY_LABELS if getattr(opp, field)]
     old = opp.stage
     opp.stage = stage
     opp.probability = STAGE_PROBABILITY[stage]
@@ -130,7 +148,7 @@ def move_stage(db: Session, opp: Opportunity, data: schemas.OpportunityStageChan
                           opportunity_id=opp.id)
     stage_notice(
         db, kind="Opportunity", stage=stage, record_name=opp.name, owner_id=opp.owner_id, actor_id=by,
-        opportunity_id=opp.id, task=task, details=[f"Note: {note}"],
+        opportunity_id=opp.id, task=task, details=details,
         title="Opportunity moved back to Opportunity" if stage == "Opportunity" else None,
     )
 
@@ -240,13 +258,15 @@ async def change_stage_with_files(opportunity_id: int, request: Request, db: Ses
     ensure_open(opp)
     require_edit(opp.owner_id, "opportunity")  # before the files are read
     check_request_size(request)
-    async with request.form(max_files=STAGE_MAX_FILES, max_fields=8) as form:
-        refuse_unknown_fields(form, {"stage", "note", "task", "files", "completed_stages", "completed_note"})
+    async with request.form(max_files=STAGE_MAX_FILES, max_fields=12) as form:
+        refuse_unknown_fields(form, {"stage", "note", "task", "files", "completed_stages", "completed_note",
+                                     *DISCOVERY_FIELDS})
         try:
             data = schemas.OpportunityStageChange(stage=form.get("stage"), note=form.get("note") or None,
                                                   task=form_task(form.get("task")),
                                                   completed_stages=form.getlist("completed_stages"),
-                                                  completed_note=form.get("completed_note") or None)
+                                                  completed_note=form.get("completed_note") or None,
+                                                  **{f: form.get(f) or None for f in DISCOVERY_FIELDS})
         except ValidationError as error:
             raise invalid_form(error)
         stage_task_owner(db, data.task, opp.owner_id)  # the assignee is checked before the files are read
@@ -341,29 +361,104 @@ async def mark_won_with_files(opportunity_id: int, request: Request, db: Session
     return opportunity_detail(opp)
 
 
+def close_lost(db: Session, opp: Opportunity, lost_reason: str, lost_notes: str, by: int) -> None:
+    """Closes an open deal as Lost: stage history, open tasks closed, the owner's notification (the caller saves)."""
+    old = opp.stage
+    opp.stage = "Lost"
+    opp.probability = STAGE_PROBABILITY["Lost"]
+    opp.lost_reason = lost_reason
+    opp.lost_notes = lost_notes
+    opp.closed_at = now()
+    record_stage_change(db, opportunity_id=opp.id, from_stage=old, to_stage="Lost", changed_by_id=by, note=lost_notes)
+    auto_close_open_tasks(db, opportunity_id=opp.id)
+    details = [f"Lost at stage: {old}", f"Reason: {lost_reason}", f"Notes: {lost_notes}"]
+    stage_notice(db, kind="Opportunity", stage="Lost", record_name=opp.name, owner_id=opp.owner_id,
+                 actor_id=by, opportunity_id=opp.id, details=details)
+
+
 @router.post("/{opportunity_id}/lost", response_model=schemas.OpportunityDetail)
 def mark_lost(opportunity_id: int, data: schemas.MarkLost, db: Session = Depends(get_db)):
     """Close as Lost from any open stage. A lost reason and notes are required (no new task)."""
     opp = get_for_update(db, Opportunity, opportunity_id, "Opportunity")
     ensure_open(opp)
     require_edit(opp.owner_id, "opportunity")
-    by = acting_user_id()
-    old = opp.stage
-    opp.stage = "Lost"
-    opp.probability = STAGE_PROBABILITY["Lost"]
-    opp.lost_reason = data.lost_reason
-    opp.lost_notes = data.lost_notes
-    opp.closed_at = now()
-    record_stage_change(
-        db, opportunity_id=opp.id, from_stage=old, to_stage="Lost", changed_by_id=by, note=data.lost_notes
-    )
-    auto_close_open_tasks(db, opportunity_id=opp.id)
-    details = [f"Lost at stage: {old}", f"Reason: {data.lost_reason}", f"Notes: {data.lost_notes}"]
-    stage_notice(db, kind="Opportunity", stage="Lost", record_name=opp.name, owner_id=opp.owner_id,
-                 actor_id=by, opportunity_id=opp.id, details=details)
+    close_lost(db, opp, data.lost_reason, data.lost_notes, acting_user_id())
     db.commit()
     db.refresh(opp)
     return opportunity_detail(opp)
+
+
+# ---------- bulk: the opportunities ticked in the list (Actions menu) ----------
+
+def _bulk(db: Session, ids: list[int]):
+    seen = set()
+    for opp_id in ids:
+        if opp_id not in seen:
+            seen.add(opp_id)
+            yield opp_id, db.get(Opportunity, opp_id)
+
+
+def _skipped(opp_id: int, opp: Opportunity | None, exc: HTTPException) -> dict:
+    hidden = opp is None or exc.status_code == 404
+    return {"id": opp_id, "name": f"Opportunity {opp_id}" if hidden else opp.name,
+            "reason": "Not found, or you don't have access to it" if hidden else str(exc.detail)}
+
+
+@router.post("/bulk-transfer")
+def bulk_transfer(data: schemas.BulkOpportunityTransfer, db: Session = Depends(get_db)):
+    """Change the owner of several open opportunities (Salesforce "Change Owner"). The Admin and users with Reassign
+    owner can move any deal they can see; a user with Transfer own leads can move their own. Follow-ups and reminders
+    go to the new owner. Deals that can't be moved are skipped with the reason. One notification to the new owner."""
+    me = acting_user()
+    target = db.get(User, data.to_user_id)
+    if target is None or not target.is_active or target.role == "Admin":
+        raise HTTPException(status_code=400, detail="Choose an active Manager or Salesperson")
+    moved, skipped = [], []
+    for opp_id, opp in _bulk(db, data.opportunity_ids):
+        try:
+            if opp is None:
+                raise HTTPException(status_code=404, detail="Not found")
+            require_view(opp.owner_id, "opportunity")
+            ensure_open(opp)
+            if not (me.is_admin or me.can("reassign_owner") or (me.can("transfer_leads") and opp.owner_id == me.id)):
+                raise HTTPException(status_code=403, detail="You can only transfer your own opportunities")
+            if opp.owner_id == target.id:
+                raise HTTPException(status_code=400, detail=f"Already owned by {target.full_name}")
+            opp.owner_id = target.id
+            db.flush()
+            reassign_system_tasks(db, target.id, opportunity_id=opp.id)
+            log_activity(db, me.id, "Opportunity reassigned", opp.name,
+                         f"New owner: {target.full_name} (bulk)" + (f" • Note: {data.note}" if data.note else ""))
+            moved.append({"id": opp.id, "name": opp.name})
+        except HTTPException as exc:
+            skipped.append(_skipped(opp_id, opp, exc))
+    if moved and target.id != me.id:
+        names = ", ".join(m["name"] for m in moved[:10]) + (f" and {len(moved) - 10} more" if len(moved) > 10 else "")
+        notify(db, target.id, "Opportunities assigned to you",
+               f"{me.full_name} gave you {len(moved)} opportunit{'ies' if len(moved) != 1 else 'y'}: {names}."
+               + (f"\nNote: {data.note}" if data.note else ""), link="/opportunities", category="assignment")
+    db.commit()
+    return {"transferred": len(moved), "to": target.full_name, "moved": moved, "skipped": skipped}
+
+
+@router.post("/bulk-lost")
+def bulk_lost(data: schemas.BulkOpportunityLost, db: Session = Depends(get_db)):
+    """Close several open opportunities as Lost with one reason and note (e.g. cleaning up stale deals). Each follows
+    the Mark as Lost rules; deals that can't be closed are skipped with the reason."""
+    by = acting_user_id()
+    closed, skipped = [], []
+    for opp_id, opp in _bulk(db, data.opportunity_ids):
+        try:
+            if opp is None:
+                raise HTTPException(status_code=404, detail="Not found")
+            require_edit(opp.owner_id, "opportunity")
+            ensure_open(opp)
+            close_lost(db, opp, data.lost_reason, data.lost_notes, by)
+            closed.append({"id": opp.id, "name": opp.name})
+        except HTTPException as exc:
+            skipped.append(_skipped(opp_id, opp, exc))
+    db.commit()
+    return {"closed": len(closed), "lost": closed, "skipped": skipped}
 
 
 @router.get("/{opportunity_id}/history", response_model=list[schemas.StageHistoryOut])

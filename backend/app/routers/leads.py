@@ -1,7 +1,7 @@
 """Lead APIs: the first half of the lifecycle.
 
-Unqualified -> New -> Nurturing -> Revisit (optional) -> Demo -> Converted (becomes an Opportunity), or Lost at any
-open stage.
+New -> Nurturing -> Revisit (optional, "not now": come back on a date) -> Demo -> Converted (becomes an Opportunity).
+Closed without converting from any open stage: Unqualified (not eligible, with a reason; can be reopened) or Lost.
 At each stage the system closes the old follow-up ("Auto-closed") and creates the next one.
 """
 from datetime import date, timedelta
@@ -138,7 +138,7 @@ def check_lead_email(db: Session, email: str | None, website: str | None, *, exc
 
 @router.post("", response_model=schemas.LeadDetail, status_code=status.HTTP_201_CREATED)
 def create_lead(data: schemas.LeadCreate, db: Session = Depends(get_db)):
-    """Create a lead at stage Unqualified. The system adds a 'Qualify lead' task for the owner.
+    """Create a lead at stage New. The system adds a 'Make first contact' task for the owner.
     Admins can create leads too, and choose who owns them."""
     owner_id = resolve_user_id(db, owner_for_new(data.owner_id))
     actor_id = acting_user_id()
@@ -155,7 +155,7 @@ def create_lead(data: schemas.LeadCreate, db: Session = Depends(get_db)):
     stage_notice(
         db, kind="Lead", stage=LEAD_START, record_name=lead.name, owner_id=owner_id,
         actor_id=actor_id, lead_id=lead.id, task=task,
-        title="Lead assigned to you" if assigned else None,
+        title="Lead assigned to you" if assigned else "Lead created",
         details=[f"Company: {lead.company}", f"Source: {lead.source}"],
     )
     db.commit()
@@ -400,6 +400,7 @@ def cancel_demo(lead_id: int, data: schemas.CancelDemo, db: Session = Depends(ge
         db.refresh(lead)
         return lead_detail(lead)
     lead.stage, lead.demo_date = "Revisit", None
+    lead.revisit_date, lead.revisit_reason = data.task.due_date.replace(tzinfo=None), "Demo cancelled"
     note = "Demo cancelled" + (f": {reason}" if reason else "")
     record_stage_change(db, lead_id=lead.id, from_stage="Demo", to_stage="Revisit", changed_by_id=by, note=note)
     auto_close_open_tasks(db, lead_id=lead.id)  # closes "Conduct demo" and "Prepare for demo"
@@ -419,7 +420,8 @@ def cancel_demo(lead_id: int, data: schemas.CancelDemo, db: Session = Depends(ge
 
 @router.put("/{lead_id}/stage", response_model=schemas.LeadDetail)
 def change_stage(lead_id: int, data: schemas.LeadStageChange, db: Session = Depends(get_db)):
-    """Move to any open stage (Unqualified, New, Nurturing, Revisit, Demo), also to correct a wrong stage. A note (saved in the history) and the user's
+    """Move to any open stage (New, Nurturing, Revisit, Demo), also to correct a wrong stage. Revisit needs the date to
+    come back (the new task is due then) and the reason. A note (saved in the history) and the user's
     new task are required. Old follow-ups are auto-closed; the new task takes the place of the system follow-up for
     the new stage. The demo reminders ("Conduct demo" at the demo and the day-before prep task) are still created
     and kept in step with the demo date when one is given."""
@@ -432,6 +434,14 @@ def change_stage(lead_id: int, data: schemas.LeadStageChange, db: Session = Depe
     lead.untouched = False  # someone is working on it now
     by = acting_user_id()
 
+    if data.stage == "Revisit":  # "not now": when to come back and why; the new task is due on that day
+        if data.revisit_date is None or data.revisit_reason is None:
+            raise HTTPException(status_code=422, detail="Choose when to revisit the lead and why")
+        revisit_on = data.revisit_date.replace(tzinfo=None, microsecond=0)
+        if revisit_on.date() <= now().date():
+            raise HTTPException(status_code=400, detail="Choose a revisit date after today")
+        data.task.due_date = revisit_on
+        data.task.reminder_at = data.task.reminder_at or revisit_on
     if LEAD_FLOW.index(data.stage) > LEAD_FLOW.index(lead.stage):  # forward: no skipping (going back is allowed)
         lead.stage = confirm_skipped(db, flow=LEAD_FLOW, current=lead.stage, target_index=LEAD_FLOW.index(data.stage),
                                      completed=data.completed_stages, note=data.completed_note, by=by,
@@ -440,11 +450,17 @@ def change_stage(lead_id: int, data: schemas.LeadStageChange, db: Session = Depe
     lead.stage = data.stage
     if data.stage == "Demo" and data.demo_date:
         lead.demo_date = data.demo_date
+    if data.stage == "Revisit":
+        lead.revisit_date, lead.revisit_reason = data.task.due_date, data.revisit_reason
+    else:
+        lead.revisit_date = lead.revisit_reason = None
     record_stage_change(db, lead_id=lead.id, from_stage=old, to_stage=data.stage, changed_by_id=by, note=data.note)
     auto_close_open_tasks(db, lead_id=lead.id)
     task = add_stage_task(db, data.task, owner_id=task_owner, record_owner_id=lead.owner_id, actor_id=by,
                           lead_id=lead.id)
     details = []
+    if data.stage == "Revisit":
+        details.append(f"Revisit on: {lead.revisit_date:%d %b %Y} ({lead.revisit_reason})")
     if data.stage == "Demo":
         if data.demo_date:  # the demo-time reminder ("Conduct demo", kept in step with the demo date) stays
             create_auto_task(db, stage="Demo", owner_id=lead.owner_id, record_name=lead.name, lead_id=lead.id,
@@ -471,6 +487,7 @@ def mark_lost(lead_id: int, data: schemas.MarkLost, db: Session = Depends(get_db
     by = acting_user_id()
     old = lead.stage
     lead.stage = "Lost"
+    lead.revisit_date = lead.revisit_reason = None
     lead.lost_reason = data.lost_reason
     lead.lost_notes = data.lost_notes
     lead.closed_at = now()
@@ -479,6 +496,54 @@ def mark_lost(lead_id: int, data: schemas.MarkLost, db: Session = Depends(get_db
     details = [f"Lost at stage: {old}", f"Reason: {data.lost_reason}", f"Notes: {data.lost_notes}"]
     stage_notice(db, kind="Lead", stage="Lost", record_name=lead.name, owner_id=lead.owner_id,
                  actor_id=by, lead_id=lead.id, details=details)
+    db.commit()
+    db.refresh(lead)
+    return lead_detail(lead)
+
+
+@router.post("/{lead_id}/unqualified", response_model=schemas.LeadDetail)
+def mark_unqualified(lead_id: int, data: schemas.MarkUnqualified, db: Session = Depends(get_db)):
+    """Close the lead as Unqualified (not eligible), from any open stage, like Salesforce "Closed - Not Converted".
+    A reason and notes are required; open tasks are closed. The lead stays in the CRM (Unqualified Leads list) and can
+    be reopened later if things change."""
+    lead = get_for_update(db, Lead, lead_id, "Lead")
+    ensure_open(lead)
+    require_edit(lead.owner_id, "lead")
+    lead.untouched = False
+    by = acting_user_id()
+    old = lead.stage
+    lead.stage, lead.closed_at = "Unqualified", now()
+    lead.unqualified_reason, lead.unqualified_notes = data.reason, data.notes
+    lead.revisit_date = lead.revisit_reason = lead.demo_date = None
+    record_stage_change(db, lead_id=lead.id, from_stage=old, to_stage="Unqualified", changed_by_id=by,
+                        note=f"{data.reason}: {data.notes}")
+    auto_close_open_tasks(db, lead_id=lead.id)
+    stage_notice(db, kind="Lead", stage="Unqualified", record_name=lead.name, owner_id=lead.owner_id, actor_id=by,
+                 lead_id=lead.id, details=[f"Was at: {old}", f"Reason: {data.reason}", f"Notes: {data.notes}"])
+    db.commit()
+    db.refresh(lead)
+    return lead_detail(lead)
+
+
+@router.post("/{lead_id}/reopen", response_model=schemas.LeadDetail)
+def reopen(lead_id: int, data: schemas.ReopenLead, db: Session = Depends(get_db)):
+    """Bring an Unqualified lead back to New (Salesforce "recycle": e.g. the budget is there now). A note and the
+    user's new task are required."""
+    lead = get_for_update(db, Lead, lead_id, "Lead")
+    require_view(lead.owner_id, "lead")
+    if lead.stage != "Unqualified":
+        raise HTTPException(status_code=400, detail="Only an Unqualified lead can be reopened")
+    require_edit(lead.owner_id, "lead")
+    task_owner = stage_task_owner(db, data.task, lead.owner_id)
+    by = acting_user_id()
+    lead.stage, lead.closed_at = LEAD_START, None
+    lead.unqualified_reason = lead.unqualified_notes = None
+    record_stage_change(db, lead_id=lead.id, from_stage="Unqualified", to_stage=LEAD_START, changed_by_id=by,
+                        note=f"Reopened: {data.note}")
+    task = add_stage_task(db, data.task, owner_id=task_owner, record_owner_id=lead.owner_id, actor_id=by,
+                          lead_id=lead.id)
+    stage_notice(db, kind="Lead", stage=LEAD_START, record_name=lead.name, owner_id=lead.owner_id, actor_id=by,
+                 lead_id=lead.id, task=task, details=[f"Reopened: {data.note}"], title="Lead reopened")
     db.commit()
     db.refresh(lead)
     return lead_detail(lead)

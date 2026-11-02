@@ -206,7 +206,7 @@ def test_a_note_sent_as_a_file_is_refused(client, path):
 def test_lead_notes_are_trimmed_and_kept_in_the_history_after_conversion(client, sent):
     lead = new_lead(client)
     lid = lead["id"]
-    assert lead["history"] == [{**lead["history"][0], "from_stage": None, "to_stage": "Unqualified", "note": None}]  # no note
+    assert lead["history"] == [{**lead["history"][0], "from_stage": None, "to_stage": "New", "note": None}]  # no note
     ok(client.put(f"/api/leads/{lid}/stage", json={"task": TASK, "stage": "Nurturing", "completed_stages": ["New"], "note": NOTE}))
     assert SAVED in sent[-1]["body"]  # the owner's "moved to Nurturing" email shows the note
     ok(client.put(f"/api/leads/{lid}/stage", json={"task": TASK, "stage": "New", "note": "  Wrong stage, moving back  "}))  # backward
@@ -216,7 +216,7 @@ def test_lead_notes_are_trimmed_and_kept_in_the_history_after_conversion(client,
     res = ok(client.post(f"/api/leads/{lid}/convert", json={"task": TASK, "note": " Budget approved\nready for a proposal ",
                                                              "expected_value": 1000}))
     assert res["lead"]["stage"] == "Converted"
-    lead_history = [("Unqualified", "New", "Confirmed as completed"), ("New", "Nurturing", SAVED),
+    lead_history = [("New", "Nurturing", SAVED),
                     ("Nurturing", "New", "Wrong stage, moving back"),
                     ("New", "Nurturing", "Follow-up call booked"), ("Nurturing", "Demo", "Demo booked for December"),
                     ("Demo", "Converted", "Budget approved\nready for a proposal")]
@@ -235,7 +235,7 @@ def test_skipped_stages_keep_their_confirmation_and_the_note_goes_on_the_request
                                                                     "expected_value": 1000,
                                                                     "note": "Signed the letter of intent"}))
     assert history(client, "leads", lead["id"])[1:] == [
-        ("Unqualified", "New", "Confirmed as completed"), ("New", "Nurturing", "Confirmed as completed"),
+        ("New", "Nurturing", "Confirmed as completed"),
         ("Nurturing", "Demo", "Confirmed as completed"),
         ("Demo", "Converted", "Signed the letter of intent")]
     opp = res["opportunity"]
@@ -329,7 +329,7 @@ def test_a_note_does_not_replace_permission_checks(client):
 def test_creating_and_editing_records_need_no_note_and_cannot_change_the_stage(client):
     lead = new_lead(client)  # creating a lead is not a stage change
     edited = ok(client.put(f"/api/leads/{lead['id']}", json={"title": "CFO", "stage": "Lost", "lost_reason": "Price"}))
-    assert (edited["title"], edited["stage"], edited["lost_reason"]) == ("CFO", "Unqualified", None)
+    assert (edited["title"], edited["stage"], edited["lost_reason"]) == ("CFO", "New", None)
     opp = new_opportunity(client)
     before = len(history(client, "opportunities", opp["id"]))
     edited = ok(client.put(f"/api/opportunities/{opp['id']}", json={"expected_value": 2000, "stage": "Won"}))

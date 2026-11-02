@@ -3,11 +3,12 @@
 // The Kanban view uses the same query: one request per status column, each with its own total.
 // Tick the checkboxes to transfer or delete several leads at once (the server checks each lead and skips the ones you can't change).
 import React, { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api, apiRequest } from "./api";
 import { leadBoardColumns } from "./domain";
 import LeadsKanban from "./LeadsKanban";
 import { can } from "./permissions";
-import { DateCell, Icon, PhoneReveal, StageBadge } from "./ui";
+import { ActionMenu, DateCell, Icon, PhoneReveal, StageBadge } from "./ui";
 import { dateTime } from "./format";
 import { filterSummary, rangeBounds, Th } from "./Filters";
 
@@ -168,6 +169,9 @@ export default function LeadsTable({
   const [error, setError] = useState("");
   const [selected, setSelected] = useState(() => new Set());
   const [bulk, setBulk] = useState(null); // { type: "transfer" | "delete", ids }
+  // the Actions menu sits with Upload / Download / History / New in the list header (a slot ListView renders)
+  const [actionsSlot, setActionsSlot] = useState(null);
+  useEffect(() => setActionsSlot(document.getElementById("lead-bulk-actions")), []);
   const [again, setAgain] = useState(0); // reloads the list after a bulk action
   const kanban = mode === "kanban";
   const columns = leadBoardColumns(view, stage || filters.stage);
@@ -258,10 +262,49 @@ export default function LeadsTable({
 
   return (
     <>
+      {actionsSlot &&
+        !kanban &&
+        createPortal(
+          <ActionMenu
+            label="Actions"
+            badge={selected.size ? selected.size.toLocaleString() : null}
+            items={
+              selected.size
+                ? [
+                    canTransferAny && {
+                      label: `Transfer ${selected.size === 1 ? "Lead" : "Leads"}`,
+                      disabled: selected.size > 500,
+                      title: selected.size > 500 ? "Up to 500 leads at a time" : undefined,
+                      onClick: () => setBulk({ type: "transfer", ids: [...selected] }),
+                    },
+                    "-",
+                    {
+                      label: `Delete ${selected.size === 1 ? "Lead" : "Leads"}`,
+                      danger: true,
+                      disabled: selected.size > 500,
+                      title: selected.size > 500 ? "Up to 500 leads at a time" : undefined,
+                      onClick: () => setBulk({ type: "delete", ids: [...selected] }),
+                    },
+                  ]
+                : [{ label: "Tick leads in the list first", disabled: true }]
+            }
+          />,
+          actionsSlot,
+        )}
       <section className="card table-card leads-card">
         <div className="list-meta leads-meta">
           <span>
-            {loaded ? `${total.toLocaleString()} item${total === 1 ? "" : "s"}` : "Loading…"} • Sorted by {sortLabel}
+            {loaded ? `${total.toLocaleString()} item${total === 1 ? "" : "s"}` : "Loading…"}
+            {!kanban && selected.size > 0 && (
+              <>
+                {" • "}
+                <b>{selected.size.toLocaleString()} selected</b>{" "}
+                <button className="link filter-clear" onClick={() => setSelected(new Set())}>
+                  Clear selection
+                </button>
+              </>
+            )}
+            {" • "}Sorted by {sortLabel}
             {term ? " • Filtered by search" : ""}
             {filterSummary(defs, filters) && (
               <>
@@ -290,25 +333,6 @@ export default function LeadsTable({
             )}
           </div>
         </div>
-        {!kanban && selected.size > 0 && (
-          <div className="bulk-bar" role="region" aria-label="Selected leads">
-            <span>
-              <b>{selected.size.toLocaleString()}</b> selected
-            </span>
-            {canTransferAny && (
-              <button className="sf-button small" disabled={selected.size > 500} onClick={() => setBulk({ type: "transfer", ids: [...selected] })}>
-                <Icon name="transfer" size={14} /> Transfer
-              </button>
-            )}
-            <button className="sf-button small danger" disabled={selected.size > 500} onClick={() => setBulk({ type: "delete", ids: [...selected] })}>
-              <Icon name="trash" size={14} /> Delete
-            </button>
-            <button className="link" onClick={() => setSelected(new Set())}>
-              Clear selection
-            </button>
-            {selected.size > 500 && <span className="bulk-limit">Up to 500 leads at a time.</span>}
-          </div>
-        )}
         {error && (
           <div className="alert" role="alert">
             <Icon name="warn" size={16} />

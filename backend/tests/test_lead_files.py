@@ -95,7 +95,7 @@ def test_upload_preview_then_import(client, outbox):
     assert asha["uploaded_from"] == "apollo.csv"
     # uploaded leads are in the normal open-leads list too
     assert {l["last_name"] for l in client.get("/api/leads/page").json()["items"]} == {"Menon", "Iyer", "Diaz"}
-    assert asha["linkedin_url"] == "https://linkedin.com/in/asha" and asha["owner_id"] == 2 and asha["stage"] == "Unqualified"
+    assert asha["linkedin_url"] == "https://linkedin.com/in/asha" and asha["owner_id"] == 2 and asha["stage"] == "New"
     assert len(outbox) == sent  # no welcome emails for uploaded leads
     assert client.get(f"/api/leads/{asha['id']}").json()["tasks"] == []  # and no automatic tasks
     log = login_as(client, 3).get("/api/activity-log").json()[0]

@@ -47,14 +47,14 @@ def test_login(client):
 
 # ---------- leads ----------
 
-def test_create_lead_starts_unqualified_with_first_task(client):
+def test_create_lead_starts_at_new_with_first_task(client):
     lead = new_lead(client)
-    assert lead["stage"] == "Unqualified" and lead["owner_name"] == "Ravi Kumar"
+    assert lead["stage"] == "New" and lead["owner_name"] == "Ravi Kumar"
     assert (lead["salutation"], lead["first_name"], lead["last_name"], lead["name"]) == ("Mr.", "Arjun", "Mehta", "Arjun Mehta")
     assert (lead["title"], lead["industry"]) == ("Owner", "Education")
-    assert [t["title"] for t in lead["tasks"]] == ["Qualify lead - Arjun Mehta"]
+    assert [t["title"] for t in lead["tasks"]] == ["Make first contact - Arjun Mehta"]
     assert lead["tasks"][0]["is_auto"] is True
-    assert [h["to_stage"] for h in lead["history"]] == ["Unqualified"]
+    assert [h["to_stage"] for h in lead["history"]] == ["New"]
 
 
 def test_lead_validation(client):
@@ -91,8 +91,8 @@ def test_stage_change_closes_old_task_and_creates_next(client):
     assert sorted((t["title"], t["due_date"]) for t in open_tasks(demo)) == [
         ("Conduct demo - Arjun Mehta", demo_at), ("Prepare for demo - Arjun Mehta", "2026-11-30T09:00:00"),
         (TASK["title"], TASK["due_date"])]
-    assert [h["to_stage"] for h in demo["history"]] == ["Unqualified", "New", "Nurturing", "Demo"]
-    assert demo["history"][2]["note"] == "call in 2 weeks"
+    assert [h["to_stage"] for h in demo["history"]] == ["New", "Nurturing", "Demo"]
+    assert demo["history"][1]["note"] == "call in 2 weeks"
     # manual correction back is allowed; same stage is not
     assert client.put(f"/api/leads/{lead['id']}/stage", json={"task": TASK, "stage": "Nurturing", "completed_stages": ["New"], "note": "Synthetic test note"}).status_code == 200
     assert client.put(f"/api/leads/{lead['id']}/stage", json={"task": TASK, "stage": "Nurturing", "completed_stages": ["New"], "note": "Synthetic test note"}).status_code == 400
@@ -228,7 +228,7 @@ def test_home_page(client):
     home = client.get("/api/home").json()
     assert home["summary"]["total_leads"] == 6 and home["summary"]["won_deals"] == 1
     assert {p["stage"]: p["total"] for p in home["pipeline"]} == {
-        "Unqualified": 1, "New": 0, "Nurturing": 0, "Revisit": 0, "Demo": 1, "Opportunity": 2, "Discovery": 0,
+        "New": 1, "Nurturing": 0, "Revisit": 0, "Demo": 1, "Opportunity": 2, "Discovery": 0,
         "Proposal": 0, "Won": 1, "Lost": 1}
     assert home["won_vs_lost"][0] == {"outcome": "Won", "deals": 1, "value": 90000}
     cards = home["seller_home"]
