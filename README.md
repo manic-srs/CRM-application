@@ -41,8 +41,9 @@ email, tasks and reminders, notifications, lead conversion, closing a deal, and 
 - Lead research fields: LinkedIn profile, company website, company LinkedIn page (clickable, required with email),
   turnover, headcount and location.
 - LinkedIn autofill on New Lead: paste a LinkedIn profile URL and the empty fields are filled with the details Apollo
-  returns (name, title, verified work email, direct business phone, and the current employer's company name,
-  industry, website and LinkedIn page). Nothing is saved until Save; off until `APOLLO_API_KEY` is set.
+  returns (name, title, a work email Apollo marks verified, direct business phone, and the current employer's
+  company name, industry, website and LinkedIn page). These are Apollo's data, not checked by the CRM: review them
+  before saving. Nothing is saved until Save; off until `APOLLO_API_KEY` is set.
 - Delete a lead (owner, Manager or Admin); the Admin and Managers are notified and it is logged.
 - While typing the company on a lead, existing leads and accounts for that company are shown (only owner and stage
   for records the user can't open), so two people don't work the same company.

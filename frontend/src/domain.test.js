@@ -21,6 +21,7 @@ import {
   STAGE_FILES_MAX,
   AUTOFILL_FIELDS,
   autofillPlan,
+  autofillSummary,
   linkedInProfileUrl,
   attachmentProblem,
   attachmentType,
@@ -618,6 +619,37 @@ test("company details follow the same rules: empty fields only, manual entries k
   plan = autofillPlan({ ...form, industry: "Retail", company_linkedin_url: "" }, plan.autofilled, {});
   assert.deepEqual(plan.set, { industry: "" });
   assert.deepEqual(plan.autofilled, {});
+});
+test("switching profiles never mixes two people's details, and the user's own edits stay", () => {
+  const empty = Object.fromEntries(Object.keys(AUTOFILL_FIELDS).map((name) => [name, ""]));
+  const ana = { first_name: "Ana Maria", last_name: "Okafor", company: "Synthetic Co", email: "ana.okafor@synthetic-co.example" };
+  const mary = { first_name: "Mary Jo", last_name: "Lindqvist", company: "Other Co" }; // no usable email from Apollo
+  let plan = autofillPlan(empty, {}, ana);
+  assert.deepEqual(plan.set, ana); // the compound first name and the surname exactly as given
+  // the user corrects the surname, then pastes another profile
+  const form = { ...empty, ...ana, last_name: "Okafor-Typed" };
+  plan = autofillPlan(form, plan.autofilled, mary);
+  assert.deepEqual(plan.set, { first_name: "Mary Jo", company: "Other Co", email: "" }); // Ana's email doesn't stay
+  assert.deepEqual(plan.kept, ["last_name"]);
+  assert.deepEqual(plan.autofilled, { first_name: "Mary Jo", company: "Other Co" });
+  // an unmatched answer ({}) removes Mary's untouched values; the user's surname stays
+  plan = autofillPlan({ ...form, first_name: "Mary Jo", company: "Other Co", email: "" }, plan.autofilled, {});
+  assert.deepEqual(plan.set, { first_name: "", company: "" });
+});
+test("a match is described as Apollo's data, never as a confirmed identity or email owner", () => {
+  const matched = "Apollo returned a matching profile URL. Review all details before saving.";
+  const emailNote = "Email verification status is provided by Apollo; ownership has not been independently confirmed by this CRM.";
+  let summary = autofillSummary({ filled: ["first_name", "last_name", "email"], kept: ["company"] });
+  assert.equal(summary.text, `${matched} Filled by Apollo: First Name, Last Name, Email. Kept your entries for Company.`);
+  assert.equal(summary.email, emailNote);
+  assert.doesNotMatch(summary.text, /verified/i);
+  // no note when Apollo's email isn't in the form (none usable, or the user's own entry was kept)
+  summary = autofillSummary({ filled: ["first_name"], kept: ["email"] });
+  assert.equal(summary.text, `${matched} Filled by Apollo: First Name. Kept your entries for Email.`);
+  assert.equal(summary.email, "");
+  summary = autofillSummary({ filled: [], kept: [] });
+  assert.equal(summary.text, `${matched} Nothing was filled: the fields already had your entries.`);
+  assert.equal(summary.email, "");
 });
 test("LinkedIn autofill calls only the backend, with the login header, and keeps the error status", async (t) => {
   const calls = [];
