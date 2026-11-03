@@ -325,3 +325,22 @@ export function emailWebsiteProblem(email, website) {
     return `Personal emails (@${domain}) aren't allowed for a lead. Use the lead's work email, e.g. name@${host}.`;
   return `Please check the email: @${domain} doesn't match the company website (${host}). If this email is correct, click Save anyway.`;
 }
+
+// AI email drafting (New Email). The server decides; these only shape the composer's hints.
+const EMAIL_GREETING = /^(?:hi|hello|hey|dear|greetings|good (?:morning|afternoon|evening))(?:[ \t]+[^\s,!.:;]{1,40}){0,4}[ \t]*[,!.:]?$/i;
+const EMAIL_CLOSING = /^(?:best regards|kind regards|warm regards|regards|best wishes|sincerely|yours sincerely|respectfully)[ \t]*[,!.:]?$/i;
+// The user's own words: the draft without its greeting line and the closing + signature ("" for the starter text).
+export function draftContent(body, senderName = "", senderEmail = "") {
+  const own = new Set([senderName, senderEmail].map((value) => value.trim().toLowerCase()).filter(Boolean));
+  const lines = (body || "").replace(/\r\n/g, "\n").split("\n");
+  const signature = (line) => !line.trim() || own.has(line.trim().toLowerCase()) || EMAIL_CLOSING.test(line.trim());
+  while (lines.length && signature(lines[lines.length - 1])) lines.pop();
+  while (lines.length && !lines[0].trim()) lines.shift();
+  if (lines.length && EMAIL_GREETING.test(lines[0].trim())) lines.shift();
+  return lines.join("\n").trim();
+}
+// Whether To still addresses the record's contact (only then does the AI greet them by name).
+export function toRecordContact(to, recordEmail) {
+  const list = (to || "").split(/[,;]/).map((address) => address.trim().toLowerCase()).filter(Boolean);
+  return !list.length || (!!recordEmail && list.includes(recordEmail.trim().toLowerCase()));
+}

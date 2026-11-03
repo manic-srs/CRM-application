@@ -1,128 +1,325 @@
-import React, { useEffect, useRef, useState } from "react";
+// AI writing in New Email. A pen button opens a compact instruction bar inside the composer:
+// - a request writes a new email (when the message is only the greeting and signature) or changes the current draft;
+// - Refine (Professional, Conversational, Concise) rewrites an existing draft.
+// Only the subject and message are filled, after the server has validated the draft. It never sends, and never changes
+// To, Cc, attachments or the record. An answer is applied only if nothing changed while it was being written.
+import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api";
+import { draftContent, toRecordContact } from "./domain";
+import { Icon } from "./ui";
 
-export default function EmailDraftAssistant({ target, settings, subject, message, sending, onApply, onBusyChange }) {
+const REFINE = [["formalize", "Professional"], ["friendly", "Conversational"], ["shorten", "Concise"]];
+const DESCRIBE_FIRST = "Describe the email you need first. Professional, Conversational, and Concise refine an existing draft.";
+// Server messages that already say the email was kept, or that ask for more, are shown as they are.
+const keptMessage = (text) =>
+  /unchanged|kept|helps with CRM|sales context|describe the email/i.test(text) ? text : `${text} Your email is unchanged.`;
+
+export default function EmailDraftAssistant({ target, settings, user, subject, message, sending, recipients, onApply, onBusyChange }) {
+  const [open, setOpen] = useState(false); // closed until the pen is clicked
   const [instructions, setInstructions] = useState("");
-  const [error, setError] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
-  const [backup, setBackup] = useState(null);
-  const [undone, setUndone] = useState(false);
-  const [open, setOpen] = useState(true);
-  const [polishOpen, setPolishOpen] = useState(false);
-  const polish = useRef(null);
-  const polishButton = useRef(null);
-  const reopenButton = useRef(null);
+  const [error, setError] = useState("");
+  const [history, setHistory] = useState(null); // the last AI change: { previous, applied, undone }
+  const id = useId();
+  const toggle = useRef(null);
   const input = useRef(null);
-  const request = useRef(null);
+  const refineButton = useRef(null);
+  const refineBox = useRef(null);
+  const menu = useRef(null);
+  const request = useRef(null); // the request in progress: { id, controller }
+  const requests = useRef(0);
   const mounted = useRef(true);
+  const now = useRef(null); // what the composer holds now, for an answer that arrives later
+  now.current = { subject, message, record: `${target.field}:${target.id}` };
   const sampleMode = settings?.draft_mode === "sample";
-  const unavailable = settings?.ai_drafting_enabled === false;
-  const canUndo = backup && !undone && subject === backup.generated.subject && message === backup.generated.body;
-  const canRedo = backup && undone && subject === backup.previous.subject && message === backup.previous.body;
+  const unavailable = !settings || settings.ai_drafting_enabled === false;
+  const blocked = busy || sending || unavailable || sampleMode;
+  const canUndo = !!history && !history.undone && subject === history.applied.subject && message === history.applied.body;
+  const canRedo = !!history && history.undone && subject === history.previous.subject && message === history.previous.body;
 
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; request.current?.abort(); };
+    return () => {
+      mounted.current = false;
+      request.current?.controller.abort(); // the composer closed: the answer is never applied
+    };
   }, []);
 
+  // The instruction box grows with its text, up to four lines.
+  useLayoutEffect(() => {
+    const box = input.current;
+    if (!box || !open) return;
+    box.style.height = "auto";
+    box.style.height = `${Math.min(box.scrollHeight, 96)}px`;
+  }, [instructions, open]);
+
   useEffect(() => {
-    if (!polishOpen) return;
-    const dismiss = event => { if (!polish.current?.contains(event.target)) setPolishOpen(false); };
+    if (!menuOpen) return undefined;
+    const dismiss = (event) => { if (!refineBox.current?.contains(event.target)) setMenuOpen(false); };
     document.addEventListener("pointerdown", dismiss);
     return () => document.removeEventListener("pointerdown", dismiss);
-  }, [polishOpen]);
+  }, [menuOpen]);
 
-  const generate = async (action = "custom") => {
+  const stopWaiting = () => {
+    request.current = null;
+    setBusy(false);
+    onBusyChange(false);
+  };
+
+  const run = async (action) => {
+    if (busy || sending) return;
+    setMenuOpen(false);
+    setError("");
+    if (unavailable || sampleMode) return;
+    const refining = action !== "custom";
     const text = instructions.trim();
-    if ((action === "custom" ? !text : !message.trim()) || busy || sending || !settings || unavailable || sampleMode) return;
-    setPolishOpen(false);
-    setError(""); setNotice(""); setBusy(true); onBusyChange(true);
-    const previous = { subject, body: message };
-    const controller = new AbortController();
-    request.current = controller;
+    if (!refining && !text) return input.current?.focus();
+    if (refining && !draftContent(message, user.full_name, user.email)) return setNotice(DESCRIBE_FIRST);
+    const before = { subject, message, to: recipients(), record: now.current.record };
+    const mine = { id: ++requests.current, controller: new AbortController() };
+    request.current = mine;
+    setNotice("");
+    setBusy(true);
+    onBusyChange(true);
     try {
-      const draft = await api.draftEmail({
-        record_field: target.field,
-        record_id: Number(target.id),
-        action,
-        instructions: action === "custom" ? text : "",
-        current_subject: subject,
-        current_body: message,
-      }, AbortSignal.any([controller.signal, AbortSignal.timeout(50000)]));
-      if (mounted.current && !controller.signal.aborted) {
-        setBackup({ previous, generated: draft });
-        setUndone(false);
-        onApply(draft);
-        setNotice(action === "custom" ? `Draft added${draft.stage ? ` for the ${draft.stage} stage` : ""}. Review and edit before sending.` : "Email updated. Review and edit before sending.");
-      }
+      const draft = await api.draftEmail(
+        {
+          record_field: target.field,
+          record_id: Number(target.id),
+          action,
+          instructions: refining ? "" : text,
+          current_subject: subject,
+          current_body: message,
+          recipient_is_record_contact: toRecordContact(before.to, target.email),
+        },
+        AbortSignal.any([mine.controller.signal, AbortSignal.timeout(50000)]),
+      );
+      if (!mounted.current || request.current !== mine) return; // cancelled, closed or replaced
+      const latest = now.current;
+      if (latest.subject !== before.subject || latest.message !== before.message)
+        return setNotice("You changed the email while the draft was being written, so your version was kept.");
+      if (latest.record !== before.record || recipients() !== before.to)
+        return setNotice("The recipient changed while the draft was being written, so the draft wasn't applied.");
+      const applied = { subject: draft.subject, body: draft.body };
+      setHistory({ previous: { subject: before.subject, body: before.message }, applied, undone: false });
+      onApply(applied);
+      setNotice(draft.draft_type === "revision" ? "Draft updated. Review before sending." : "Draft generated. Review before sending.");
     } catch (err) {
-      if (mounted.current && !controller.signal.aborted) setError(err.message);
+      if (mounted.current && request.current === mine) setError(keptMessage(err.message));
     } finally {
-      if (mounted.current) {
-        if (controller.signal.aborted) setNotice("Generation cancelled. Your email is unchanged.");
-        setBusy(false); onBusyChange(false);
-      }
-      request.current = null;
+      if (mounted.current && request.current === mine) stopWaiting();
     }
   };
 
-  const blocked = busy || sending || !settings || unavailable || sampleMode;
-  const close = () => {
-    request.current?.abort();
-    setPolishOpen(false); setOpen(false);
-    requestAnimationFrame(() => reopenButton.current?.focus());
+  const cancel = () => {
+    if (!request.current) return;
+    request.current.controller.abort();
+    stopWaiting();
+    setNotice("Generation cancelled. Your email is unchanged.");
+  };
+  const openBar = () => {
+    setOpen(true);
+    requestAnimationFrame(() => input.current?.focus());
+  };
+  const closeBar = () => {
+    cancel(); // a pending answer would otherwise land after the bar is closed
+    setMenuOpen(false);
+    setOpen(false);
+    requestAnimationFrame(() => toggle.current?.focus());
+  };
+  const openMenu = (index) => {
+    setMenuOpen(true);
+    requestAnimationFrame(() => menu.current?.querySelectorAll("[role=menuitem]")[index]?.focus());
+  };
+  const undo = () => {
+    onApply(history.previous);
+    setHistory({ ...history, undone: true });
+    setNotice("Previous subject and message restored.");
+  };
+  const redo = () => {
+    onApply(history.applied);
+    setHistory({ ...history, undone: false });
+    setNotice("AI draft restored. Review before sending.");
   };
 
-  if (!open) return <div className="email-assistant-collapsed">
-    <button ref={reopenButton} type="button" className="email-assistant-reopen" aria-label="Open email AI assistant" aria-expanded={false} disabled={busy || sending} onClick={() => {
-      setOpen(true); requestAnimationFrame(() => input.current?.focus());
-    }}><Wand /> Help me write</button>
-  </div>;
+  const onBarKey = (event) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    event.stopPropagation(); // Escape closes the menu or the bar here, not the whole composer
+    if (menuOpen) {
+      setMenuOpen(false);
+      refineButton.current?.focus();
+    } else closeBar();
+  };
+  const onMenuKey = (event) => {
+    const items = [...(menu.current?.querySelectorAll("[role=menuitem]") || [])];
+    const at = items.indexOf(document.activeElement);
+    const go = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: items.length - 1 }[event.key];
+    if (go !== undefined) {
+      event.preventDefault();
+      items[(go + items.length) % items.length]?.focus();
+    } else if (event.key === "Tab") setMenuOpen(false);
+  };
+
+  let status = "";
+  if (busy)
+    status = (
+      <>
+        Writing draft…{" "}
+        <button type="button" className="link" onClick={cancel}>
+          Cancel
+        </button>
+      </>
+    );
+  else if (notice) status = notice;
+  else if (open && sampleMode) status = "AI drafting needs AI mode on the server. You can still write the email yourself.";
+  else if (open && settings && unavailable)
+    status = settings.settings_error || "AI drafting isn't available. You can still write the email yourself.";
+  else if (open) status = "Enter to generate · Shift+Enter for a new line";
 
   return (
-    <div className="email-assistant-inline" aria-label="Email AI assistant" aria-busy={busy}>
-      <div className="email-assistant-toolbar">
-      <div className="email-assistant-input-row">
-        <button type="button" className="email-assistant-generate" aria-label="Apply described change" title="Apply described change" onClick={() => generate()} disabled={blocked || !instructions.trim()}><Wand /></button>
-        <input ref={input} aria-label="Describe your change" placeholder="Describe your change" value={instructions} maxLength={4000} disabled={busy || sending} onChange={e => setInstructions(e.target.value)} onKeyDown={e => {
-          if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); e.stopPropagation(); generate(); }
-        }} aria-describedby="email-assistant-help"/>
-        <div className="email-assistant-polish" ref={polish} onKeyDown={event => {
-          if (event.key === "Escape" && polishOpen) { event.preventDefault(); event.stopPropagation(); setPolishOpen(false); polishButton.current?.focus(); }
-        }}>
-          <button ref={polishButton} type="button" className="email-assistant-polish-trigger" aria-label="Polish email" aria-expanded={polishOpen} aria-controls="email-polish-options" disabled={blocked || !message.trim()} onClick={() => setPolishOpen(value => !value)}><Wand /><span className="email-assistant-polish-label">Polish</span><svg className="email-assistant-more" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></button>
-          {polishOpen && <div id="email-polish-options" className="email-assistant-polish-options" role="group" aria-label="Email refinement options">
-            <button type="button" disabled={blocked} onClick={() => { polishButton.current?.focus(); generate("formalize"); }}><RefinementIcon kind="formalize" />Formalize</button>
-            <button type="button" disabled={blocked} onClick={() => { polishButton.current?.focus(); generate("friendly"); }}><RefinementIcon kind="friendly" />Friendly</button>
-            <button type="button" disabled={blocked} onClick={() => { polishButton.current?.focus(); generate("shorten"); }}><RefinementIcon kind="shorten" />Shorten</button>
-          </div>}
+    <div className="email-ai">
+      <div id={`${id}-bar`} className="email-ai-bar" role="group" aria-label="Write with AI" hidden={!open} onKeyDown={onBarKey}>
+        <textarea
+          ref={input}
+          className="email-ai-input"
+          rows={1}
+          value={instructions}
+          maxLength={4000}
+          aria-label="Describe the email or change you need"
+          placeholder="Describe the email or change you need…"
+          aria-describedby={`${id}-status`}
+          onChange={(event) => setInstructions(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+              event.preventDefault();
+              run("custom");
+            }
+          }}
+        />
+        <div className="email-ai-refine" ref={refineBox}>
+          <button
+            ref={refineButton}
+            type="button"
+            className="email-ai-refine-button"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            aria-controls={menuOpen ? `${id}-menu` : undefined}
+            disabled={blocked}
+            onClick={() => (menuOpen ? setMenuOpen(false) : openMenu(0))}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                event.preventDefault();
+                openMenu(event.key === "ArrowDown" ? 0 : REFINE.length - 1);
+              }
+            }}
+          >
+            Refine <Chevron />
+          </button>
+          {menuOpen && (
+            <div id={`${id}-menu`} ref={menu} className="email-ai-menu" role="menu" aria-label="Refine the current draft" onKeyDown={onMenuKey}>
+              {REFINE.map(([action, label]) => (
+                <button
+                  key={action}
+                  type="button"
+                  role="menuitem"
+                  tabIndex={-1}
+                  onClick={() => {
+                    input.current?.focus(); // Refine is disabled while the draft is written
+                    run(action);
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
+        <button
+          type="button"
+          className="email-ai-submit"
+          aria-label="Generate draft"
+          title="Generate draft (Enter)"
+          disabled={blocked || !instructions.trim()}
+          onClick={() => {
+            input.current?.focus(); // this button is disabled while the draft is written
+            run("custom");
+          }}
+        >
+          <ArrowUp />
+        </button>
+        <button type="button" className="email-ai-close" aria-label="Close AI writing bar" title="Close" onClick={closeBar}>
+          <Icon name="close" size={14} />
+        </button>
       </div>
-        <div className="email-assistant-history" role="group" aria-label="AI draft history">
-          <button type="button" aria-label="Undo draft" title="Undo draft" disabled={busy || sending || !canUndo} onClick={() => { onApply(backup.previous); setUndone(true); setNotice("Previous subject and message restored."); }}><HistoryIcon /></button>
-          <button type="button" aria-label="Redo draft" title="Redo draft" disabled={busy || sending || !canRedo} onClick={() => { onApply(backup.generated); setUndone(false); setNotice("AI draft restored. Review before sending."); }}><HistoryIcon redo /></button>
-        </div>
-        <button type="button" className="email-assistant-close" aria-label="Close email AI assistant" title="Close email AI assistant" onClick={close}>×</button>
+      <div className="email-ai-tools">
+        <button
+          ref={toggle}
+          type="button"
+          className="email-ai-toggle"
+          aria-label="Write with AI"
+          title="Write or refine this email with AI"
+          aria-expanded={open}
+          aria-controls={`${id}-bar`}
+          disabled={sending}
+          onClick={() => (open ? closeBar() : openBar())}
+        >
+          <Pen />
+        </button>
+        <span id={`${id}-status`} className="email-ai-status" role="status">
+          {status}
+        </span>
+        {history && (
+          <span className="email-ai-history" role="group" aria-label="AI changes">
+            <button type="button" aria-label="Undo AI change" title="Undo AI change" disabled={busy || sending || !canUndo} onClick={undo}>
+              <HistoryIcon />
+            </button>
+            <button type="button" aria-label="Redo AI change" title="Redo AI change" disabled={busy || sending || !canRedo} onClick={redo}>
+              <HistoryIcon redo />
+            </button>
+          </span>
+        )}
       </div>
-      <div id="email-assistant-help" className="email-assistant-inline-status">
-        {busy ? <><span role="status">Writing your email using the current CRM stage…</span><button type="button" className="link" onClick={() => request.current?.abort()}>Cancel generation</button></> : notice ? <span role="status">{notice}</span> : <span>{sampleMode ? "Custom descriptions require AI mode. Sample mode does not interpret your instructions." : unavailable ? settings?.settings_error || "AI drafting is unavailable. You can still write your email manually." : "Describe a change, then press Enter or the wand. Use Polish for tone and length."}</span>}
-      </div>
-      {error && <p className="form-error" role="alert">{error} Your existing email has been kept.</p>}
+      {error && (
+        <p className="form-error email-ai-error" role="alert">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
 
-function Wand() {
-  return <svg className="email-assistant-wand" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m4 20 11-11 4 4L8 24m5-13 4 4M6 2v4M4 4h4m10-4v4m-2-2h4M3 10v4m-2-2h4"/></svg>;
+function Pen() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 20l1.2-4.2L15.6 5.4a2 2 0 0 1 2.9 0l.1.1a2 2 0 0 1 0 2.9L8.2 18.8z" />
+      <path d="M13.8 7.2l3 3M19 14.5v4M17 16.5h4" />
+    </svg>
+  );
 }
 
-function RefinementIcon({ kind }) {
-  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    {kind === "formalize" ? <><rect x="3" y="7" width="18" height="14" rx="2" /><path d="M8 7V4h8v3M3 12h18M10 12v3h4v-3" /></> : kind === "friendly" ? <><circle cx="12" cy="12" r="9" /><path d="M8 14s1 3 4 3 4-3 4-3M8 8h.01M16 8h.01" /></> : <path d="m8 3 4 4 4-4M12 1v6m-4 14 4-4 4 4m-4-4v6M5 12h14" />}
-  </svg>;
+function ArrowUp() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 19V5M6 11l6-6 6 6" />
+    </svg>
+  );
+}
+
+function Chevron() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
 }
 
 function HistoryIcon({ redo = false }) {
-  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={redo ? { transform: "scaleX(-1)" } : undefined}><path d="m9 5-5 5 5 5M4 10h10a5 5 0 0 1 0 10h-3" /></svg>;
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={redo ? { transform: "scaleX(-1)" } : undefined}>
+      <path d="m9 5-5 5 5 5M4 10h10a5 5 0 0 1 0 10h-3" />
+    </svg>
+  );
 }
