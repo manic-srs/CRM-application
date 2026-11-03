@@ -549,49 +549,60 @@ function CampaignDetail({ id, user, notify }) {
 function EmailDashboard({ totals }) {
   const e = totals.emails;
   const l = totals.leads;
-  const tiles = [
-    ["Emails sent", e.sent, "ok"],
-    ["Not sent (failed)", e.failed, "bad"],
-    ["Not working (bounced at send)", e.invalid, "bad"],
-    ["Waiting to send", e.queued, "info"],
-    ["Left out of campaigns", e.left_out, "warn"],
+  const groups = [
+    [
+      "Emails",
+      `${n(totals.campaigns)} campaign${totals.campaigns === 1 ? "" : "s"}`,
+      [
+        ["Sent", e.sent, "ok"],
+        ["Failed", e.failed, "bad"],
+        ["Not working", e.invalid, "bad", null, "Bounced: the address doesn't exist"],
+        ["Waiting", e.queued, "info"],
+        ["Left out", e.left_out, "warn", null, "Unsubscribed, invalid or no email when sending"],
+      ],
+    ],
+    [
+      "Lead emails",
+      "who can be emailed",
+      [
+        ["Working", l.working, "ok"],
+        ["Invalid", l.invalid, "bad", "#/leads?list=Invalid%20Emails"],
+        ["Unsubscribed", l.unsubscribed, "warn", "#/leads?list=Unsubscribed%20Leads"],
+        ["No email", l.no_email, "muted"],
+      ],
+    ],
   ];
-  const leadTiles = [
-    ["Working emails", l.working, "ok", null],
-    ["Invalid emails", l.invalid, "bad", "#/leads?list=Invalid%20Emails"],
-    ["Unsubscribed", l.unsubscribed, "warn", "#/leads?list=Unsubscribed%20Leads"],
-    ["No email", l.no_email, "info", null],
-  ];
-  const tile = ([label, value, tone, href]) => {
-    const body = (
-      <>
-        <b>{n(value)}</b>
-        <span>{label}</span>
-      </>
-    );
-    return href ? (
-      <a key={label} className={`stat-tile ${tone}`} href={href}>
-        {body}
-        <small>View</small>
-      </a>
-    ) : (
-      <div key={label} className={`stat-tile ${tone}`}>
-        {body}
-      </div>
-    );
-  };
   return (
-    <section className="email-dashboard" aria-label="Email dashboard">
-      <div>
-        <h3>
-          Emails <small className="muted">across {n(totals.campaigns)} campaign{totals.campaigns === 1 ? "" : "s"}</small>
-        </h3>
-        <div className="stat-tiles">{tiles.map(tile)}</div>
-      </div>
-      <div>
-        <h3>Leads</h3>
-        <div className="stat-tiles">{leadTiles.map(tile)}</div>
-      </div>
+    <section className="email-kpis" aria-label="Email dashboard">
+      {groups.map(([title, note, items]) => (
+        <div key={title} className="kpi-group">
+          <div className="kpi-title">
+            {title} <span>{note}</span>
+          </div>
+          <div className="kpi-row">
+            {items.map(([label, value, tone, href, hint]) => {
+              const inner = (
+                <>
+                  <b>{n(value)}</b>
+                  <span>
+                    <i className={`kpi-dot ${tone}`} />
+                    {label}
+                  </span>
+                </>
+              );
+              return href ? (
+                <a key={label} className="kpi link" href={href} title={`Open ${label} leads`}>
+                  {inner}
+                </a>
+              ) : (
+                <div key={label} className="kpi" title={hint}>
+                  {inner}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </section>
   );
 }
@@ -648,6 +659,7 @@ export default function CampaignsPage({ id, user, data, notify }) {
         </p>
         {error && <p className="form-error pad">{error}</p>}
         <div className="table-scroll">
+          {list?.items.length > 0 && (
           <table className="sf-table campaign-table">
             <thead>
               <tr>
@@ -682,10 +694,22 @@ export default function CampaignsPage({ id, user, data, notify }) {
               ))}
             </tbody>
           </table>
+          )}
           {list && !list.items.length && (
-            <p className="table-empty">
-              No campaigns yet.{canSend ? " Use New Campaign, or select leads in the Leads list and choose Email." : ""}
-            </p>
+            <div className="campaign-empty">
+              <span className="campaign-empty-icon">
+                <Icon name="mail" size={22} />
+              </span>
+              <b>No campaigns yet</b>
+              <p>
+                Email many leads at once: tick them in <a href="#/leads">Leads</a> and choose Actions → Email, or start a new campaign.
+              </p>
+              {canSend && (
+                <button className="sf-button brand" onClick={() => setCreating(true)}>
+                  New Campaign
+                </button>
+              )}
+            </div>
           )}
           {!list && !error && <p className="table-empty">Loading…</p>}
         </div>
