@@ -213,7 +213,7 @@ function Workspace({ user, onLogout, onUserChanged }) {
     );
   else if (section === "accounts")
     page = id ? (
-      <AccountPage id={id} data={data} openNew={openNew} openEmail={openEmail} emailVersion={emailVersion} />
+      <AccountPage id={id} data={data} user={user} openNew={openNew} openEmail={openEmail} emailVersion={emailVersion} />
     ) : (
       <ListView key={route} collection="accounts" data={data} user={user} openNew={openNew} setModal={setModal} query={query} />
     );

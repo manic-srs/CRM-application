@@ -90,6 +90,7 @@ function columns(collection, data) {
     ],
     opportunities: [
       ["Opportunity Name", (r) => r.name, (r) => link(r, r.name)],
+      ["Client Name", (r) => r.lead_name || "", (r) => r.lead_id && r.lead_name ? <a href={`#/leads/${r.lead_id}`}>{r.lead_name}</a> : "—"],
       ["Account Name", (r) => r.account_name || "", account],
       ["Amount", (r) => Number(r.value ?? -1), (r) => amount(r.value), "num"],
       ["Close Date", (r) => r.expected_close_date || "", (r) => shortDate(r.expected_close_date)],
@@ -172,7 +173,7 @@ function validFilters(defs, values) {
 }
 
 const LABEL = { leads: "Leads", opportunities: "Opportunities", accounts: "Accounts", contacts: "Contacts" };
-const NEW_TYPE = { leads: "lead", accounts: "account", contacts: "contact" };
+const NEW_TYPE = { leads: "lead", opportunities: "newOpportunity", accounts: "account", contacts: "contact" };
 
 function Kanban({ records, setModal }) {
   const [over, setOver] = useState(null);
@@ -378,8 +379,22 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
                 History
               </button>
             )}
+            {collection === "accounts" && canCreateSales(user) && (
+              <button className="sf-button" onClick={() => openNew("newOpportunity")}>
+                New Opportunity
+              </button>
+            )}
+            {collection === "opportunities" && canCreateSales(user) && (
+              <a className="sf-button" href="#/leads" title="Opportunities are created by converting a lead">
+                Convert a Lead
+              </a>
+            )}
             {collection === "opportunities" && !canCreateSales(user) ? null : NEW_TYPE[collection] ? (
-              <button className="sf-button" onClick={() => openNew(NEW_TYPE[collection])}>
+              <button
+                className="sf-button"
+                onClick={() => openNew(NEW_TYPE[collection])}
+                title={collection === "opportunities" ? "Add an opportunity directly (no lead)" : undefined}
+              >
                 New
               </button>
             ) : (

@@ -19,6 +19,7 @@ from app.security import (acting_user, acting_user_id, forbid_admin_create, owne
 from app.models import (Account, Contact, Email, EmailAttachment, Lead, LeadTransfer, Note, Notification, Opportunity,
                         StageHistory, Task, User)
 from app.serializers import account_out, contact_out, history_out, lead_detail, lead_out, opportunity_out, task_out
+from app.opportunity_matches import default_name, ensure_no_duplicate, find_account, find_contact
 from app.services import (
     add_stage_task,
     assignment_notice,
@@ -592,9 +593,13 @@ def convert_lead(lead_id: int, data: schemas.ConvertLead, db: Session = Depends(
     require_edit(lead.owner_id, "lead")
     by = acting_user_id()
 
+    # no duplicates: the company's existing account and the person's existing contact are reused
     if data.account_id is not None:
         account = get_or_404(db, Account, data.account_id, "Account")
     else:
+        account = find_account(db, lead.company or lead.name)
+    reused_account = account is not None
+    if account is None:
         account = Account(
             name=lead.company or lead.name, industry=lead.industry, phone=lead.phone, owner_id=lead.owner_id,
             website=lead.company_website, linkedin_url=lead.company_linkedin_url, address=lead.location,
@@ -603,22 +608,28 @@ def convert_lead(lead_id: int, data: schemas.ConvertLead, db: Session = Depends(
         db.add(account)
         db.flush()
 
-    contact = Contact(
-        salutation=lead.salutation,
-        first_name=lead.first_name,
-        last_name=lead.last_name,
-        job_title=lead.title,
-        email=lead.email,
-        phone=lead.phone,
-        linkedin_url=lead.linkedin_url,
-        account_id=account.id,
-        owner_id=lead.owner_id,
-    )
-    db.add(contact)
-    db.flush()
+    contact = find_contact(db, account.id, email=lead.email, first_name=lead.first_name, last_name=lead.last_name)
+    reused_contact = contact is not None
+    opportunity_name = (data.opportunity_name or "").strip() or default_name(account.name)
+    # the same person at the same company can't have the same open opportunity twice (one salesperson per deal)
+    ensure_no_duplicate(db, account, contact, opportunity_name)
+    if contact is None:
+        contact = Contact(
+            salutation=lead.salutation,
+            first_name=lead.first_name,
+            last_name=lead.last_name,
+            job_title=lead.title,
+            email=lead.email,
+            phone=lead.phone,
+            linkedin_url=lead.linkedin_url,
+            account_id=account.id,
+            owner_id=lead.owner_id,
+        )
+        db.add(contact)
+        db.flush()
 
     opportunity = Opportunity(
-        name=(data.opportunity_name or "").strip() or f"{account.name} - Opportunity",
+        name=opportunity_name,
         stage="Opportunity",
         probability=STAGE_PROBABILITY["Opportunity"],
         expected_value=data.expected_value,
@@ -645,7 +656,9 @@ def convert_lead(lead_id: int, data: schemas.ConvertLead, db: Session = Depends(
                         note=data.note)
     task = add_stage_task(db, data.task, owner_id=task_owner, record_owner_id=opportunity.owner_id, actor_id=by,
                           opportunity_id=opportunity.id)
-    details = [f"Converted from lead: {lead.name}", f"Account: {account.name}"]
+    details = [f"Converted from lead: {lead.name}",
+               f"Account: {account.name}" + (" (existing account)" if reused_account else ""),
+               f"Contact: {contact.full_name}" + (" (existing contact)" if reused_contact else "")]
     if opportunity.expected_value is not None:
         details.append(f"Amount: ${opportunity.expected_value:,.2f}")
     details.append(f"Close date: {opportunity.expected_close_date:%d %b %Y}")
@@ -663,6 +676,7 @@ def convert_lead(lead_id: int, data: schemas.ConvertLead, db: Session = Depends(
         "opportunity": opportunity_out(opportunity),
         "tasks_auto_closed": closed,
         "new_task": task_out(task) if task else None,
+        "reused": {"account": reused_account, "contact": reused_contact},
     }
 
 

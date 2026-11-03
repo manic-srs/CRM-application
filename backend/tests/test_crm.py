@@ -126,6 +126,10 @@ def test_convert_creates_account_contact_opportunity(client):
     opp = res["opportunity"]
     assert (opp["name"], opp["stage"], opp["expected_value"]) == ("Business Fiber", "Opportunity", 180000)
     assert opp["primary_contact_name"] == "Arjun Mehta" and opp["lead_id"] == lead["id"]
+    assert opp["lead_name"] == "Arjun Mehta"
+    assert client.get(f"/api/opportunities/{opp['id']}").json()["lead_name"] == "Arjun Mehta"
+    listed = client.get("/api/opportunities").json()
+    assert next(row for row in listed if row["id"] == opp["id"])["lead_name"] == "Arjun Mehta"
     assert res["tasks_auto_closed"] == 1
     new_task = res["new_task"]  # the user's task, on the new opportunity (instead of "Send proposal")
     assert (new_task["title"], new_task["opportunity_id"], new_task["lead_id"], new_task["is_auto"]) == (

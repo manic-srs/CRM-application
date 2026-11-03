@@ -167,7 +167,7 @@ export const STAGE_NOTE_REQUIRED = "Enter a note to change the stage.";
 export const CONVERSION_COMMENT_REQUIRED = "Enter a conversion comment.";
 export const stageNoteMessage = (type) => (type === "convert" ? CONVERSION_COMMENT_REQUIRED : STAGE_NOTE_REQUIRED);
 export function stageNoteField(type, demoChoice) {
-  if (["stage", "won", "convert"].includes(type)) return "note";
+  if (["stage", "won", "convert", "newOpportunity"].includes(type)) return "note";
   if (type === "lost") return "lost_notes";
   if (type === "unqualified") return "notes";
   if (type === "reopen") return "note";
@@ -182,7 +182,7 @@ export const stageNote = (value) => (typeof value === "string" ? value.trim() : 
 export const TASK_SUBJECT_REQUIRED = "Enter a task subject.";
 export const TASK_DUE_REQUIRED = "Choose a due date for the task.";
 export const stageTaskNeeded = (type, demoChoice) =>
-  ["stage", "convert", "won", "reopen"].includes(type) || (type === "cancelDemo" && demoChoice === "nurturing");
+  ["stage", "convert", "won", "reopen", "newOpportunity"].includes(type) || (type === "cancelDemo" && demoChoice === "nurturing");
 export function stageTaskProblems(values) {
   const problems = {};
   if (!stageNote(values.task_title)) problems.task_title = TASK_SUBJECT_REQUIRED;
