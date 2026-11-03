@@ -662,3 +662,8 @@ test("a lead's email must use the company website's domain", () => {
   assert.match(emailWebsiteProblem("asha@gmail.com", "acme.com"), /@gmail\.com doesn't match the company website \(acme\.com\)/);
   assert.match(emailWebsiteProblem("asha@notacme.com", "acme.com"), /doesn't match/);
 });
+
+test("New Opportunity needs the opening note and the first task, like Convert", () => {
+  assert.equal(stageNoteField("newOpportunity"), "note");
+  assert.equal(stageTaskNeeded("newOpportunity"), true);
+});
