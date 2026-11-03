@@ -116,6 +116,14 @@ def upgrade_database() -> None:
             status VARCHAR(10) NOT NULL DEFAULT 'Queued'
               CHECK (status IN ('Queued','Sent','Failed','Invalid','Skipped','Cancelled')),
             attempts INT NOT NULL DEFAULT 0, next_attempt_at TIMESTAMP, sent_at TIMESTAMP, error VARCHAR(300))"""))
+        # typed-in recipients (people not in the CRM) and the unsubscribe / invalid state of any address
+        conn.execute(text("ALTER TABLE campaign_recipients ADD COLUMN IF NOT EXISTS company VARCHAR(200)"))
+        conn.execute(text("ALTER TABLE campaign_recipients ADD COLUMN IF NOT EXISTS manual BOOLEAN NOT NULL DEFAULT FALSE"))
+        conn.execute(text("""CREATE TABLE IF NOT EXISTS email_addresses (
+            email VARCHAR(255) PRIMARY KEY, unsubscribed_at TIMESTAMP, invalid_at TIMESTAMP,
+            invalid_reason VARCHAR(300))"""))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_campaign_recipients_email "
+                          "ON campaign_recipients (lower(email)) WHERE status = 'Sent'"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_campaign_recipients_campaign "
                           "ON campaign_recipients (campaign_id, status)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_campaign_recipients_sent "

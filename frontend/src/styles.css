@@ -4550,3 +4550,10 @@ button.kpi + .kpi,
     border-top: 1px solid var(--border);
   }
 }
+
+/* New Campaign: the typed-in email addresses */
+.campaign-form textarea.email-list {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}

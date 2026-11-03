@@ -215,20 +215,100 @@ def test_same_email_twice_in_one_campaign_goes_once(client, sent):
     assert (preview["eligible"], preview["reasons"]["other"]) == (1, 1)
 
 
-def test_every_email_has_both_unsubscribe_and_subscribe_links(client, sent):
+def test_first_email_has_unsubscribe_and_subscribe_later_ones_only_unsubscribe(client, sent):
     one = lead(client)
     make(client, [one["id"]])
     run_round()
     body = sent.items[0]["body"]
     token = campaigns.unsubscribe_token(one["id"])
-    assert f"Unsubscribe: " in body and f"unsubscribe?t={token}\n" in body
-    assert f"Subscribe again: " in body and f"unsubscribe?t={token}&action=subscribe" in body
+    assert "Unsubscribe: " in body and f"unsubscribe?t={token}\n" in body
+    assert "Subscribe: " in body and f"unsubscribe?t={token}&action=subscribe" in body
+    # the same person again: already subscribed, so only Unsubscribe
+    make(client, [one["id"]])
+    run_round()
+    again = sent.items[1]["body"]
+    assert f"Unsubscribe: " in again and "action=subscribe" not in again and "Subscribe: " not in again
     # the Subscribe link asks first, and subscribes an unsubscribed lead again
     unsubscribe(client, one["id"])
     page = client.get("/api/public/unsubscribe", params={"t": token, "action": "subscribe"})
     assert "Subscribe again" in page.text and client.get(f"/api/leads/{one['id']}").json()["unsubscribed_at"]
     client.post("/api/public/unsubscribe", data={"t": token, "action": "subscribe"})
     assert client.get(f"/api/leads/{one['id']}").json()["unsubscribed_at"] is None
+
+
+def test_typed_in_emails_people_not_in_the_crm(client, sent):
+    """New Campaign takes email addresses (with an optional name and company): they get the email with the fields
+    filled in, their own unsubscribe link, and are left out of later campaigns once they unsubscribe."""
+    known = lead(client, "Lena")  # a typed address that is a lead's is that lead
+    res = client.post("/api/campaigns/preview", json={"emails": [
+        {"email": "ravi.kumar@acme-retail.example"},
+        {"email": "Meera@Bluebird.example", "name": "Meera Iyer", "company": "Bluebird Foods"},
+        {"email": known["email"].upper()},
+        {"email": "not-an-email"},
+        {"email": "MEERA@bluebird.example"}]}).json()
+    assert (res["eligible"], res["left_out"]) == (3, 2)
+    assert {r["reason"] for r in res["left_out_sample"]} == {"Invalid email: not a valid address",
+                                                              "Same email twice in this campaign"}
+    assert any(s["id"] == known["id"] for s in res["sample"])
+    made = client.post("/api/campaigns", json={"name": "Typed", "subject": "Hello {first_name} at {company}",
+                                               "body": "Hi {first_name}, a note for {company}.",
+                                               "emails": [{"email": "ravi.kumar@acme-retail.example"},
+                                                          {"email": "meera@bluebird.example", "name": "Meera Iyer",
+                                                           "company": "Bluebird Foods"},
+                                                          {"email": known["email"]}]})
+    assert made.status_code == 201, made.text
+    run_round()
+    by_to = {m["to"]: m for m in sent.items}
+    ravi = by_to["ravi.kumar@acme-retail.example"]
+    assert ravi["subject"] == "Hello Ravi at Acme Retail"  # name and company from the address when not given
+    assert by_to["meera@bluebird.example"]["subject"] == "Hello Meera at Bluebird Foods"
+    assert by_to[known["email"]]["subject"] == f"Hello Lena at {known['company']}"
+    detail = client.get(f"/api/campaigns/{made.json()['id']}").json()["recipients"]["items"]
+    row = next(r for r in detail if r["email"] == "ravi.kumar@acme-retail.example")
+    assert row["lead_id"] is None and row["status"] == "Sent"
+    # their own link: unsubscribing leaves them out of the next campaign
+    token = campaigns.recipient_token(row["id"])
+    assert f"unsubscribe?t={token}\n" in ravi["body"] and f"t={token}&action=subscribe" in ravi["body"]
+    assert "Are you sure" in client.get("/api/public/unsubscribe", params={"t": token}).text
+    client.post("/api/public/unsubscribe", data={"t": token, "action": "unsubscribe"})
+    again = client.post("/api/campaigns/preview", json={"emails": [{"email": "RAVI.KUMAR@acme-retail.example"}]}).json()
+    assert again["eligible"] == 0 and again["left_out_sample"][0]["reason"] == "Unsubscribed"
+    # ...and back again with Subscribe
+    client.post("/api/public/unsubscribe", data={"t": token, "action": "subscribe"})
+    assert client.post("/api/campaigns/preview", json={"emails": [{"email": "ravi.kumar@acme-retail.example"}]}).json()["eligible"] == 1
+    assert client.get("/api/public/unsubscribe", params={"t": "r99999.bad"}).text.count("isn't valid") == 1
+
+
+def test_unsubscribing_a_typed_address_also_unsubscribes_the_lead_with_it(client, sent):
+    """The same person can be a lead for one salesperson and a typed address for another: one opt-out covers both."""
+    login_as(client, 1)
+    theirs = lead(client, "Omar")  # Priya's lead; Ravi can't see it
+    login_as(client, 2)
+    made = client.post("/api/campaigns", json={"name": "Ravi typed", "subject": "Hello", "body": "Hello there friend",
+                                               "emails": [{"email": theirs["email"]}]}).json()
+    run_round()
+    row = client.get(f"/api/campaigns/{made['id']}").json()["recipients"]["items"][0]
+    assert row["lead_id"] is None and row["name"] != theirs["name"]  # Priya's lead stays private to Ravi
+    client.post("/api/public/unsubscribe", data={"t": campaigns.recipient_token(row["id"]), "action": "unsubscribe"})
+    assert login_as(client, 1).get(f"/api/leads/{theirs['id']}").json()["unsubscribed_at"]
+    res = client.post("/api/campaigns/preview", json={"lead_ids": [theirs["id"]]}).json()
+    assert res["eligible"] == 0
+
+
+def test_a_typed_address_whose_domain_has_no_mail_server_is_invalid_next_time(client, sent, monkeypatch):
+    monkeypatch.setenv("CAMPAIGN_CHECK_DOMAINS", "true")
+    monkeypatch.setattr(campaigns, "domain_accepts_mail", lambda domain: domain != "nowhere.example")
+    client.post("/api/campaigns", json={"name": "Bad", "subject": "Hello", "body": "Hello there friend",
+                                        "emails": [{"email": "a@nowhere.example"}, {"email": "b@fine.example"}]})
+    run_round()
+    assert [m["to"] for m in sent.items] == ["b@fine.example"]
+    res = client.post("/api/campaigns/preview", json={"emails": [{"email": "a@nowhere.example"}]}).json()
+    assert res["eligible"] == 0 and res["left_out_sample"][0]["reason"].startswith("Invalid email")
+
+
+def test_a_campaign_needs_someone_to_send_to(client, sent):
+    res = client.post("/api/campaigns", json={"name": "Empty", "subject": "Hello", "body": "Hello there friend"})
+    assert res.status_code == 400
 
 
 def test_cancel_on_the_unsubscribe_page_changes_nothing(client, sent):

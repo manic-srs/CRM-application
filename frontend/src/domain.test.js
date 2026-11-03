@@ -43,6 +43,8 @@ import {
   skippedStages,
   emailWebsiteProblem,
   isPersonalEmail,
+  parseEmailList,
+  companyFromEmail,
 } from "./domain.js";
 
 test("lead form uses backend fields and only requires last name and company", () => {
@@ -670,4 +672,19 @@ test("a lead's email must use the company website's domain", () => {
 test("New Opportunity needs the opening note and the first task, like Convert", () => {
   assert.equal(stageNoteField("newOpportunity"), "note");
   assert.equal(stageTaskNeeded("newOpportunity"), true);
+});
+
+test("typed-in campaign emails: one per line, with an optional name and company", () => {
+  const { items, bad } = parseEmailList(
+    "asha@acme.com, Asha Rao, Acme Retail\nRavi Kumar <ravi@bluebird.io>, Bluebird\n\n a@x.com; b@y.com \nnot an email",
+  );
+  assert.deepEqual(items, [
+    { email: "asha@acme.com", name: "Asha Rao", company: "Acme Retail" },
+    { email: "ravi@bluebird.io", name: "Ravi Kumar", company: "Bluebird" },
+    { email: "a@x.com" },
+    { email: "b@y.com" },
+  ]);
+  assert.deepEqual(bad, ["not an email"]);
+  assert.equal(companyFromEmail("asha@acme-retail.com"), "Acme Retail");
+  assert.equal(companyFromEmail("asha@gmail.com"), "");
 });

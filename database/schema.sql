@@ -382,6 +382,8 @@ CREATE TABLE campaign_recipients (
   lead_id         INT REFERENCES leads(id) ON DELETE SET NULL,
   email           VARCHAR(255),
   name            VARCHAR(101) NOT NULL,
+  company         VARCHAR(200),                       -- for {company} when the email was typed in
+  manual          BOOLEAN NOT NULL DEFAULT FALSE,     -- typed in (not a lead in the CRM)
   status          VARCHAR(10) NOT NULL DEFAULT 'Queued'
                   CHECK (status IN ('Queued','Sent','Failed','Invalid','Skipped','Cancelled')),
   attempts        INT NOT NULL DEFAULT 0,
@@ -391,3 +393,11 @@ CREATE TABLE campaign_recipients (
 );
 CREATE INDEX idx_campaign_recipients_campaign ON campaign_recipients (campaign_id, status);
 CREATE INDEX idx_campaign_recipients_sent ON campaign_recipients (sent_at) WHERE sent_at IS NOT NULL;
+CREATE INDEX idx_campaign_recipients_email ON campaign_recipients (lower(email)) WHERE status = 'Sent';
+-- Unsubscribed / not working addresses, leads or not (typed-in recipients are only tracked here)
+CREATE TABLE email_addresses (
+  email           VARCHAR(255) PRIMARY KEY,           -- lower case
+  unsubscribed_at TIMESTAMP,
+  invalid_at      TIMESTAMP,
+  invalid_reason  VARCHAR(300)
+);

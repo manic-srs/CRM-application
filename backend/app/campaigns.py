@@ -16,8 +16,13 @@ mail server rejects the recipient (e.g. 550 5.1.1 user unknown). The lead is the
 Leads > "Invalid emails", and left out of every later campaign. A salesperson can also mark an email invalid (e.g. after
 a bounce in Outlook) or valid again after fixing it.
 
-Every campaign email ends with a link to unsubscribe (and to subscribe again); SMTP mail also carries the
-List-Unsubscribe headers that Outlook and Gmail show as an "Unsubscribe" button.
+Recipients are leads (Leads > select > Actions > Email Campaign) and/or email addresses typed in on New Campaign
+(people who aren't in the CRM). An unsubscribed or invalid address is left out whichever way it is added
+(email_addresses table + the lead's own flags, kept in step).
+
+The first campaign email to an address ends with Unsubscribe and Subscribe links; later ones (the person is
+subscribed) only with Unsubscribe. SMTP mail also carries the List-Unsubscribe headers that Outlook and Gmail show as
+an "Unsubscribe" button.
 Temporary problems (Outlook busy, network) are retried 3 times (after 5 minutes, 30 minutes and 2 hours).
 If the mail settings are wrong (login refused), sending campaigns pause and their owners are told.
 """
@@ -45,7 +50,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import mailer
-from app.models import Campaign, CampaignRecipient, Lead, User
+from app.models import Campaign, CampaignRecipient, EmailAddress, Lead, User
 from app.services import log_activity, notify, now
 
 log = logging.getLogger("crm.campaigns")
@@ -106,15 +111,77 @@ def mark_invalid(db: Session, lead: Lead, reason: str, actor_id: int | None = No
     log_activity(db, actor_id, "Lead email marked invalid", lead.name, reason[:300])
 
 
+# ---------- any address (typed in, or a lead's) ----------
+
+def address(db: Session, email: str, create: bool = False) -> EmailAddress | None:
+    key = (email or "").strip().lower()
+    row = db.get(EmailAddress, key) if key else None
+    if row is None and create and key:
+        row = EmailAddress(email=key)
+        db.add(row)
+    return row
+
+
+def leads_with(db: Session, email: str) -> list[Lead]:
+    return db.scalars(select(Lead).where(func.lower(Lead.email) == (email or "").strip().lower())).all()
+
+
+def address_exclusion(db: Session, email: str | None) -> str | None:
+    """Why this address must not get a campaign email, whoever it belongs to (None = it can): unsubscribed or invalid
+    as a typed-in address, or on any lead with this email."""
+    if not email:
+        return "No email address"
+    if not EMAIL_RE.match(email.strip()):
+        return "Invalid email: not a valid address"
+    row = address(db, email)
+    if row and row.unsubscribed_at:
+        return "Unsubscribed"
+    if row and row.invalid_at:
+        return f"Invalid email: {row.invalid_reason or 'marked invalid'}"
+    for lead in leads_with(db, email):
+        reason = exclusion(lead)
+        if reason:
+            return reason
+    return None
+
+
+def mark_address_invalid(db: Session, email: str, reason: str) -> None:
+    """A typed-in address that doesn't work (and any lead with it)."""
+    row = address(db, email, create=True)
+    if not row.invalid_at:
+        row.invalid_at, row.invalid_reason = now(), reason[:300]
+    for lead in leads_with(db, email):
+        mark_invalid(db, lead, reason)
+
+
+def already_emailed(db: Session, email: str, row_id: int | None = None) -> bool:
+    """This address got a campaign email before (so it's subscribed: the Subscribe link isn't needed again)."""
+    query = select(CampaignRecipient.id).where(CampaignRecipient.status == "Sent",
+                                               func.lower(CampaignRecipient.email) == (email or "").strip().lower())
+    if row_id is not None:
+        query = query.where(CampaignRecipient.id != row_id)
+    return db.scalar(query.limit(1)) is not None
+
+
 # ---------- unsubscribe links ----------
 
 def _key() -> bytes:
     return os.getenv("SECRET_KEY", "salestrack-dev-secret-change-me").encode()
 
 
+def _sign(text: str) -> str:
+    sig = hmac.new(_key(), f"unsubscribe:{text}".encode(), hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(sig[:18]).decode().rstrip("=")
+
+
 def unsubscribe_token(lead_id: int) -> str:
-    sig = hmac.new(_key(), f"unsubscribe:{lead_id}".encode(), hashlib.sha256).digest()
-    return f"{lead_id}.{base64.urlsafe_b64encode(sig[:18]).decode().rstrip('=')}"
+    """A lead's link: '<lead id>.<signature>'."""
+    return f"{lead_id}.{_sign(str(lead_id))}"
+
+
+def recipient_token(recipient_id: int) -> str:
+    """A typed-in address's link (not a lead): 'r<campaign recipient id>.<signature>'."""
+    return f"r{recipient_id}.{_sign(f'r{recipient_id}')}"
 
 
 def lead_from_token(token: str) -> int | None:
@@ -124,32 +191,88 @@ def lead_from_token(token: str) -> int | None:
     return int(lead_id) if hmac.compare_digest(unsubscribe_token(int(lead_id)), token) else None
 
 
-def unsubscribe_link(lead_id: int, action: str = "unsubscribe") -> str:
-    """The page that unsubscribes (action=unsubscribe) or subscribes again (action=subscribe); it asks before changing
+def recipient_from_token(token: str) -> int | None:
+    head, _, _ = (token or "").partition(".")
+    if not (head.startswith("r") and head[1:].isdigit()):
+        return None
+    return int(head[1:]) if hmac.compare_digest(recipient_token(int(head[1:])), token) else None
+
+
+def _public_base() -> str:
+    return os.getenv("PUBLIC_URL", "").rstrip("/") or mailer.settings()["app_url"]
+
+
+def unsubscribe_link(lead_id: int, action: str = "unsubscribe", *, token: str | None = None) -> str:
+    """The page that unsubscribes (action=unsubscribe) or subscribes (action=subscribe); it asks before changing
     anything. PUBLIC_URL (else APP_URL) must be an address the people you email can open."""
-    base = os.getenv("PUBLIC_URL", "").rstrip("/") or mailer.settings()["app_url"]
     extra = "" if action == "unsubscribe" else f"&action={action}"
-    return f"{base}/api/public/unsubscribe?t={unsubscribe_token(lead_id)}{extra}"
+    return f"{_public_base()}/api/public/unsubscribe?t={token or unsubscribe_token(lead_id)}{extra}"
+
+
+def row_token(row: CampaignRecipient) -> str:
+    return unsubscribe_token(row.lead_id) if row.lead_id and not row.manual else recipient_token(row.id)
 
 
 # ---------- the email ----------
 
-def fill(text: str, lead: Lead, sender: User) -> str:
+def company_from_email(email: str | None) -> str:
+    """'asha@acme-retail.com' -> 'Acme Retail' (empty for personal mailboxes like gmail.com)."""
+    from app.services import is_personal_email
+    domain = (email or "").rsplit("@", 1)[-1].lower() if "@" in (email or "") else ""
+    if not domain or is_personal_email(email):
+        return ""
+    name = domain.split(".")[0]
+    return " ".join(part.capitalize() for part in re.split(r"[-_]", name) if part)
+
+
+def name_from_email(email: str | None) -> str:
+    """'asha.rao@acme.com' -> 'Asha Rao' (a typed-in address with no name)."""
+    local = (email or "").split("@", 1)[0]
+    parts = [p for p in re.split(r"[._-]+", local) if p.isalpha()]
+    return " ".join(p.capitalize() for p in parts[:2])
+
+
+@dataclass
+class Person:
+    """Who an email goes to, for the {fields}: a lead, or a typed-in address with an optional name and company."""
+    email: str | None
+    first_name: str | None = None
+    last_name: str | None = None
+    name: str | None = None
+    company: str | None = None
+
+    @classmethod
+    def of_lead(cls, lead: Lead) -> "Person":
+        return cls(lead.email, lead.first_name, lead.last_name, lead.name, lead.company)
+
+    @classmethod
+    def typed(cls, email: str, name: str | None = None, company: str | None = None) -> "Person":
+        name = (name or "").strip() or name_from_email(email)
+        first, _, last = name.partition(" ")
+        return cls(email, first or None, last or None, name or None, (company or "").strip() or None)
+
+
+def fill(text: str, lead, sender: User) -> str:
+    """The {fields} in the subject and message, filled for this person. Missing ones fill themselves: the company from
+    the email's domain, the first name as 'there'."""
     values = {
         "first_name": lead.first_name or lead.last_name or "there",
         "last_name": lead.last_name or "",
         "full_name": lead.name or lead.last_name or "",
-        "company": lead.company or "",
+        "company": lead.company or company_from_email(lead.email) or "your team",
         "sender_name": sender.full_name,
     }
     return re.sub(r"\{(\w+)\}", lambda m: values.get(m.group(1), m.group(0)), text)
 
 
-def footer(lead_id: int) -> str:
-    """Every campaign email ends with both links: stop these emails, or (after stopping) start them again."""
-    return (f"\n\n--\nYou are receiving this email from {mailer.company_name()}.\n"
-            f"Unsubscribe: {unsubscribe_link(lead_id)}\n"
-            f"Subscribe again: {unsubscribe_link(lead_id, 'subscribe')}")
+def footer(lead_id: int | None = None, *, token: str | None = None, first: bool = True) -> str:
+    """The first campaign email to an address ends with both links (Unsubscribe and Subscribe); later ones, when the
+    person is already subscribed, only with Unsubscribe."""
+    lines = [f"\n\n--\nYou are receiving this email from {mailer.company_name()}.",
+             f"Unsubscribe: {unsubscribe_link(lead_id, token=token)}"]
+    if first:
+        lines.append(f"Subscribe: {unsubscribe_link(lead_id, 'subscribe', token=token)}")
+    return "\n".join(lines)
 
 
 @dataclass
@@ -344,12 +467,18 @@ def _run(db: Session, budget: int | None, pause_seconds: float | None) -> dict:
         if campaign.status != "Sending":
             continue
         touched.add(campaign.id)
-        lead = db.get(Lead, row.lead_id) if row.lead_id else None
-        reason = "The lead was deleted" if lead is None else exclusion(lead)
-        if reason is None and lead.email.lower() != (row.email or "").lower():
-            row.email = lead.email  # the email was corrected after the campaign was made
-        if reason is None and check_domains() and not domain_accepts_mail(lead.email.rsplit("@", 1)[1]):
-            mark_invalid(db, lead, "The email domain doesn't exist or has no mail server")
+        lead = db.get(Lead, row.lead_id) if row.lead_id and not row.manual else None
+        if row.manual:  # typed in: not a lead (or not one this user could see)
+            reason = address_exclusion(db, row.email)
+            person = Person.typed(row.email, row.name, row.company)
+        else:
+            reason = "The lead was deleted" if lead is None else (exclusion(lead) or address_exclusion(db, lead.email))
+            person = Person.of_lead(lead) if lead else None
+            if reason is None and lead.email.lower() != (row.email or "").lower():
+                row.email = lead.email  # the email was corrected after the campaign was made
+        if reason is None and check_domains() and not domain_accepts_mail(row.email.rsplit("@", 1)[1]):
+            why = "The email domain doesn't exist or has no mail server"
+            mark_invalid(db, lead, why) if lead else mark_address_invalid(db, row.email, why)
             reason = "Invalid email: the domain has no mail server"
         if reason:
             row.status, row.error = ("Invalid" if reason.startswith("Invalid") else "Skipped"), reason[:300]
@@ -357,16 +486,20 @@ def _run(db: Session, budget: int | None, pause_seconds: float | None) -> dict:
             db.commit()
             continue
         sender = campaign.created_by
-        result = send_one(lead.email, fill(campaign.subject, lead, sender),
-                          fill(campaign.body, lead, sender) + footer(lead.id),
-                          sender_name=sender.full_name, reply_to=sender.email, unsubscribe=unsubscribe_link(lead.id))
+        token = row_token(row)
+        first = not already_emailed(db, row.email, row.id)
+        result = send_one(row.email, fill(campaign.subject, person, sender),
+                          fill(campaign.body, person, sender) + footer(row.lead_id, token=token, first=first),
+                          sender_name=sender.full_name, reply_to=sender.email,
+                          unsubscribe=unsubscribe_link(row.lead_id, token=token))
         row.attempts += 1
         if result.outcome == "sent":
             row.status, row.sent_at, row.error = "Sent", now(), None
             done["sent"] += 1
         elif result.outcome == "invalid":
             row.status, row.error = "Invalid", result.detail
-            mark_invalid(db, lead, f"Rejected by the mail server: {result.detail}")
+            why = f"Rejected by the mail server: {result.detail}"
+            mark_invalid(db, lead, why) if lead else mark_address_invalid(db, row.email, why)
             done["invalid"] += 1
         elif result.outcome == "setup":
             row.attempts -= 1  # not this recipient's fault

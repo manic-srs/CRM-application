@@ -58,16 +58,21 @@ email, tasks and reminders, notifications, lead conversion, closing a deal, and 
 
 **Email campaigns** (sent through Outlook)
 - Two ways to choose recipients: tick leads in the Leads list and use **Actions > Email Campaign**, or
-  **Email Campaigns > New Campaign** and pick lead stages (and an owner, for Managers).
+  **Email Campaigns > New Campaign** and type or paste email addresses, one per line, for people who don't need to
+  be in the CRM (optionally `email, Name, Company`). An address that belongs to one of the user's leads is treated
+  as that lead. (Choosing leads by stage is switched off in the app: `STAGE_PICKER` in `CampaignsPage.jsx`.)
 - Merge fields in the subject and message: first name, last name, full name, company and the sender's name, with a
-  preview before sending. Send now or at a set time.
+  preview before sending. Missing values fill themselves: the company from the email's domain
+  (`asha@acme-retail.com` -> "Acme Retail"), the name from the address. Send now or at a set time.
 - Paced under Outlook's limits (20 a minute and 1,800 a day by default), with automatic retries (after 5 minutes,
   30 minutes and 2 hours) and a progress page per campaign. If the mailbox settings are wrong, campaigns pause and
   the sender is notified.
-- Every email ends with **Unsubscribe** and **Subscribe again** links, plus Outlook's one-click unsubscribe header.
-  Each link opens a page that asks first, with **Cancel**, before anything changes.
-- Unsubscribed leads, leads with no email and invalid emails (no mail server for the domain, or rejected by the
-  mail server) are left out of every campaign and listed as "left out" with the reason.
+- The first campaign email to a person ends with **Unsubscribe** and **Subscribe** links; later emails to someone
+  already subscribed only with **Unsubscribe**. Outlook's one-click unsubscribe header is on every email. Each link
+  opens a page that asks first, with **Cancel**, before anything changes.
+- Unsubscribed addresses, leads with no email and invalid emails (no mail server for the domain, or rejected by the
+  mail server) are left out of every campaign and listed as "left out" with the reason. One opt-out covers the
+  address everywhere: typed in, and on any lead with that email.
 - Email dashboard on the Email Campaigns page: Sent, Failed, Not working, Waiting and Left out emails, and lead
   emails that are Working, Invalid, Unsubscribed or missing. Every number opens its list.
 - Leads list views for campaigns: **Working Emails**, **Invalid Emails**, **Unsubscribed Leads** and **No Email**.
