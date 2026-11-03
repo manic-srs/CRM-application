@@ -308,22 +308,26 @@ See [backend/README.md](backend/README.md) and [frontend/README.md](frontend/REA
 
 ## AI email drafting
 
-In **New Email → Message**, type directly into **Describe your message** at the bottom
-of the message box. Press **Enter** or click the arrow to generate a subject and message.
-There is no popup or stage dropdown. Four optional suggestion buttons appear inline
-under the description field, based on the related record's saved stage. Click one to
-fill the description, edit it as needed, then press Enter or the arrow. Suggestions
-refresh when the composer opens, the description receives focus, you return to the
-browser window, and after generation. If suggestions cannot load, free-text drafting
-remains available. The backend reads the record's latest CRM stage again when generating
-and combines it with your description. Drafting
-does not change the saved stage. Unconfirmed milestones should be phrased conditionally
-or use placeholders.
+In **New Email → Message**, type directly into **Describe your change** at the bottom
+of the message box. Press **Enter** or click the wand to generate a subject and message.
+The compact bar keeps **Describe your change**, **Polish** and its three-dot menu on one row, with Undo/Redo beside it. The **Polish** button opens three options for the current draft: **Formalize**,
+**Friendly**, and **Shorten**. These rewrite the existing message while preserving its
+meaning and factual details. A supplied subject is retained; a blank subject can be
+filled in. The server adds the sender signature once. There is no stage dropdown or
+stage-specific suggestion list; the backend still reads the latest saved CRM stage
+for context when generating a new email.
 
-The LLM is given the lead lifecycle (New → Nurturing → Demo → Converted) and opportunity
-lifecycle (Opportunity → Proposal → Won), including Lost outcomes. Conversion is not
-a won deal. Nurturing focuses on helpful, low-pressure relationship building; later
-stages address demos, proposals, or customer onboarding only as supported by the facts.
+Type a custom request to compose an email or describe a change to the current draft.
+Click **×** beside the bar to hide the AI controls without closing the composer or
+changing the email. **Help me write** reopens them. Closing during generation cancels
+applying that response. **Undo draft** restores the subject and message before the
+last AI change; **Redo draft** reapplies it. Manual edits disable history actions that would overwrite those edits. Sending remains explicit.
+
+The LLM receives the lead lifecycle (New → Nurturing → optional Revisit → Demo →
+Converted, with Unqualified/Lost outcomes) and opportunity lifecycle (Opportunity →
+Discovery → Proposal → Won, with Lost outcomes). Conversion is not a won deal.
+Polish actions require an existing message and AI mode; sample mode does not rewrite
+user content.
 
 Example: "Write a friendly follow-up asking about their priorities. Keep it under 100 words."
 

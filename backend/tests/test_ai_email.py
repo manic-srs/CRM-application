@@ -86,6 +86,58 @@ def test_missing_configuration_is_actionable(client, record, monkeypatch):
     assert 'OPENAI_API_KEY' in response.json()['detail']
 
 
+@pytest.mark.parametrize('action', ['formalize', 'friendly', 'shorten'])
+def test_refinements_use_existing_draft_and_preserve_subject_and_stage(client, record, provider, monkeypatch, action):
+    monkeypatch.setattr(mailer, 'send', lambda *a, **kw: pytest.fail('Refinement must not send email'))
+    db = next(app.dependency_overrides[get_db]())
+    db.get(Lead, record['id']).stage = 'Revisit'
+    db.commit()
+    original = 'Hi Jack,\n\nCould you confirm availability on November 12?\n\nBest regards,\nRavi Kumar\nravi@crm.test'
+    provider[1]['json'] = completed(json.dumps({'subject': 'Model changed subject', 'body': original}))
+    response = client.post('/api/emails/draft', json=request(
+        record, action=action, instructions='', current_subject='Checking your availability', current_body=original))
+    assert response.status_code == 200, response.text
+    assert response.json()['subject'] == 'Checking your availability'
+    assert response.json()['body'].count('Best regards,') == 1
+    assert response.json()['record_stage'] == 'Revisit'
+    payload = json.loads(json.loads(provider[0][0].content)['input'])
+    assert payload['existing_message'] == original
+    assert payload['email_action'] == action
+    assert payload['user_request'] == ai_email.REFINEMENTS[action]
+    assert payload['crm_context']['current_stage'] == 'Revisit'
+    assert client.get(f"/api/leads/{record['id']}").json()['stage'] == 'Revisit'
+    assert db.scalar(select(func.count()).select_from(Email)) == 0
+    db.close()
+
+
+@pytest.mark.parametrize('action', ['formalize', 'friendly', 'shorten'])
+def test_refinements_require_existing_message_before_provider_call(client, record, provider, action):
+    response = client.post('/api/emails/draft', json=request(record, action=action, current_body='   '))
+    assert response.status_code == 422
+    assert not provider[0]
+
+
+@pytest.mark.parametrize('extra', [{'option_id': 'introduce'}, {'email_stage': 'Won'}])
+def test_refinements_cannot_override_stage_or_select_a_template(client, record, provider, extra):
+    response = client.post('/api/emails/draft', json=request(record, action='friendly', current_body='Hi Jack, let’s reconnect.', **extra))
+    assert response.status_code == 422
+    assert not provider[0]
+
+
+def test_refinement_with_blank_subject_can_generate_a_subject(client, record, provider):
+    response = client.post('/api/emails/draft', json=request(record, action='shorten', current_body='Hi Jack, please share your availability.'))
+    assert response.status_code == 200
+    assert response.json()['subject'] == 'Next steps after our demo'
+
+
+def test_sample_mode_does_not_pretend_to_refine_existing_email(client, record, provider, monkeypatch):
+    monkeypatch.setenv('EMAIL_DRAFT_MODE', 'sample')
+    response = client.post('/api/emails/draft', json=request(record, action='formalize', current_body='Hi Jack, let’s reconnect.'))
+    assert response.status_code == 422
+    assert 'AI mode' in response.json()['detail']
+    assert not provider[0]
+
+
 def test_requires_login(client, record, provider):
     client.headers.pop('Authorization')
     assert client.post('/api/emails/draft', json=request(record)).status_code == 401
