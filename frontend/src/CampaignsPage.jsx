@@ -152,7 +152,7 @@ export function NewCampaign({ user, users = [], leadIds = null, onClose, onCreat
   ].filter(([count]) => count);
   return (
     <Dialog
-      title={leadIds ? `Email ${n(leadIds.length)} Selected Lead${leadIds.length === 1 ? "" : "s"}` : "New Campaign"}
+      title={leadIds ? `Email Campaign: ${n(leadIds.length)} Selected Lead${leadIds.length === 1 ? "" : "s"}` : "New Campaign"}
       onClose={onClose}
       busy={busy}
       footer={
@@ -546,64 +546,155 @@ function CampaignDetail({ id, user, notify }) {
 
 // Email dashboard: what was sent and what wasn't, and which leads can still be emailed (Invalid / Unsubscribed open
 // the matching Leads list)
+// One dashboard number opened as a list: every email with that status, across the campaigns this user can see
+function RecipientsDialog({ status, label, onClose }) {
+  const [page, setPage] = useState(0);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let stale = false;
+    api
+      .campaignRecipients(status, page * 100)
+      .then((r) => !stale && (setResult(r), setError("")))
+      .catch((err) => !stale && setError(err.message));
+    return () => {
+      stale = true;
+    };
+  }, [status, page]);
+  const pages = result ? Math.ceil(result.total / 100) : 0;
+  return (
+    <Dialog
+      title={`${label}${result ? ` (${n(result.total)})` : ""}`}
+      onClose={onClose}
+      footer={
+        <button className="sf-button" onClick={onClose}>
+          Close
+        </button>
+      }
+    >
+      {error && <p className="form-error">{error}</p>}
+      {!result && !error && <p>Loading…</p>}
+      {result && (
+        <>
+          <div className="table-scroll">
+            <table className="sf-table campaign-recipients">
+              <thead>
+                <tr>
+                  <th>Lead</th>
+                  <th>Email</th>
+                  <th>Campaign</th>
+                  <th>{status === "Sent" ? "Sent" : "Note"}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.items.map((r) => (
+                  <tr key={r.id}>
+                    <td title={r.name}>{r.lead_id ? <a href={`#/leads/${r.lead_id}`}>{r.name}</a> : r.name}</td>
+                    <td title={r.email}>{r.email || <span className="muted">—</span>}</td>
+                    <td title={r.campaign}>
+                      <a href={`#/campaigns/${r.campaign_id}`}>{r.campaign}</a>
+                    </td>
+                    <td className={status === "Sent" ? "nowrap" : "issue-reason"}>
+                      {status === "Sent"
+                        ? when(r.sent_at)
+                        : r.error || (r.next_attempt_at ? `Next try ${when(r.next_attempt_at)}` : "Waiting to send")}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!result.items.length && <p className="table-empty">Nothing here.</p>}
+          </div>
+          {pages > 1 && (
+            <div className="pager">
+              <button className="sf-button small" disabled={page === 0} onClick={() => setPage(page - 1)}>
+                Previous
+              </button>
+              <span>
+                Page {page + 1} of {pages}
+              </span>
+              <button className="sf-button small" disabled={page + 1 >= pages} onClick={() => setPage(page + 1)}>
+                Next
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </Dialog>
+  );
+}
+
+// Email dashboard: every number opens its list. Email numbers open the emails (across campaigns); lead numbers open
+// the matching Leads list view.
 function EmailDashboard({ totals }) {
+  const [open, setOpen] = useState(null); // [status, label] of the email list being shown
   const e = totals.emails;
   const l = totals.leads;
+  const lists = (name) => `#/leads?list=${encodeURIComponent(name)}`;
   const groups = [
     [
       "Emails",
       `${n(totals.campaigns)} campaign${totals.campaigns === 1 ? "" : "s"}`,
       [
-        ["Sent", e.sent, "ok"],
-        ["Failed", e.failed, "bad"],
-        ["Not working", e.invalid, "bad", null, "Bounced: the address doesn't exist"],
-        ["Waiting", e.queued, "info"],
-        ["Left out", e.left_out, "warn", null, "Unsubscribed, invalid or no email when sending"],
+        ["Sent", e.sent, "ok", "Sent"],
+        ["Failed", e.failed, "bad", "Failed"],
+        ["Not working", e.invalid, "bad", "Invalid", "Bounced: the address doesn't exist"],
+        ["Waiting", e.queued, "info", "Queued"],
+        ["Left out", e.left_out, "warn", "Skipped", "Unsubscribed, invalid or no email when sending"],
       ],
     ],
     [
       "Lead emails",
       "who can be emailed",
       [
-        ["Working", l.working, "ok"],
-        ["Invalid", l.invalid, "bad", "#/leads?list=Invalid%20Emails"],
-        ["Unsubscribed", l.unsubscribed, "warn", "#/leads?list=Unsubscribed%20Leads"],
-        ["No email", l.no_email, "muted"],
+        ["Working", l.working, "ok", lists("Working Emails")],
+        ["Invalid", l.invalid, "bad", lists("Invalid Emails")],
+        ["Unsubscribed", l.unsubscribed, "warn", lists("Unsubscribed Leads")],
+        ["No email", l.no_email, "muted", lists("No Email")],
       ],
     ],
   ];
   return (
-    <section className="email-kpis" aria-label="Email dashboard">
-      {groups.map(([title, note, items]) => (
-        <div key={title} className="kpi-group">
-          <div className="kpi-title">
-            {title} <span>{note}</span>
+    <>
+      <section className="email-kpis" aria-label="Email dashboard">
+        {groups.map(([title, note, items]) => (
+          <div key={title} className="kpi-group">
+            <div className="kpi-title">
+              {title} <span>{note}</span>
+            </div>
+            <div className="kpi-row">
+              {items.map(([label, value, tone, target, hint]) => {
+                const inner = (
+                  <>
+                    <b>{n(value)}</b>
+                    <span>
+                      <i className={`kpi-dot ${tone}`} />
+                      {label}
+                    </span>
+                  </>
+                );
+                return target.startsWith("#") ? (
+                  <a key={label} className="kpi link" href={target} title={hint || `Open ${label.toLowerCase()} leads`}>
+                    {inner}
+                  </a>
+                ) : (
+                  <button
+                    key={label}
+                    type="button"
+                    className="kpi link"
+                    title={hint || `Show ${label.toLowerCase()} emails`}
+                    onClick={() => setOpen([target, `${label} emails`])}
+                  >
+                    {inner}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          <div className="kpi-row">
-            {items.map(([label, value, tone, href, hint]) => {
-              const inner = (
-                <>
-                  <b>{n(value)}</b>
-                  <span>
-                    <i className={`kpi-dot ${tone}`} />
-                    {label}
-                  </span>
-                </>
-              );
-              return href ? (
-                <a key={label} className="kpi link" href={href} title={`Open ${label} leads`}>
-                  {inner}
-                </a>
-              ) : (
-                <div key={label} className="kpi" title={hint}>
-                  {inner}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ))}
-    </section>
+        ))}
+      </section>
+      {open && <RecipientsDialog status={open[0]} label={open[1]} onClose={() => setOpen(null)} />}
+    </>
   );
 }
 

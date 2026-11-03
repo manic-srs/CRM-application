@@ -427,6 +427,9 @@ LIST_VIEWS = {
     # email campaigns: these leads are left out of every campaign
     "invalid_email": lambda q, me: q.where(Lead.email_invalid_at.is_not(None)),
     "unsubscribed": lambda q, me: q.where(Lead.unsubscribed_at.is_not(None)),
+    "email_ok": lambda q, me: q.where(Lead.email.is_not(None), Lead.email_invalid_at.is_(None),
+                                      Lead.unsubscribed_at.is_(None)),  # can be emailed
+    "no_email": lambda q, me: q.where(Lead.email.is_(None)),
 }
 SORTS = {"name": Lead.name, "title": Lead.title, "company": Lead.company, "phone": Lead.phone, "email": Lead.email,
          "stage": Lead.stage, "source": Lead.source, "owner": User.full_name, "created": Lead.created_at,

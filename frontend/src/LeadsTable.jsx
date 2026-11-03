@@ -275,7 +275,7 @@ export default function LeadsTable({
                 ? [
                     // a campaign to the ticked leads (unsubscribed / invalid emails are left out)
                     can(user, "send_campaigns") && {
-                      label: `Email ${selected.size === 1 ? "Lead" : "Leads"}`,
+                      label: "Email Campaign",
                       onClick: () => setCampaignFor([...selected]),
                     },
                     canTransferAny && {

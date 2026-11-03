@@ -28,6 +28,8 @@ const LEAD_VIEWS = {
   // left out of every email campaign
   "Invalid Emails": "invalid_email",
   "Unsubscribed Leads": "unsubscribed",
+  "Working Emails": "email_ok",
+  "No Email": "no_email",
 };
 
 // List views per object, like the Salesforce "list view" picker
@@ -46,6 +48,8 @@ function views(collection, user) {
       ["My Uploaded Leads", () => true],
       ["Invalid Emails", (r) => !!r.email_invalid_at],
       ["Unsubscribed Leads", (r) => !!r.unsubscribed_at],
+      ["Working Emails", (r) => !!r.email && !r.email_invalid_at && !r.unsubscribed_at],
+      ["No Email", (r) => !r.email],
     ],
     opportunities: [
       ["All Opportunities", () => true],

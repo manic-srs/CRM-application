@@ -248,6 +248,26 @@ def summary(db: Session = Depends(get_db)):
     }
 
 
+RECIPIENT_STATUSES = ("Sent", "Failed", "Invalid", "Queued", "Skipped", "Cancelled")
+
+
+@router.get("/recipients")
+def all_recipients(status: Literal[RECIPIENT_STATUSES] = Query(...), offset: int = Query(0, ge=0),
+                   limit: int = Query(100, ge=1, le=500), db: Session = Depends(get_db)):
+    """The email dashboard's lists: every email with this status, across the campaigns this user can see."""
+    me = acting_user()
+    query = select(CampaignRecipient, Campaign.name).join(Campaign).where(CampaignRecipient.status == status)
+    if not (me.sees_team or me.is_admin):
+        query = query.where(Campaign.created_by_id == me.id)
+    total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
+    rows = db.execute(query.order_by(CampaignRecipient.sent_at.desc().nulls_last(), CampaignRecipient.id.desc())
+                      .offset(offset).limit(limit)).all()
+    return {"total": total, "items": [
+        {"id": r.id, "lead_id": r.lead_id, "name": r.name, "email": r.email, "status": r.status,
+         "campaign_id": r.campaign_id, "campaign": name, "sent_at": r.sent_at, "attempts": r.attempts,
+         "next_attempt_at": r.next_attempt_at, "error": r.error} for r, name in rows]}
+
+
 @router.get("")
 def list_campaigns(db: Session = Depends(get_db)):
     me = acting_user()

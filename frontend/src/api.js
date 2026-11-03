@@ -353,6 +353,8 @@ export const api = {
   campaignSettings: () => apiRequest("/campaigns/settings"),
   campaigns: () => apiRequest("/campaigns"),
   campaignSummary: () => apiRequest("/campaigns/summary"),
+  campaignRecipients: (status, offset = 0, limit = 100) =>
+    apiRequest(`/campaigns/recipients?status=${encodeURIComponent(status)}&offset=${offset}&limit=${limit}`),
   campaign: (id, params = {}) =>
     apiRequest(`/campaigns/${id}?${new URLSearchParams(Object.entries(params).filter(([, v]) => v !== "" && v != null))}`),
   campaignPreview: (audience) => apiRequest("/campaigns/preview", { method: "POST", body: audience }),

@@ -291,3 +291,29 @@ def test_a_real_email_is_built_and_handed_to_the_mail_server(monkeypatch):
     assert f"List-Unsubscribe: <{link}>\r\n" in raw  # one line, not folded
     assert "List-Unsubscribe-Post: List-Unsubscribe=One-Click" in raw
     assert all(len(line) <= 78 for line in raw.split("\r\n\r\n", 1)[1].splitlines())  # quoted-printable body
+
+
+def test_dashboard_numbers_open_their_lists(client, sent):
+    """Sent / Not working / Left out on the dashboard open the matching emails (with the campaign), and the lead
+    numbers open list views (Working Emails, No Email)."""
+    ok, bad, none = lead(client), lead(client, "Ben"), lead(client, "Cy", email=False)
+    sent.answers[bad["email"]] = campaigns.Result("invalid", "550 5.1.1 User unknown")
+    made = client.post("/api/campaigns", json={"name": "Spring note", "subject": "Hello", "body": "Hello there friend",
+                                               "lead_ids": [ok["id"], bad["id"], none["id"]]}).json()
+    run_round()
+    got = client.get("/api/campaigns/recipients", params={"status": "Sent"}).json()
+    assert got["total"] == 1 and got["items"][0]["email"] == ok["email"]
+    assert (got["items"][0]["campaign"], got["items"][0]["campaign_id"]) == ("Spring note", made["id"])
+    assert client.get("/api/campaigns/recipients", params={"status": "Invalid"}).json()["items"][0]["lead_id"] == bad["id"]
+    assert client.get("/api/campaigns/recipients", params={"status": "Skipped"}).json()["items"][0]["lead_id"] == none["id"]
+    assert client.get("/api/campaigns/recipients", params={"status": "Nope"}).status_code == 422
+    names = lambda view: {l["id"] for l in client.get("/api/leads/page", params={"view": view}).json()["items"]}  # noqa: E731
+    assert ok["id"] in names("email_ok") and bad["id"] not in names("email_ok")
+    assert none["id"] in names("no_email") and ok["id"] not in names("no_email")
+    # a salesperson sees only their own campaigns' emails: Priya's campaign isn't in Ravi's list
+    priyas = lead(login_as(client, 1), "Dee")
+    client.post("/api/campaigns", json={"name": "Priya note", "subject": "Hello", "body": "Hello there friend",
+                                        "lead_ids": [priyas["id"]]})
+    run_round()
+    assert client.get("/api/campaigns/recipients", params={"status": "Sent"}).json()["total"] == 2  # Manager: team
+    assert login_as(client, 2).get("/api/campaigns/recipients", params={"status": "Sent"}).json()["total"] == 1
