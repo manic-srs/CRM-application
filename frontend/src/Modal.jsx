@@ -15,6 +15,8 @@ import {
   OPPORTUNITY_FLOW,
   WON_FILES_STAGE,
   emailWebsiteProblem,
+  websiteHost,
+  isPersonalEmail,
   localInput,
   skippedStages,
   stageNote,
@@ -124,6 +126,9 @@ export default function Modal({ modal, close, data, run, notify, user }) {
   const noteField = stageNoteField(type, demoChoice);
   const [noteError, setNoteError] = useState(false);
   const [emailError, setEmailError] = useState(""); // lead email already in the CRM, or not on the company domain
+  // an email on another domain than the website is asked about once; saving again with the same pair saves it
+  // (some companies use one domain for email and another for the website)
+  const [domainWarned, setDomainWarned] = useState("");
   // ...and all of them but Lost a New Task (task_* fields, checked with the note before anything is sent)
   const taskNeeded = stageTaskNeeded(type, demoChoice);
   const [taskErrors, setTaskErrors] = useState({});
@@ -472,7 +477,16 @@ export default function Modal({ modal, close, data, run, notify, user }) {
           ref.current.querySelector("input[name=email]")?.focus();
         };
         const domainProblem = emailWebsiteProblem(email, v.company_website);
-        if (domainProblem) return emailProblem(domainProblem);
+        const domainPair = `${email}|${websiteHost(v.company_website)}`;
+        if (domainProblem && isPersonalEmail(email)) {
+          setDomainWarned("");
+          return emailProblem(domainProblem); // personal mailboxes can't be saved anyway
+        }
+        if (domainProblem && domainPair !== domainWarned) {
+          setDomainWarned(domainPair);
+          return emailProblem(domainProblem);
+        }
+        if (domainProblem) v.confirm_email_domain = "1";
         if (email && email !== (record?.email || "").trim().toLowerCase()) {
           const check = await api.leadDuplicates(email);
           const others = check.matches.filter((m) => !(m.type === "Lead" && String(m.id) === String(record?.id)));
@@ -1012,7 +1026,9 @@ export default function Modal({ modal, close, data, run, notify, user }) {
             >
               {submitting
                 ? "Saving…"
-                : type === "convert"
+                : type === "lead" && domainWarned && emailError
+                  ? "Save anyway"
+                  : type === "convert"
                   ? "Convert lead"
                   : type === "won"
                     ? "Mark as won"

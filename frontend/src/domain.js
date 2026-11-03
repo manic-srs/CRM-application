@@ -279,16 +279,34 @@ export function salesOverview(data) {
   };
 }
 
-// A lead's email must use the company's domain, as its Company Website (the same rule as the backend's
-// services.email_matches_website): "name@acme.com" for acme.com; a subdomain either way is fine.
+// A lead's email is expected on the company's domain, as its Company Website (the same rule as the backend's
+// services.email_matches_website): "name@acme.com" for acme.com; a subdomain either way is fine. Another domain is
+// asked about once (Save anyway), since some companies email from a different domain than their website;
+// a personal mailbox (gmail.com...) is refused.
 export const websiteHost = (url) => {
   const host = (url || "").trim().toLowerCase().replace(/^[a-z][a-z0-9+.-]*:\/\//, "").split(/[/?:#]/)[0];
   return host.startsWith("www.") ? host.slice(4) : host;
 };
+const PERSONAL_EMAIL_DOMAINS = new Set([
+  "gmail.com", "googlemail.com", "yahoo.com", "ymail.com", "rocketmail.com", "hotmail.com", "outlook.com",
+  "live.com", "msn.com", "aol.com", "icloud.com", "me.com", "mac.com", "proton.me", "protonmail.com",
+  "pm.me", "gmx.com", "gmx.net", "mail.com", "yandex.com", "yandex.ru", "zohomail.com", "rediffmail.com",
+  "tutanota.com", "hey.com", "fastmail.com", "qq.com", "163.com", "126.com",
+]);
+const PERSONAL_EMAIL_NAMES = new Set(["gmail", "yahoo", "hotmail", "outlook", "live", "aol", "rediffmail", "ymail"]);
+// a personal mailbox (gmail.com, yahoo.co.in...): never a lead's email (same list as the backend)
+export function isPersonalEmail(email) {
+  const domain = (email || "").trim().toLowerCase().split("@").pop();
+  if (!(email || "").includes("@") || !domain) return false;
+  const [name, ...rest] = domain.split(".");
+  return PERSONAL_EMAIL_DOMAINS.has(domain) || (PERSONAL_EMAIL_NAMES.has(name) && rest.join(".").length <= 6);
+}
 export function emailWebsiteProblem(email, website) {
   const domain = (email || "").trim().toLowerCase().split("@").pop();
   const host = websiteHost(website);
   if (!(email || "").includes("@") || !domain || !host) return null;
   if (domain === host || domain.endsWith(`.${host}`) || host.endsWith(`.${domain}`)) return null;
-  return `The email must use the company's domain: @${domain} doesn't match the company website (${host}). Use the lead's work email, e.g. name@${host}.`;
+  if (isPersonalEmail(email))
+    return `Personal emails (@${domain}) aren't allowed for a lead. Use the lead's work email, e.g. name@${host}.`;
+  return `Please check the email: @${domain} doesn't match the company website (${host}). If this email is correct, click Save anyway.`;
 }

@@ -42,6 +42,7 @@ import {
   OPPORTUNITY_FLOW,
   skippedStages,
   emailWebsiteProblem,
+  isPersonalEmail,
 } from "./domain.js";
 
 test("lead form uses backend fields and only requires last name and company", () => {
@@ -659,6 +660,9 @@ test("a lead's email must use the company website's domain", () => {
   assert.equal(emailWebsiteProblem("asha@acme.com", "shop.acme.com"), null);
   assert.equal(emailWebsiteProblem("", "acme.com"), null); // nothing to compare
   assert.equal(emailWebsiteProblem("asha@acme.com", ""), null);
-  assert.match(emailWebsiteProblem("asha@gmail.com", "acme.com"), /@gmail\.com doesn't match the company website \(acme\.com\)/);
+  assert.match(emailWebsiteProblem("asha@gmail.com", "acme.com"), /Personal emails \(@gmail\.com\) aren't allowed/);
+  assert.match(emailWebsiteProblem("asha@acme-group.com", "acme.com"), /@acme-group\.com doesn't match the company website \(acme\.com\)\. If this email is correct, click Save anyway/);
+  assert.equal(isPersonalEmail("a@yahoo.co.in"), true);
+  assert.equal(isPersonalEmail("a@srsconsultinginc.com"), false);
   assert.match(emailWebsiteProblem("asha@notacme.com", "acme.com"), /doesn't match/);
 });
