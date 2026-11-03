@@ -411,20 +411,33 @@ def test_duplicate_email_on_new_lead(client, outbox):
     assert res.status_code == 409 and "a lead, owner Priya Sharma" in res.json()["detail"]
 
 
-def test_lead_email_must_be_on_the_company_website_domain(client):
+def test_lead_email_on_another_domain_is_asked_about_then_saved_anyway(client):
     def create(email, website, **extra):
         return client.post("/api/leads", json={"last_name": "Domain", "company": "Acme", "email": email,
                                                "company_website": website, **extra})
     bad = create("asha.personal@gmail.com", "https://www.acme-example.com")
-    assert bad.status_code == 400 and "@gmail.com doesn't match the company website (acme-example.com)" in bad.json()["detail"]
+    assert bad.status_code == 400 and "e.g. name@acme-example.com" in bad.json()["detail"]
+    assert "Personal emails (@gmail.com) aren't allowed" in bad.json()["detail"]
+    # a personal mailbox can't be confirmed, whatever the form sends
+    assert create("asha.personal@gmail.com", "acme-example.com", confirm_email_domain=True).status_code == 400
+    assert create("asha@yahoo.co.in", "acme-example.com", confirm_email_domain=True).status_code == 400
+    other = create("asha@acme-group.example", "acme-example.com")
+    assert other.status_code == 400 and "If this email is correct, click Save anyway" in other.json()["detail"]
     assert create("asha@acme-example.com", "https://www.acme-example.com").status_code == 201
     assert create("ravi@mail.acme-example.com", "acme-example.com").status_code == 201  # a subdomain is fine
     assert create("no-website@other.example", None).status_code == 201  # nothing to compare with
+    # some companies email from another domain than their website: the user confirms it and it is saved
+    ok = create("mani@acme-group.example", "acme-example.com", confirm_email_domain=True)
+    assert ok.status_code == 201 and ok.json()["email"] == "mani@acme-group.example"
+    assert create("mani@acme-group.example", "acme-example.com", confirm_email_domain=True).status_code == 409  # still unique
     lead = create("kiran@acme-example.com", "acme-example.com").json()
     assert client.put(f"/api/leads/{lead['id']}", json={"email": "kiran@yahoo.com"}).status_code == 400
     assert client.put(f"/api/leads/{lead['id']}", json={"company_website": "other-example.com"}).status_code == 400
     assert client.put(f"/api/leads/{lead['id']}", json={"email": "kiran@other-example.com",
                                                          "company_website": "other-example.com"}).status_code == 200
+    assert client.put(f"/api/leads/{lead['id']}", json={"email": "kiran@gmail.com", "confirm_email_domain": True}).status_code == 400
+    saved = client.put(f"/api/leads/{lead['id']}", json={"email": "kiran@acme-group.example", "confirm_email_domain": True})
+    assert saved.status_code == 200 and saved.json()["email"] == "kiran@acme-group.example"
 
 
 def test_stages_cannot_be_skipped(client, outbox):

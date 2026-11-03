@@ -73,6 +73,7 @@ export function leadPayload(values, editing = false) {
     owner_id: numeric(values.owner_id),
   };
   if (editing) payload.demo_date = optional(values.demo_date);
+  if (values.confirm_email_domain === "1") payload.confirm_email_domain = true; // checked: email domain differs from website
   return payload;
 }
 export function taskPayload(values, editing = false) {

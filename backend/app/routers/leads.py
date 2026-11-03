@@ -26,6 +26,7 @@ from app.services import (
     confirm_skipped,
     create_auto_task,
     email_website_problem,
+    is_personal_email,
     get_for_update,
     get_or_404,
     log_activity,
@@ -129,10 +130,12 @@ def check_email_free(db: Session, email: str | None, *, exclude_lead_id: int | N
             "Each email can belong to one lead only: use that record, or ask its owner or a Manager."))
 
 
-def check_lead_email(db: Session, email: str | None, website: str | None, *, exclude_lead_id: int | None = None) -> None:
-    """A lead's email is unique in the CRM and uses the company's domain (as its Company Website)."""
+def check_lead_email(db: Session, email: str | None, website: str | None, *, exclude_lead_id: int | None = None,
+                     confirmed: bool = False) -> None:
+    """A lead's email is unique in the CRM and never a personal mailbox. An email on another company domain than the
+    Company Website is asked about once: some companies email from one domain and host the website on another."""
     problem = email_website_problem(email, website)
-    if problem:
+    if problem and (not confirmed or is_personal_email(email)):  # a personal mailbox can't be confirmed
         raise HTTPException(status_code=400, detail=problem)
     check_email_free(db, email, exclude_lead_id=exclude_lead_id)
 
@@ -148,8 +151,8 @@ def create_lead(data: schemas.LeadCreate, db: Session = Depends(get_db)):
         if not owner.is_active or owner.role == "Admin":
             raise HTTPException(status_code=400, detail="Leads can only be assigned to active Managers and Salespeople")
     actor_id = acting_user_id()
-    check_lead_email(db, data.email, data.company_website)
-    lead = Lead(**data.model_dump(exclude={"owner_id", "created_by_id"}),
+    check_lead_email(db, data.email, data.company_website, confirmed=data.confirm_email_domain)
+    lead = Lead(**data.model_dump(exclude={"owner_id", "created_by_id", "confirm_email_domain"}),
                 owner_id=owner_id, stage=LEAD_START)
     db.add(lead)
     db.flush()
@@ -185,6 +188,7 @@ def update_lead(lead_id: int, data: schemas.LeadUpdate, db: Session = Depends(ge
     lead.untouched = False  # someone is working on it now
     changes = data.model_dump(exclude_unset=True)
     changes.pop("changed_by_id", None)
+    domain_confirmed = changes.pop("confirm_email_domain", False)
     actor = acting_user_id()
     new_owner = changes.pop("owner_id", None)  # a new owner is a transfer (same rules and history as Transfer)
     old_demo = lead.demo_date
@@ -192,7 +196,7 @@ def update_lead(lead_id: int, data: schemas.LeadUpdate, db: Session = Depends(ge
         email = changes.get("email", lead.email)
         website = changes.get("company_website", lead.company_website)
         problem = email_website_problem(email, website)
-        if problem:
+        if problem and (not domain_confirmed or is_personal_email(email)):
             raise HTTPException(status_code=400, detail=problem)
         if email and email.strip().lower() != (lead.email or "").strip().lower():
             check_email_free(db, email, exclude_lead_id=lead.id)

@@ -282,6 +282,7 @@ class LeadCreate(LeadLinks):
     source: LeadSource = "Other"
     owner_id: int | None = None  # default: the logged-in user
     created_by_id: int | None = None  # ignored: the logged-in user creates it
+    confirm_email_domain: bool = False  # the user checked the email is right though its domain differs from the website
 
     @field_validator("linkedin_url")
     @classmethod
@@ -308,6 +309,7 @@ class LeadUpdate(LeadLinks):
     demo_date: datetime | None = None
     owner_id: int | None = None
     changed_by_id: int | None = None  # logged-in user (not saved; used for the assignment notification)
+    confirm_email_domain: bool = False  # not saved: the user checked the email is right (see LeadCreate)
 
 
 class LeadOut(Out):

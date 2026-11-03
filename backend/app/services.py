@@ -358,19 +358,42 @@ def email_domain(email: str | None) -> str:
 
 
 def email_matches_website(email: str | None, website: str | None) -> bool:
-    """The email's domain is the company website's domain (or a subdomain of it, either way), so personal addresses
-    like gmail.com are refused for a company lead. True when either is missing: nothing to compare."""
+    """The email's domain is the company website's domain (or a subdomain of it, either way).
+    True when either is missing: nothing to compare."""
     domain, host = email_domain(email), website_host(website)
     if not (email or "").strip() or not domain or not host:
         return True
     return domain == host or domain.endswith("." + host) or host.endswith("." + domain)
 
 
+# personal mailboxes are never a company lead's email (the requirement: no gmail-like addresses)
+PERSONAL_EMAIL_DOMAINS = {
+    "gmail.com", "googlemail.com", "yahoo.com", "ymail.com", "rocketmail.com", "hotmail.com", "outlook.com",
+    "live.com", "msn.com", "aol.com", "icloud.com", "me.com", "mac.com", "proton.me", "protonmail.com",
+    "pm.me", "gmx.com", "gmx.net", "mail.com", "yandex.com", "yandex.ru", "zohomail.com", "rediffmail.com",
+    "tutanota.com", "hey.com", "fastmail.com", "qq.com", "163.com", "126.com",
+}
+PERSONAL_EMAIL_NAMES = {"gmail", "yahoo", "hotmail", "outlook", "live", "aol", "rediffmail", "ymail"}  # yahoo.co.in...
+
+
+def is_personal_email(email: str | None) -> bool:
+    domain = email_domain(email)
+    if not domain:
+        return False
+    name, _, rest = domain.partition(".")
+    return domain in PERSONAL_EMAIL_DOMAINS or (name in PERSONAL_EMAIL_NAMES and len(rest) <= 6)
+
+
 def email_website_problem(email: str | None, website: str | None) -> str | None:
+    """None when the email is on the company website's domain. A personal mailbox (gmail.com...) is refused; another
+    company domain is asked about, since some companies email from one domain and host the website on another."""
     if email_matches_website(email, website):
         return None
-    return (f"The email must use the company's domain: @{email_domain(email)} doesn't match the company website "
-            f"({website_host(website)}). Use the lead's work email, e.g. name@{website_host(website)}.")
+    if is_personal_email(email):
+        return (f"Personal emails (@{email_domain(email)}) aren't allowed for a lead. "
+                f"Use the lead's work email, e.g. name@{website_host(website)}.")
+    return (f"Please check the email: @{email_domain(email)} doesn't match the company website "
+            f"({website_host(website)}). If this email is correct, click Save anyway.")
 
 
 # ---------- stage order: no skipping ----------

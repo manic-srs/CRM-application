@@ -36,15 +36,15 @@ def rows(n, prefix="Row", owner=""):
             for i in range(n)]
 
 
-def test_email_on_another_domain_is_left_blank_with_a_note(client):
-    res = upload(client, [["Asha", "Iyer", "Acme", "asha.home@gmail.com", "acme-example.com", ""],
+def test_email_on_another_domain_is_kept_with_a_note(client):
+    res = upload(client, [["Asha", "Iyer", "Acme", "asha@acme-group.example", "acme-example.com", ""],
                           ["Ben", "Cole", "Acme", "ben@acme-example.com", "https://www.acme-example.com", ""]])
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["created"] == 2 and body["with_blanks"] == 1
-    assert "isn't on the company's domain (acme-example.com)" in body["warnings"][0]["reason"]
+    assert "on another domain than the company website (acme-example.com)" in body["warnings"][0]["reason"]
     emails = {l["last_name"]: l["email"] for l in client.get("/api/leads/page").json()["items"]}
-    assert emails == {"Iyer": None, "Cole": "ben@acme-example.com"}
+    assert emails == {"Iyer": "asha@acme-group.example", "Cole": "ben@acme-example.com"}
 
 
 def test_emails_already_in_the_crm_are_skipped_whatever_the_stage(client):

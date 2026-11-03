@@ -22,7 +22,7 @@ from app.database import get_db
 from app.models import Account, ActivityLog, Contact, Lead, StageHistory, User
 from app.security import acting_user, can_view, require, visible
 from app.serializers import lead_out
-from app.services import email_matches_website, log_activity, notify, website_host
+from app.services import email_matches_website, is_personal_email, log_activity, notify, website_host
 
 router = APIRouter(prefix="/api/leads", tags=["Leads: upload and download"])
 
@@ -209,11 +209,15 @@ def parse(header: list[str], rows: list[list]):
             if value is not None and value >= (Decimal("1e14") if field == "annual_revenue" else 10_000_000):
                 value = None
             lead[field] = int(value) if field == "employees" and value is not None else value
-        if lead["email"] and not email_matches_website(lead["email"], lead.get("company_website")):
+        if lead["email"] and is_personal_email(lead["email"]) and not email_matches_website(lead["email"], lead.get("company_website")):
             blank.append(f"email '{lead['email']}' isn't on the company's domain ({website_host(lead['company_website'])})")
-            lead["email"] = None
+            lead["email"] = None  # personal mailboxes (gmail.com...) aren't lead emails
         if blank:
             warnings.append({"row": number_in_file, "reason": "Left blank: " + "; ".join(blank)})
+        if lead["email"] and not email_matches_website(lead["email"], lead.get("company_website")):
+            # kept: some companies email from another domain than their website (e.g. srsconsultinginc.com / -us.com)
+            warnings.append({"row": number_in_file, "reason": f"Check: email '{lead['email']}' is on another domain "
+                                                               f"than the company website ({website_host(lead['company_website'])})"})
         lead["_owner"] = (raw.get("owner") or "").strip()
         lead["_row"] = number_in_file
         leads.append(lead)
