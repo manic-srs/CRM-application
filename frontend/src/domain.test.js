@@ -43,7 +43,7 @@ import {
   skippedStages,
   emailWebsiteProblem,
   isPersonalEmail,
-  parseEmailList,
+  parseRecipients,
   companyFromEmail,
 } from "./domain.js";
 
@@ -674,17 +674,15 @@ test("New Opportunity needs the opening note and the first task, like Convert", 
   assert.equal(stageTaskNeeded("newOpportunity"), true);
 });
 
-test("typed-in campaign emails: one per line, with an optional name and company", () => {
-  const { items, bad } = parseEmailList(
-    "asha@acme.com, Asha Rao, Acme Retail\nRavi Kumar <ravi@bluebird.io>, Bluebird\n\n a@x.com; b@y.com \nnot an email",
-  );
-  assert.deepEqual(items, [
-    { email: "asha@acme.com", name: "Asha Rao", company: "Acme Retail" },
-    { email: "ravi@bluebird.io", name: "Ravi Kumar", company: "Bluebird" },
+test("New Campaign's To field: pasted addresses, with names kept", () => {
+  assert.deepEqual(parseRecipients("asha@acme.com, Ravi Kumar <ravi@bluebird.io>; a@x.com b@y.com\nnotanemail"), [
+    { email: "asha@acme.com" },
+    { email: "ravi@bluebird.io", name: "Ravi Kumar" },
     { email: "a@x.com" },
     { email: "b@y.com" },
+    { email: "notanemail" },
   ]);
-  assert.deepEqual(bad, ["not an email"]);
+  assert.deepEqual(parseRecipients('"Meera Iyer" <meera@lumen.com>'), [{ email: "meera@lumen.com", name: "Meera Iyer" }]);
   assert.equal(companyFromEmail("asha@acme-retail.com"), "Acme Retail");
   assert.equal(companyFromEmail("asha@gmail.com"), "");
 });

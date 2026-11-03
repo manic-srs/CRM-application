@@ -311,32 +311,21 @@ export function emailWebsiteProblem(email, website) {
   return `Please check the email: @${domain} doesn't match the company website (${host}). If this email is correct, click Save anyway.`;
 }
 
-// New Campaign: email addresses typed or pasted in (people who may not be in the CRM). One per line, optionally
-// followed by a name and company ("asha@acme.com, Asha Rao, Acme Retail" or "Asha Rao <asha@acme.com>, Acme");
-// a line with several addresses adds each. Lines without an address are returned in `bad`.
-const EMAIL_IN_TEXT = /[^\s<>,;"'()]+@[^\s<>,;"'()]+\.[A-Za-z]{2,}/g;
-export function parseEmailList(text) {
-  const items = [];
-  const bad = [];
-  for (const raw of (text || "").split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line) continue;
-    const found = line.match(EMAIL_IN_TEXT) || [];
-    if (!found.length) {
-      bad.push(line);
-    } else if (found.length > 1) {
-      found.forEach((email) => items.push({ email }));
-    } else {
-      const [name, company] = line
-        .replace(found[0], "")
-        .replace(/[<>"]/g, "")
-        .split(/[,;\t]/)
-        .map((part) => part.trim())
-        .filter(Boolean);
-      items.push({ email: found[0], name: name || null, company: company || null });
+// New Campaign's "To" field: what was typed or pasted, split into recipients. Addresses are separated by new lines,
+// commas, semicolons or spaces; "Asha Rao <asha@acme.com>" keeps the name. Validity is checked by the caller.
+export function parseRecipients(text) {
+  const out = [];
+  for (const raw of (text || "").split(/[\n,;]+/)) {
+    const part = raw.trim();
+    if (!part) continue;
+    const named = part.match(/^"?([^"<]*?)"?\s*<([^>]+)>$/);
+    if (named) {
+      out.push({ email: named[2].trim(), name: named[1].trim() || null });
+      continue;
     }
+    for (const word of part.split(/\s+/)) out.push({ email: word.replace(/^<|>$/g, "") });
   }
-  return { items, bad };
+  return out;
 }
 
 // {company} for someone typed in without one: from the email's domain ("asha@acme-retail.com" -> "Acme Retail"),

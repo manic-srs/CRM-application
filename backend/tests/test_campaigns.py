@@ -327,7 +327,8 @@ def test_email_dashboard_totals(client, sent):
     run_round()
     body = client.get("/api/campaigns/summary").json()
     assert body["campaigns"] == 1
-    assert body["emails"] == {"sent": 1, "failed": 0, "invalid": 1, "queued": 0, "left_out": 2}
+    assert body["emails"] == {"sent": 1, "failed": 0, "invalid": 1, "queued": 0, "left_out": 2, "unsubscribed": 0,
+                              "people": 1}
     assert body["leads"] == {"working": 1, "invalid": 1, "unsubscribed": 1, "no_email": 1}
     # another salesperson sees only their own campaigns and leads
     from tests.conftest import login_as
@@ -397,3 +398,23 @@ def test_dashboard_numbers_open_their_lists(client, sent):
     run_round()
     assert client.get("/api/campaigns/recipients", params={"status": "Sent"}).json()["total"] == 2  # Manager: team
     assert login_as(client, 2).get("/api/campaigns/recipients", params={"status": "Sent"}).json()["total"] == 1
+
+
+def test_dashboard_counts_people_who_unsubscribed_after_a_campaign(client, sent):
+    """Unsubscribed on the dashboard = people who got one of these campaigns and then unsubscribed (lead or typed-in),
+    counted once each; the number opens their list."""
+    one, two = lead(client), lead(client, "Ben")
+    make(client, [one["id"], two["id"]])
+    client.post("/api/campaigns", json={"name": "Typed", "subject": "Hello", "body": "Hello there friend",
+                                        "emails": [{"email": "zoe@acme-retail.example"}]})
+    run_round()
+    make(client, [one["id"]])
+    run_round()
+    unsubscribe(client, one["id"])
+    typed = next(r for r in client.get("/api/campaigns/recipients", params={"status": "Sent"}).json()["items"]
+                 if r["email"] == "zoe@acme-retail.example")
+    client.post("/api/public/unsubscribe", data={"t": campaigns.recipient_token(typed["id"]), "action": "unsubscribe"})
+    emails = client.get("/api/campaigns/summary").json()["emails"]
+    assert (emails["unsubscribed"], emails["people"], emails["sent"]) == (2, 3, 4)
+    got = client.get("/api/campaigns/recipients", params={"status": "Unsubscribed"}).json()
+    assert got["total"] == 2 and {r["email"] for r in got["items"]} == {one["email"], "zoe@acme-retail.example"}

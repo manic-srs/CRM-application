@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session, selectinload
 from app import campaigns as engine
 from app.constants import LEAD_OPEN_STAGES, LEAD_STAGES
 from app.database import get_db
-from app.models import Campaign, CampaignRecipient, Lead
+from app.models import Campaign, CampaignRecipient, EmailAddress, Lead
 from app.security import acting_user, require, require_edit, visible
 from app.services import log_activity, notify, now
 
@@ -268,14 +268,33 @@ def create_campaign(data: CampaignIn, db: Session = Depends(get_db)):
     return campaign_out(campaign, counts_of(db, [campaign.id])[campaign.id]) | {"eta": eta(len(ok), send_at)}
 
 
+def my_campaign_ids():
+    me = acting_user()
+    mine = select(Campaign.id)
+    return mine if (me.sees_team or me.is_admin) else mine.where(Campaign.created_by_id == me.id)
+
+
+def unsubscribed_emails():
+    """Every address that has unsubscribed (typed in, or on a lead), lower case."""
+    return (select(func.lower(EmailAddress.email)).where(EmailAddress.unsubscribed_at.is_not(None))
+            .union(select(func.lower(Lead.email)).where(Lead.unsubscribed_at.is_not(None), Lead.email.is_not(None))))
+
+
+def unsubscribed_rows():
+    """The latest email each unsubscribed person got from these campaigns (one row per address)."""
+    latest = (select(func.max(CampaignRecipient.id))
+              .where(CampaignRecipient.campaign_id.in_(my_campaign_ids()), CampaignRecipient.status == "Sent",
+                     func.lower(CampaignRecipient.email).in_(unsubscribed_emails()))
+              .group_by(func.lower(CampaignRecipient.email)))
+    return CampaignRecipient.id.in_(latest)
+
+
 @router.get("/summary")
 def summary(db: Session = Depends(get_db)):
     """The email dashboard: totals across the campaigns this user can see (sent, not sent, not working, left out)
     and the leads they can see (working emails, invalid emails, unsubscribed)."""
     me = acting_user()
-    mine = select(Campaign.id)
-    if not (me.sees_team or me.is_admin):
-        mine = mine.where(Campaign.created_by_id == me.id)
+    mine = my_campaign_ids()
     by_status = dict(db.execute(select(CampaignRecipient.status, func.count())
                                 .where(CampaignRecipient.campaign_id.in_(mine))
                                 .group_by(CampaignRecipient.status)).all())
@@ -287,7 +306,13 @@ def summary(db: Session = Depends(get_db)):
         "campaigns": db.scalar(select(func.count()).select_from(mine.subquery())) or 0,
         "emails": {"sent": by_status.get("Sent", 0), "failed": by_status.get("Failed", 0),
                    "invalid": by_status.get("Invalid", 0), "queued": by_status.get("Queued", 0),
-                   "left_out": by_status.get("Skipped", 0)},
+                   "left_out": by_status.get("Skipped", 0),
+                   # people who unsubscribed after getting one of these campaigns, and how many people got one
+                   "unsubscribed": db.scalar(select(func.count()).select_from(CampaignRecipient)
+                                             .where(unsubscribed_rows())) or 0,
+                   "people": db.scalar(select(func.count(func.distinct(func.lower(CampaignRecipient.email))))
+                                       .where(CampaignRecipient.campaign_id.in_(mine),
+                                              CampaignRecipient.status == "Sent")) or 0},
         "leads": {
             "working": count(leads.c.email.is_not(None), leads.c.email_invalid_at.is_(None),
                              leads.c.unsubscribed_at.is_(None)),
@@ -298,17 +323,16 @@ def summary(db: Session = Depends(get_db)):
     }
 
 
-RECIPIENT_STATUSES = ("Sent", "Failed", "Invalid", "Queued", "Skipped", "Cancelled")
+RECIPIENT_STATUSES = ("Sent", "Failed", "Invalid", "Queued", "Skipped", "Cancelled", "Unsubscribed")
 
 
 @router.get("/recipients")
 def all_recipients(status: Literal[RECIPIENT_STATUSES] = Query(...), offset: int = Query(0, ge=0),
                    limit: int = Query(100, ge=1, le=500), db: Session = Depends(get_db)):
     """The email dashboard's lists: every email with this status, across the campaigns this user can see."""
-    me = acting_user()
-    query = select(CampaignRecipient, Campaign.name).join(Campaign).where(CampaignRecipient.status == status)
-    if not (me.sees_team or me.is_admin):
-        query = query.where(Campaign.created_by_id == me.id)
+    query = select(CampaignRecipient, Campaign.name).join(Campaign).where(
+        unsubscribed_rows() if status == "Unsubscribed" else CampaignRecipient.status == status,
+        Campaign.id.in_(my_campaign_ids()))
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     rows = db.execute(query.order_by(CampaignRecipient.sent_at.desc().nulls_last(), CampaignRecipient.id.desc())
                       .offset(offset).limit(limit)).all()
