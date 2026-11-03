@@ -218,6 +218,36 @@ def create_campaign(data: CampaignIn, db: Session = Depends(get_db)):
     return campaign_out(campaign, counts_of(db, [campaign.id])[campaign.id]) | {"eta": eta(len(ok), send_at)}
 
 
+@router.get("/summary")
+def summary(db: Session = Depends(get_db)):
+    """The email dashboard: totals across the campaigns this user can see (sent, not sent, not working, left out)
+    and the leads they can see (working emails, invalid emails, unsubscribed)."""
+    me = acting_user()
+    mine = select(Campaign.id)
+    if not (me.sees_team or me.is_admin):
+        mine = mine.where(Campaign.created_by_id == me.id)
+    by_status = dict(db.execute(select(CampaignRecipient.status, func.count())
+                                .where(CampaignRecipient.campaign_id.in_(mine))
+                                .group_by(CampaignRecipient.status)).all())
+    leads = visible(select(Lead), Lead).subquery()
+    count = lambda *where: db.scalar(select(func.count()).select_from(leads).where(*where)) or 0  # noqa: E731
+    invalid = count(leads.c.email_invalid_at.is_not(None))
+    unsubscribed = count(leads.c.unsubscribed_at.is_not(None))
+    return {
+        "campaigns": db.scalar(select(func.count()).select_from(mine.subquery())) or 0,
+        "emails": {"sent": by_status.get("Sent", 0), "failed": by_status.get("Failed", 0),
+                   "invalid": by_status.get("Invalid", 0), "queued": by_status.get("Queued", 0),
+                   "left_out": by_status.get("Skipped", 0)},
+        "leads": {
+            "working": count(leads.c.email.is_not(None), leads.c.email_invalid_at.is_(None),
+                             leads.c.unsubscribed_at.is_(None)),
+            "invalid": invalid, "unsubscribed": unsubscribed,
+            "no_email": count(leads.c.email.is_(None)),
+        },
+        "sent_last_24h": engine.sent_last_24h(db), "limits": engine.limits(),
+    }
+
+
 @router.get("")
 def list_campaigns(db: Session = Depends(get_db)):
     me = acting_user()
@@ -301,18 +331,22 @@ def set_email_status(lead_id: int, data: EmailStatusIn, db: Session = Depends(ge
 
 # ---------- the unsubscribe page (opened from the email; no login) ----------
 
-def page(title: str, text: str, token: str, show: str | None) -> HTMLResponse:
+def page(title: str, text: str, token: str, show: str | None, ask: bool = False) -> HTMLResponse:
+    """ask=True: the "Are you sure?" step, with the action button and Cancel (which changes nothing)."""
     button = ""
     if show:
         label = "Unsubscribe" if show == "unsubscribe" else "Subscribe again"
+        cancel = (f'<a class="cancel" href="?t={escape(token)}&amp;action=cancel">Cancel</a>' if ask else "")
         button = (f'<form method="post"><input type="hidden" name="t" value="{escape(token)}">'
-                  f'<input type="hidden" name="action" value="{show}"><button>{label}</button></form>')
+                  f'<input type="hidden" name="action" value="{show}"><button>{label}</button>{cancel}</form>')
     html = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>{escape(title, quote=False)}</title>
 <style>body{{font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:#f3f6fb;margin:0;color:#181818}}
 main{{max-width:440px;margin:12vh auto;background:#fff;border-radius:12px;padding:32px;box-shadow:0 2px 12px #0001}}
 h1{{font-size:20px;margin:0 0 10px}}p{{color:#444;line-height:1.5}}button{{margin-top:12px;padding:10px 18px;border:0;
-border-radius:6px;background:#0176d3;color:#fff;font-size:15px;cursor:pointer}}</style></head>
+border-radius:6px;background:#0176d3;color:#fff;font-size:15px;cursor:pointer}}
+.cancel{{display:inline-block;margin:12px 0 0 10px;padding:9px 18px;border:1px solid #c9c9c9;border-radius:6px;
+color:#181818;text-decoration:none;font-size:15px}}</style></head>
 <body><main><h1>{escape(title, quote=False)}</h1><p>{escape(text, quote=False)}</p>{button}</main></body></html>"""
     return HTMLResponse(html)
 
@@ -331,15 +365,22 @@ def unsubscribe_page(t: str = Query(""), action: str = Query("unsubscribe"), db:
     if lead is None:
         return page("Link not valid", "This unsubscribe link isn't valid. Please use the link from the latest email.",
                     t, None)
+    if action == "cancel":
+        state = "unsubscribed from" if lead.unsubscribed_at else "subscribed to"
+        return page("Nothing changed", f"{lead.email} is still {state} emails from {company}. You can close this page.",
+                    t, None)
     if action == "subscribe":
         if lead.unsubscribed_at:
-            return page("Subscribe again", f"Get campaign emails from {company} at {lead.email} again?", t, "subscribe")
+            return page("Subscribe again", f"Get campaign emails from {company} at {lead.email} again?", t, "subscribe",
+                        ask=True)
         return page("You're subscribed", f"{lead.email} gets emails from {company}. Want to stop them?", t,
                     "unsubscribe")
     if lead.unsubscribed_at:
         return page("You're unsubscribed", f"{lead.email} won't get campaign emails from {company}. "
                                            "Changed your mind?", t, "subscribe")
-    return page("Unsubscribe", f"Stop campaign emails from {company} to {lead.email}?", t, "unsubscribe")
+    return page("Are you sure you want to unsubscribe?",
+                f"{lead.email} will stop getting campaign emails from {company}. You can subscribe again at any time.",
+                t, "unsubscribe", ask=True)
 
 
 @public.post("/unsubscribe", response_class=HTMLResponse, include_in_schema=False)

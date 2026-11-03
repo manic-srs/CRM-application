@@ -115,7 +115,7 @@ def test_unsubscribe_link_asks_first_then_unsubscribes_and_can_subscribe_again(c
     one = lead(client)
     token = campaigns.unsubscribe_token(one["id"])
     page = client.get("/api/public/unsubscribe", params={"t": token})
-    assert page.status_code == 200 and "Stop campaign emails" in page.text
+    assert page.status_code == 200 and "Are you sure you want to unsubscribe?" in page.text and ">Cancel<" in page.text
     assert client.get(f"/api/leads/{one['id']}").json()["unsubscribed_at"] is None  # opening the link changes nothing
     # Outlook / Gmail one-click (RFC 8058): POST with the token in the URL
     done = client.post(f"/api/public/unsubscribe?t={token}", data={"List-Unsubscribe": "One-Click"})
@@ -229,3 +229,27 @@ def test_every_email_has_both_unsubscribe_and_subscribe_links(client, sent):
     assert "Subscribe again" in page.text and client.get(f"/api/leads/{one['id']}").json()["unsubscribed_at"]
     client.post("/api/public/unsubscribe", data={"t": token, "action": "subscribe"})
     assert client.get(f"/api/leads/{one['id']}").json()["unsubscribed_at"] is None
+
+
+def test_cancel_on_the_unsubscribe_page_changes_nothing(client, sent):
+    one = lead(client)
+    token = campaigns.unsubscribe_token(one["id"])
+    page = client.get("/api/public/unsubscribe", params={"t": token, "action": "cancel"})
+    assert "Nothing changed" in page.text and "still subscribed" in page.text
+    assert client.get(f"/api/leads/{one['id']}").json()["unsubscribed_at"] is None
+
+
+def test_email_dashboard_totals(client, sent):
+    good, bad, gone, blank = lead(client), lead(client, first="Zed"), lead(client), lead(client, email=False)
+    sent.answers[bad["email"]] = campaigns.Result("invalid", "550 5.1.1 User unknown")
+    unsubscribe(client, gone["id"])
+    make(client, [good["id"], bad["id"], gone["id"], blank["id"]])
+    run_round()
+    body = client.get("/api/campaigns/summary").json()
+    assert body["campaigns"] == 1
+    assert body["emails"] == {"sent": 1, "failed": 0, "invalid": 1, "queued": 0, "left_out": 2}
+    assert body["leads"] == {"working": 1, "invalid": 1, "unsubscribed": 1, "no_email": 1}
+    # another salesperson sees only their own campaigns and leads
+    from tests.conftest import login_as
+    other = login_as(client, 1).get("/api/campaigns/summary").json()  # a Manager sees the team
+    assert other["emails"]["sent"] == 1

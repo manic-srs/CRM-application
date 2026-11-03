@@ -544,8 +544,61 @@ function CampaignDetail({ id, user, notify }) {
   );
 }
 
+// Email dashboard: what was sent and what wasn't, and which leads can still be emailed (Invalid / Unsubscribed open
+// the matching Leads list)
+function EmailDashboard({ totals }) {
+  const e = totals.emails;
+  const l = totals.leads;
+  const tiles = [
+    ["Emails sent", e.sent, "ok"],
+    ["Not sent (failed)", e.failed, "bad"],
+    ["Not working (bounced at send)", e.invalid, "bad"],
+    ["Waiting to send", e.queued, "info"],
+    ["Left out of campaigns", e.left_out, "warn"],
+  ];
+  const leadTiles = [
+    ["Working emails", l.working, "ok", null],
+    ["Invalid emails", l.invalid, "bad", "#/leads?list=Invalid%20Emails"],
+    ["Unsubscribed", l.unsubscribed, "warn", "#/leads?list=Unsubscribed%20Leads"],
+    ["No email", l.no_email, "info", null],
+  ];
+  const tile = ([label, value, tone, href]) => {
+    const body = (
+      <>
+        <b>{n(value)}</b>
+        <span>{label}</span>
+      </>
+    );
+    return href ? (
+      <a key={label} className={`stat-tile ${tone}`} href={href}>
+        {body}
+        <small>View</small>
+      </a>
+    ) : (
+      <div key={label} className={`stat-tile ${tone}`}>
+        {body}
+      </div>
+    );
+  };
+  return (
+    <section className="email-dashboard" aria-label="Email dashboard">
+      <div>
+        <h3>
+          Emails <small className="muted">across {n(totals.campaigns)} campaign{totals.campaigns === 1 ? "" : "s"}</small>
+        </h3>
+        <div className="stat-tiles">{tiles.map(tile)}</div>
+      </div>
+      <div>
+        <h3>Leads</h3>
+        <div className="stat-tiles">{leadTiles.map(tile)}</div>
+      </div>
+    </section>
+  );
+}
+
 export default function CampaignsPage({ id, user, data, notify }) {
   const [list, setList] = useState(null);
+  const [totals, setTotals] = useState(null); // the email dashboard
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
   const [tick, setTick] = useState(0);
@@ -555,6 +608,10 @@ export default function CampaignsPage({ id, user, data, notify }) {
       .campaigns()
       .then(setList)
       .catch((err) => setError(err.message));
+    api
+      .campaignSummary()
+      .then(setTotals)
+      .catch(() => {});
   }, [id, tick]);
   useEffect(() => {
     if (id || !list?.items.some((c) => ["Sending", "Scheduled"].includes(c.status))) return;
@@ -584,10 +641,10 @@ export default function CampaignsPage({ id, user, data, notify }) {
             </button>
           )}
         </header>
+        {totals && <EmailDashboard totals={totals} />}
         <p className="campaign-rules">
-          <Icon name="mail" size={14} /> Unsubscribed leads and invalid emails are always left out. Every email ends with an unsubscribe
-          link. See <a href="#/leads?list=Invalid%20Emails">Invalid Emails</a> and{" "}
-          <a href="#/leads?list=Unsubscribed%20Leads">Unsubscribed Leads</a>.
+          <Icon name="mail" size={14} /> Unsubscribed leads and invalid emails are always left out. Every email ends with Unsubscribe and
+          Subscribe links.
         </p>
         {error && <p className="form-error pad">{error}</p>}
         <div className="table-scroll">

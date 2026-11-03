@@ -351,6 +351,7 @@ export const api = {
   // email campaigns (see backend/app/campaigns.py)
   campaignSettings: () => apiRequest("/campaigns/settings"),
   campaigns: () => apiRequest("/campaigns"),
+  campaignSummary: () => apiRequest("/campaigns/summary"),
   campaign: (id, params = {}) =>
     apiRequest(`/campaigns/${id}?${new URLSearchParams(Object.entries(params).filter(([, v]) => v !== "" && v != null))}`),
   campaignPreview: (audience) => apiRequest("/campaigns/preview", { method: "POST", body: audience }),
