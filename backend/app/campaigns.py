@@ -184,8 +184,7 @@ def send_one(to: str, subject: str, body: str, *, sender_name: str, reply_to: st
     cfg = mailer.settings()
     if not cfg["host"]:
         return Result("setup", "Email isn't set up (SMTP_HOST is empty)")
-    # no header folding: List-Unsubscribe must stay one plain <URL> for Outlook / Gmail to show the button
-    msg = EmailMessage(policy=policy.SMTP.clone(max_line_length=None))
+    msg = EmailMessage(policy=policy.SMTP)
     msg["From"] = formataddr((sender_name, cfg["sender"]))
     msg["To"] = to
     msg["Reply-To"] = reply_to
@@ -194,6 +193,9 @@ def send_one(to: str, subject: str, body: str, *, sender_name: str, reply_to: st
     msg["List-Unsubscribe"] = f"<{unsubscribe}>"
     msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
     msg.set_content(body, cte="quoted-printable")  # keeps body lines short whatever the message
+    # then no header folding: List-Unsubscribe must stay one plain <URL> for Outlook / Gmail to show the button.
+    # (Set after the body: Python 3.12 can't encode a body with max_line_length=None.)
+    msg.policy = policy.SMTP.clone(max_line_length=None)
     try:
         connect = smtplib.SMTP_SSL if cfg["port"] == 465 else smtplib.SMTP
         with connect(cfg["host"], cfg["port"], timeout=20) as smtp:

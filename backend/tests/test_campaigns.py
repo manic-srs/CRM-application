@@ -253,3 +253,41 @@ def test_email_dashboard_totals(client, sent):
     from tests.conftest import login_as
     other = login_as(client, 1).get("/api/campaigns/summary").json()  # a Manager sees the team
     assert other["emails"]["sent"] == 1
+
+
+def test_a_real_email_is_built_and_handed_to_the_mail_server(monkeypatch):
+    """send_one itself (the other tests replace it): the message is built and sent through SMTP, with the
+    one-click unsubscribe header on one line and both links in the body. The SMTP server is a stand-in."""
+    monkeypatch.setenv("SMTP_HOST", "mail.test")
+    monkeypatch.setenv("SMTP_PORT", "1025")
+    handed = []
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=None):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def starttls(self):
+            pass
+
+        def login(self, *a):
+            pass
+
+        def send_message(self, msg):
+            handed.append(msg.as_bytes())
+
+    monkeypatch.setattr(campaigns.smtplib, "SMTP", FakeSMTP)
+    link = campaigns.unsubscribe_link(42)
+    body = "Hi Mia,\n\n" + "A long line of text for the email. " * 20 + campaigns.footer(42)
+    result = campaigns.send_one("mia@bluebird.example", "Hello", body, sender_name="Asha Rao",
+                                reply_to="asha@company.example", unsubscribe=link)
+    assert result.outcome == "sent", result
+    raw = handed[0].decode()
+    assert f"List-Unsubscribe: <{link}>\r\n" in raw  # one line, not folded
+    assert "List-Unsubscribe-Post: List-Unsubscribe=One-Click" in raw
+    assert all(len(line) <= 78 for line in raw.split("\r\n\r\n", 1)[1].splitlines())  # quoted-printable body
