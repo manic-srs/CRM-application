@@ -394,3 +394,37 @@ class EmailAddress(Base):
     unsubscribed_at: Mapped[datetime | None]
     invalid_at: Mapped[datetime | None]
     invalid_reason: Mapped[str | None] = mapped_column(String(300))
+
+
+class AssistantConversation(Base):
+    """One AI Assistant chat, kept for its user (the history panel). messages: the conversation in the AI's format;
+    chat: what the page shows (bubbles, links, suggestions); pending: the action waiting for Confirm, if any."""
+
+    __tablename__ = "assistant_conversations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(120))
+    messages: Mapped[str] = mapped_column(Text, default="[]")   # JSON
+    chat: Mapped[str] = mapped_column(Text, default="[]")       # JSON
+    pending: Mapped[str | None] = mapped_column(Text)           # JSON
+    created_at: Mapped[datetime | None] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(server_default=func.now(), onupdate=func.now())
+
+
+class AssistantFile(Base):
+    """A file attached in the AI Assistant chat. Text is read out of documents when uploaded (the AI reads the text);
+    images are kept so the AI can look at them. The bytes are deferred: lists never load them."""
+
+    __tablename__ = "assistant_files"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    conversation_id: Mapped[int | None] = mapped_column(ForeignKey("assistant_conversations.id", ondelete="SET NULL"))
+    filename: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[str] = mapped_column(String(100))
+    kind: Mapped[str] = mapped_column(String(10))               # "text" or "image"
+    size_bytes: Mapped[int]
+    text: Mapped[str | None] = mapped_column(Text)              # the readable text (documents)
+    data: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)  # images only
+    created_at: Mapped[datetime | None] = mapped_column(server_default=func.now())

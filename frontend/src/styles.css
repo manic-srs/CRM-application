@@ -4610,3 +4610,657 @@ a.email-off {
   color: #ba0517;
   font-size: 12px;
 }
+
+/* ---------- AI Assistant: chat history panel, quick actions menu, suggestions, attachments, tables ---------- */
+.ai-layout {
+  display: flex;
+  flex: 1;
+  gap: 12px;
+  min-height: 0;
+}
+.ai-layout .ai-card {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+.ai-history-wrap {
+  display: flex;
+  flex: none;
+  width: 270px;
+  min-height: 0;
+}
+.ai-history {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--white);
+}
+.ai-history-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ai-new {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.ai-history-search {
+  margin-top: 10px;
+}
+.ai-history-label {
+  margin: 14px 6px 6px;
+  color: var(--text-weak);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.ai-history-empty {
+  margin: 4px 6px;
+  color: var(--text-weak);
+  font-size: 13px;
+}
+.ai-history-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+.ai-history-list li {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: 2px;
+  border-radius: 8px;
+}
+.ai-history-list li:hover,
+.ai-history-list li.on {
+  background: #eef4ff;
+}
+.ai-history-list li.on .ai-history-title {
+  color: var(--brand);
+  font-weight: 600;
+}
+.ai-history-item {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  padding: 7px 8px;
+  border-radius: 8px;
+  text-align: left;
+}
+.ai-history-title {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-history-time {
+  margin-top: 2px;
+  color: var(--text-weak);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.ai-history-actions {
+  display: flex;
+  opacity: 0;
+}
+.ai-history-list li:hover .ai-history-actions,
+.ai-history-list li.on .ai-history-actions,
+.ai-history-actions:focus-within {
+  opacity: 1;
+}
+.ai-history .icon-button {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  color: var(--text-weak);
+}
+.ai-history .icon-button:hover,
+.ai-history .icon-button:focus-visible {
+  background: var(--white);
+  color: var(--brand);
+}
+.ai-rename {
+  flex: 1;
+  padding: 4px;
+}
+.ai-rename input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--brand);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 14px;
+}
+.ai-delete {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+.ai-delete span {
+  flex-basis: 100%;
+}
+.ai-history-toggle,
+.ai-history-close {
+  display: none;
+}
+.ai-chat-title {
+  max-width: 900px;
+  margin: 0 auto 14px;
+  overflow: hidden;
+  color: var(--text-weak);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* the message box: attached files, suggestions while typing, quick actions and attach buttons */
+.ai-input {
+  position: relative;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+.ai-input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+.ai-tool {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 40px;
+  height: 46px;
+  border-radius: 10px;
+  color: var(--text-weak);
+}
+.ai-tool:hover:not(:disabled),
+.ai-tool[aria-expanded="true"] {
+  background: #eef4ff;
+  color: var(--brand);
+}
+.ai-tool:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.ai-quick-menu {
+  position: relative;
+}
+.ai-quick-pop {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  width: 240px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--white);
+  box-shadow: 0 8px 24px #0000001f;
+}
+.ai-quick-pop p {
+  margin: 4px 8px 6px;
+  color: var(--text-weak);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.ai-quick-pop button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 14px;
+  text-align: left;
+}
+.ai-quick-pop button:hover:not(:disabled) {
+  background: #f3f9ff;
+}
+.ai-hint {
+  margin: 0 0 0 96px;
+  color: var(--text-weak);
+  font-size: 12px;
+}
+.ai-typeahead {
+  position: absolute;
+  right: 72px;
+  bottom: calc(100% - 4px);
+  left: 104px;
+  z-index: 15;
+  margin: 0;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--white);
+  box-shadow: 0 8px 24px #0000001a;
+  list-style: none;
+}
+.ai-typeahead button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 14px;
+  text-align: left;
+}
+.ai-typeahead button:hover,
+.ai-typeahead button:focus-visible {
+  background: #f3f9ff;
+}
+.ai-typeahead svg {
+  flex: none;
+  color: var(--text-weak);
+}
+.ai-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ai-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: #f8fafc;
+  font-size: 13px;
+}
+.ai-file small {
+  color: var(--text-weak);
+}
+.ai-file.loading {
+  opacity: 0.7;
+}
+.ai-file.bad {
+  border-color: #f0a19a;
+  background: #fef1ee;
+  color: #ba0517;
+}
+.ai-file button {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  color: var(--text-weak);
+}
+.ai-file button:hover {
+  background: #e5e9f0;
+}
+.ai-files.sent {
+  margin-top: 8px;
+}
+.ai-msg.me .ai-file {
+  border-color: #ffffff66;
+  background: #ffffff22;
+  color: var(--white);
+}
+.ai-mine {
+  white-space: pre-wrap;
+}
+.ai-drop {
+  position: absolute;
+  inset: 8px;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--brand);
+  border-radius: 12px;
+  background: #f3f9ffe6;
+  color: var(--brand);
+  font-weight: 600;
+  pointer-events: none;
+}
+
+/* suggestions after a reply */
+.ai-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-left: 38px;
+}
+.ai-suggestions button {
+  padding: 6px 12px;
+  border: 1px solid #b0c7e4;
+  border-radius: 999px;
+  background: var(--white);
+  color: var(--brand);
+  font-size: 13px;
+}
+.ai-suggestions button:hover:not(:disabled) {
+  background: #eef4ff;
+}
+
+/* reports: headings and tables in replies */
+.ai-text h3 {
+  margin: 10px 0 4px;
+  font-size: 14px;
+  font-weight: 700;
+}
+.ai-text h3:first-child {
+  margin-top: 0;
+}
+.ai-text code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #e8edf3;
+  font-size: 13px;
+}
+.ai-table-wrap {
+  margin: 8px 0;
+  overflow-x: auto;
+}
+.ai-table {
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.ai-table th,
+.ai-table td {
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+.ai-table th {
+  background: #eef2f7;
+  font-weight: 600;
+}
+.ai-table td {
+  background: var(--white);
+}
+
+@media (max-width: 960px) {
+  .ai-history-wrap {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 60;
+    width: min(300px, 85vw);
+    padding: 10px;
+    transform: translateX(-105%);
+    transition: transform 0.2s ease;
+  }
+  .ai-history-wrap.open {
+    transform: none;
+  }
+  .ai-history-toggle,
+  .ai-history-close {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .ai-history-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    background: #0000004d;
+  }
+  .ai-typeahead {
+    left: 16px;
+    right: 16px;
+  }
+  .ai-hint {
+    margin-left: 0;
+  }
+  .ai-quick button {
+    font-size: 13px;
+  }
+}
+
+/* quick actions stay on one line (scroll sideways when narrow); the ⚡ button opens them anywhere in a chat */
+.ai-layout .ai-quick {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.ai-layout .ai-quick button,
+.ai-layout .ai-quick-label {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* history panel: always fits its column (long chat names are cut with "…"), and can be hidden */
+.ai-history-wrap {
+  overflow: hidden;
+}
+.ai-history,
+.ai-history-list,
+.ai-history-list li {
+  min-width: 0;
+}
+.ai-history-item {
+  overflow: hidden;
+}
+.ai-history-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+.ai-history-toggle .narrow-only {
+  display: none;
+}
+.ai-layout .ai-quick {
+  flex-wrap: wrap;
+  overflow: visible;
+}
+@media (min-width: 961px) {
+  .ai-layout.history-hidden .ai-history-wrap {
+    display: none;
+  }
+}
+@media (max-width: 960px) {
+  .ai-history-toggle .wide-only {
+    display: none;
+  }
+  .ai-history-toggle .narrow-only {
+    display: inline;
+  }
+}
+
+/* ---- AI Assistant: panel head with its hide icon; rename / delete always visible ---- */
+.ai-history-head {
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.ai-history-head .ai-history-label {
+  margin: 0 4px;
+}
+.ai-new {
+  flex: none;
+  width: 100%;
+  margin-bottom: 8px;
+}
+.ai-history-actions {
+  opacity: 1;
+}
+.ai-history .icon-button {
+  color: #8592a3;
+}
+.ai-history-hide {
+  color: var(--text-weak);
+}
+.ai-history-show {
+  display: none;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  margin-right: 2px;
+  border-radius: 8px;
+  color: var(--text-weak);
+}
+.ai-history-show.visible {
+  display: grid;
+}
+.ai-history-show:hover {
+  background: #eef4ff;
+  color: var(--brand);
+}
+
+/* ---- quick actions: compact, fit the bar (wrap instead of scrolling) ---- */
+.ai-layout .ai-quick {
+  flex-wrap: wrap;
+  gap: 4px 2px;
+  padding: 8px 12px;
+  overflow: visible;
+}
+.ai-layout .ai-quick-label {
+  margin-right: 4px;
+  font-size: 13px;
+}
+.ai-layout .ai-quick button:not(.ai-history-show) {
+  gap: 6px;
+  padding: 5px 9px;
+  font-size: 13.5px;
+}
+.ai-layout .ai-quick button svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* ---- message box: quick actions and attach buttons the same size and centred ---- */
+.ai-input-row {
+  align-items: center;
+  gap: 6px;
+}
+.ai-tool {
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--white);
+}
+.ai-input-row textarea {
+  min-height: 44px;
+  margin-left: 4px;
+}
+.ai-input-row .ai-send {
+  width: 44px;
+  height: 44px;
+}
+
+/* ---- examples: compact, so they fit without scrolling ---- */
+.ai-layout .ai-examples {
+  gap: 12px;
+}
+.ai-layout .ai-example-group {
+  padding: 10px 12px;
+}
+.ai-layout .ai-example-group button {
+  padding: 6px 10px;
+}
+
+@media (max-width: 1350px) {
+  .ai-layout .ai-quick-label {
+    display: none;
+  }
+}
+@media (max-width: 960px) {
+  .ai-history-show {
+    display: grid;
+  }
+}
+.ai-quick .ai-history-show {
+  display: none;
+}
+.ai-quick .ai-history-show.visible {
+  display: grid;
+}
+@media (max-width: 960px) {
+  .ai-quick .ai-history-show {
+    display: grid;
+  }
+}
+
+/* ---- chat history: a small arrow on each chat opens Rename / Delete; the list scrolls when it is long ---- */
+.ai-history-list {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: #c3ccd8 transparent;
+  padding-right: 2px;
+}
+.ai-history-list::-webkit-scrollbar {
+  width: 8px;
+}
+.ai-history-list::-webkit-scrollbar-thumb {
+  border-radius: 8px;
+  background: #c3ccd8;
+}
+.ai-history-list li {
+  position: relative;
+}
+.ai-history-actions {
+  position: relative;
+  flex: none;
+  opacity: 1;
+}
+.ai-row-arrow[aria-expanded="true"] {
+  background: var(--white);
+  color: var(--brand);
+}
+.ai-row-menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  right: 0;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  min-width: 128px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--white);
+  box-shadow: 0 6px 18px #0000001f;
+}
+.ai-row-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+.ai-row-menu button:hover {
+  background: #f3f9ff;
+}
+.ai-row-menu button.danger {
+  color: #ba0517;
+}
+.ai-row-menu button.danger:hover {
+  background: #fef1ee;
+}

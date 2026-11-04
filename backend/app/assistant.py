@@ -1,5 +1,9 @@
 """SalesTrack AI Assistant: do CRM work from one sentence ("Create a lead Ravi Kumar at Acme, source Website").
 
+It only helps with this CRM (leads, opportunities, accounts, contacts, tasks, demos, reports): other questions and web
+searches are politely declined. Details can be given in any format (a sentence, a pasted signature or email, an
+attached file); the model picks the fields out. Numbers for reports come from the database (assistant_reports.py).
+
 How it works
 - The app sends the conversation to POST /api/assistant/chat. The model (OpenAI, function calling) picks tools below.
 - Every tool calls the same API function the screens use, as the logged-in user, so the same permission rules,
@@ -15,6 +19,7 @@ Settings (.env)
 import json
 import logging
 import os
+import re
 from datetime import datetime
 from decimal import Decimal
 
@@ -24,14 +29,18 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
 from app import schemas
-from app.constants import LEAD_FLOW, LEAD_STAGES, OPPORTUNITY_FLOW, OPPORTUNITY_STAGES, REVISIT_REASONS
-from app.models import User
-from app.routers import activity, home, leads, opportunities, tasks
+from app.assistant_reports import PERIODS, crm_report
+from app.constants import (LEAD_FLOW, LEAD_STAGES, OPPORTUNITY_FLOW, OPPORTUNITY_STAGES, REVISIT_REASONS,
+                           UNQUALIFIED_REASONS)
+from app.models import Lead, User
+from app.routers import accounts, activity, home, leads, opportunities, tasks
 from app.security import acting_user
 
 log = logging.getLogger("crm.assistant")
-MAX_STEPS = 8          # model <-> tool round trips per message
+MAX_STEPS = 10         # model <-> tool round trips per message
 MAX_LIST = 25          # rows a list tool returns to the model
+MAX_USER_CHARS = 90_000  # a message with pasted details or attached files' text (kept whole in the history)
+MAX_TOOL_CHARS = 12_000  # a tool result the model reads
 
 
 def settings() -> dict:
@@ -100,6 +109,42 @@ TOOLS = [
     _tool("list_users", "Active users (for owners and transfers)."),
     _tool("pipeline_summary", "Numbers for the dashboard: leads per stage, open deals, won and lost, today's tasks.", {
         "mine_only": {"type": "boolean", "description": "Default false: the whole team the user can see"}}),
+    _tool("crm_report", "Exact statistics and reports counted in the database: leads created / converted / lost, "
+          "conversion rate, opportunities created / won / lost with amounts, win rate, average deal, pipeline by "
+          "stage, won by owner, lost reasons, biggest open deals, tasks open / overdue / completed. Use it for EVERY "
+          "number, total, rate or comparison (never count from list results, which are capped).", {
+              "period": {"type": "string", "enum": PERIODS, "description": "Default all_time"},
+              "date_from": DATE, "date_to": DATE,
+              "owner_name": {"type": "string", "description": "Only this user's records"}}),
+    _tool("list_accounts", "List accounts (companies) the user can see.", {"search": S}),
+    _tool("get_account", "One account with its contacts and opportunities.", {"account_id": I}, ["account_id"]),
+    _tool("list_contacts", "List contacts (people at accounts).", {"search": S, "account_id": I}),
+    _tool("create_account", "Create an account (company) without a lead.", {
+        "name": S, "industry": S, "phone": S, "website": S, "address": S}, ["name"]),
+    _tool("create_contact", "Add a contact (person) to an account.", {
+        "account_id": I, "salutation": LEAD_FIELDS["salutation"], "first_name": S, "last_name": S, "job_title": S,
+        "email": S, "phone": S}, ["account_id", "last_name"]),
+    _tool("create_opportunity", "Create a new opportunity directly (without converting a lead). Give the account "
+          "(account_id, or account_name: an existing account with that company name is reused) and the contact "
+          "(contact_id, or contact_last_name and the rest: an existing contact with that email or name is reused). "
+          "The same open opportunity for the same person and company can't be created twice.", {
+              "name": {"type": "string", "description": "Opportunity name"}, "account_id": I, "account_name": S,
+              "contact_id": I, "contact_first_name": S, "contact_last_name": S, "contact_email": S, "contact_title": S,
+              "contact_phone": S, "amount": N, "close_date": DATE,
+              "owner_name": {"type": "string", "description": "Only when the user names another owner"},
+              "note": {"type": "string", "description": "Required: why the opportunity is opened, in the user's own "
+                       "words (take them from what the user said; ask only if they gave no reason)."},
+              **TASK_ARGS}, ["name", "note", *TASK_REQUIRED]),
+    _tool("update_opportunity", "Change an opportunity's name, amount, close date, contact or discovery details "
+          "(not its stage or owner).", {
+              "opportunity_id": I, "name": S, "amount": N, "close_date": DATE, "primary_contact_id": I,
+              "discovery_needs": S, "discovery_budget": S, "discovery_decision_maker": S, "discovery_timeline": S},
+          ["opportunity_id"]),
+    _tool("update_task", "Change a task: reschedule it, rename it or change its priority or description.", {
+        "task_id": I, "title": S, "due_date": DATE_TIME, "priority": {"type": "string", "enum": ["Low", "Normal", "High"]},
+        "description": S}, ["task_id"]),
+    _tool("reopen_lead", "Bring an Unqualified lead back to New.", {"lead_id": I, "note": NOTE, **TASK_ARGS},
+          ["lead_id", "note", *TASK_REQUIRED]),
     _tool("create_lead", "Create a lead at stage New. Last name and company are required.", {
         **LEAD_FIELDS, "owner_name": {"type": "string", "description": "Only when the user names another owner"}},
         ["last_name", "company"]),
@@ -138,17 +183,22 @@ TOOLS = [
         "opportunity_id": I, "reason": LOST, "notes": NOTE},
         ["opportunity_id", "reason", "notes"]),
     _tool("delete_lead", "Delete a lead (needs confirmation).", {"lead_id": I}, ["lead_id"]),
+    _tool("mark_lead_unqualified", "Close a lead as Unqualified: not eligible (needs confirmation).", {
+        "lead_id": I, "reason": {"type": "string", "enum": UNQUALIFIED_REASONS}, "notes": NOTE},
+        ["lead_id", "reason", "notes"]),
 ]
 CONFIRM_FIRST = {"mark_lead_lost", "cancel_demo", "transfer_lead", "mark_opportunity_won", "mark_opportunity_lost",
-                 "delete_lead"}
+                 "delete_lead", "mark_lead_unqualified"}
 # Stage changes and the argument that carries the user's note (required, like on the screens)
 NOTE_ARGS = {"move_lead_stage": "note", "convert_lead": "note", "move_opportunity_stage": "note",
              "mark_lead_lost": "notes", "cancel_demo": "reason", "mark_opportunity_won": "note",
-             "mark_opportunity_lost": "notes"}
+             "mark_opportunity_lost": "notes", "create_opportunity": "note", "reopen_lead": "note",
+             "mark_lead_unqualified": "notes"}
 NOTE_MISSING = f"{schemas.STAGE_NOTE_REQUIRED} Ask the user for their note; don't write one for them."
 COMMENT_MISSING = (f"{schemas.CONVERSION_COMMENT_REQUIRED} Ask the user for their conversion comment; "
                    "don't write one for them.")
-TASK_TOOLS = {"move_lead_stage", "convert_lead", "move_opportunity_stage", "mark_opportunity_won", "cancel_demo"}
+TASK_TOOLS = {"move_lead_stage", "convert_lead", "move_opportunity_stage", "mark_opportunity_won", "cancel_demo",
+              "create_opportunity", "reopen_lead"}
 TASK_MISSING = (f"{schemas.STAGE_TASK_REQUIRED} Ask the user for the task's subject and due date (for Won, a post-sale "
                 "task such as handover or onboarding); don't make them up.")
 
@@ -172,13 +222,37 @@ def user_note(name: str, args: dict) -> str:
     return note.strip() if isinstance(note, str) else ""
 
 
+def fill_defaults(db: Session, name: str, args: dict) -> dict:
+    """Booking a demo needs no extra typing: when the user gives the lead and the demo date and time, the demo itself
+    is the new task (due at the demo) and the note says when it was booked, unless the user said otherwise."""
+    if name != "move_lead_stage" or args.get("stage") != "Demo" or not args.get("demo_date"):
+        return args
+    args = dict(args)
+    lead = db.get(Lead, args["lead_id"]) if isinstance(args.get("lead_id"), int) else None
+    who = lead.name if lead else "the lead"
+    if not any(isinstance(args.get(k), str) and args[k].strip() for k in ("task_title", "task_due_date")):
+        args["task_title"], args["task_due_date"] = f"Demo with {who}", args["demo_date"]
+    if not user_note(name, args):
+        try:
+            when = datetime.fromisoformat(str(args["demo_date"])[:16])
+            args["note"] = f"Demo booked for {when:%d %b %Y, %I:%M %p}."
+        except ValueError:
+            args["note"] = f"Demo booked for {args['demo_date']}."
+    return args
+
+
 # ---------- running a tool ----------
 
 def _plain(value):
     """API results -> JSON the model can read (short)."""
     if isinstance(value, BaseModel):
         value = value.model_dump(mode="json")
-    return json.loads(json.dumps(value, default=lambda o: float(o) if isinstance(o, Decimal) else str(o)))
+    def default(o):
+        if isinstance(o, BaseModel):
+            return o.model_dump(mode="json")
+        return float(o) if isinstance(o, Decimal) else str(o)
+
+    return json.loads(json.dumps(value, default=default))
 
 
 def _user_id(db: Session, name: str | None) -> int | None:
@@ -210,10 +284,19 @@ def _task_row(t):
                                   "owner_name", "is_overdue")}
 
 
+def _account_row(a):
+    return {k: a.get(k) for k in ("id", "name", "industry", "phone", "website", "owner_name")}
+
+
+def _contact_row(c):
+    return {k: c.get(k) for k in ("id", "full_name", "job_title", "email", "phone", "account_id", "account_name")}
+
+
 def _link(kind: str, record: dict | None) -> dict | None:
     if not record or "id" not in record:
         return None
-    return {"type": kind, "id": record["id"], "name": record.get("name") or record.get("title") or f"{kind} {record['id']}"}
+    return {"type": kind, "id": record["id"],
+            "name": record.get("name") or record.get("full_name") or record.get("title") or f"{kind} {record['id']}"}
 
 
 def run_tool(db: Session, name: str, args: dict) -> tuple[dict, dict | None]:
@@ -251,6 +334,63 @@ def run_tool(db: Session, name: str, args: dict) -> tuple[dict, dict | None]:
     if name == "pipeline_summary":
         data = _plain(home.home_page(owner_id=me.id if a.get("mine_only") else None, db=db))
         return {k: data.get(k) for k in ("summary", "pipeline", "won_vs_lost")}, None
+    if name == "crm_report":
+        return crm_report(db, period=a.get("period"), date_from=a.get("date_from"), date_to=a.get("date_to"),
+                          owner_id=_user_id(db, a.get("owner_name"))), None
+    if name == "list_accounts":
+        rows = [_account_row(_plain(r)) for r in accounts.list_accounts(search=a.get("search"), owner_id=None, db=db)]
+        return {"count": len(rows), "accounts": rows[:MAX_LIST], "more": max(0, len(rows) - MAX_LIST)}, None
+    if name == "get_account":
+        out = _plain(accounts.get_account(account_id=a["account_id"], db=db))
+        out["contacts"] = [_contact_row(c) for c in out.get("contacts", [])][:MAX_LIST]
+        out["opportunities"] = [_opp_row(o) for o in out.get("opportunities", [])][:MAX_LIST]
+        return out, _link("Account", out)
+    if name == "list_contacts":
+        rows = [_contact_row(_plain(r)) for r in accounts.list_contacts(account_id=a.get("account_id"),
+                                                                        search=a.get("search"), db=db)]
+        return {"count": len(rows), "contacts": rows[:MAX_LIST], "more": max(0, len(rows) - MAX_LIST)}, None
+    if name == "create_account":
+        data = schemas.AccountCreate(**{k: a[k] for k in ("name", "industry", "phone", "website", "address") if k in a})
+        out = _plain(accounts.create_account(data=data, db=db))
+        return _account_row(out), _link("Account", out)
+    if name == "create_contact":
+        fields = {k: a[k] for k in ("salutation", "first_name", "last_name", "job_title", "email", "phone", "account_id")
+                  if k in a}
+        out = _plain(accounts.create_contact(data=schemas.ContactCreate(**fields), db=db))
+        return _contact_row(out), _link("Contact", out)
+    if name == "create_opportunity":
+        data = schemas.OpportunityCreate(
+            name=a["name"], note=a.get("note"), task=stage_task(a), expected_value=a.get("amount"),
+            expected_close_date=a.get("close_date"), owner_id=_user_id(db, a.get("owner_name")),
+            account_id=a.get("account_id"), account_name=a.get("account_name"), primary_contact_id=a.get("contact_id"),
+            contact_first_name=a.get("contact_first_name"), contact_last_name=a.get("contact_last_name"),
+            contact_email=a.get("contact_email"), contact_title=a.get("contact_title"),
+            contact_phone=a.get("contact_phone"))
+        out = _plain(opportunities.create_opportunity(data=data, db=db))
+        opp = out.get("opportunity") or {}
+        return {"opportunity": _opp_row(opp), "account": (out.get("account") or {}).get("name"),
+                "contact": (out.get("contact") or {}).get("full_name"), "reused": out.get("reused")}, \
+            _link("Opportunity", opp)
+    if name == "update_opportunity":
+        fields = {"name": a.get("name"), "expected_value": a.get("amount"), "expected_close_date": a.get("close_date"),
+                  "primary_contact_id": a.get("primary_contact_id"),
+                  **{k: a.get(k) for k in ("discovery_needs", "discovery_budget", "discovery_decision_maker",
+                                           "discovery_timeline")}}
+        data = schemas.OpportunityUpdate(**{k: v for k, v in fields.items() if v is not None})
+        out = _plain(opportunities.update_opportunity(opportunity_id=a["opportunity_id"], data=data, db=db))
+        return _opp_row(out), _link("Opportunity", out)
+    if name == "update_task":
+        fields = {k: a[k] for k in ("title", "due_date", "priority", "description") if k in a}
+        out = _plain(tasks.update_task(task_id=a["task_id"], data=schemas.TaskUpdate(**fields), db=db))
+        return _task_row(out), _link("Task", out)
+    if name == "reopen_lead":
+        data = schemas.ReopenLead(note=a.get("note"), task=stage_task(a))
+        out = _plain(leads.reopen(lead_id=a["lead_id"], data=data, db=db))
+        return _lead_row(out), _link("Lead", out)
+    if name == "mark_lead_unqualified":
+        data = schemas.MarkUnqualified(reason=a["reason"], notes=a.get("notes"))
+        out = _plain(leads.mark_unqualified(lead_id=a["lead_id"], data=data, db=db))
+        return _lead_row(out), _link("Lead", out)
     if name == "create_lead":
         fields = {k: a[k] for k in LEAD_FIELDS if k in a}
         data = schemas.LeadCreate(**fields, owner_id=_user_id(db, a.get("owner_name")))
@@ -353,6 +493,7 @@ def describe(db: Session, name: str, a: dict) -> str:
                                 + (f" for {a['final_amount']:,.0f}" if a.get("final_amount") is not None else "") + ".",
         "mark_opportunity_lost": f"Mark {oname} as Lost (reason: {a.get('reason')}).",
         "delete_lead": f"Delete lead {lname}. This can't be undone.",
+        "mark_lead_unqualified": f"Mark lead {lname} as Unqualified (reason: {a.get('reason')}).",
     }.get(name, name)
     note = user_note(name, a)  # the user sees the note that will be saved in the stage history
     if note:
@@ -364,6 +505,9 @@ def describe(db: Session, name: str, a: dict) -> str:
 
 # ---------- talking to the model ----------
 
+SUGGESTION_MARK = "NEXT:"
+
+
 def system_prompt() -> str:
     me = acting_user()
     now = datetime.now()
@@ -371,25 +515,85 @@ def system_prompt() -> str:
         "You are the SalesTrack CRM assistant. You help the logged-in user do their CRM work by calling tools. "
         f"Today is {now:%A, %d %B %Y}, time {now:%I:%M %p} (America/New_York). "
         f"The user is {me.full_name} ({me.role}).\n"
-        "Rules:\n"
-        "- Use tools for every fact and action. Never invent ids, names or numbers: search or list first.\n"
-        "- If several records match, ask which one. If required details are missing (lead: last name and company; "
-        "demo: date and time), ask for them in one short question.\n"
-        "- Lead stages go New -> Nurturing -> Revisit (optional) -> Demo -> Convert (a lead can be closed as Unqualified or Lost); deals go Opportunity "
-        "-> Discovery -> Proposal -> Won. Stages can't be "
-        "skipped: if a tool says a stage is missing, ask the user whether it was already done, and only then pass it "
-        "in completed_stages.\n"
-        "- Every stage change (move, convert, Won, Lost, cancel demo) needs the user's own note explaining it (for a "
-        "conversion, the Conversion Comment). If the user hasn't given one, ask for it in one short question. Never "
-        "write the note yourself.\n"
-        "- Every stage change except Lost also needs a new task from the user: its subject and due date (for Won, a "
-        "post-sale task such as handover or onboarding). Ask for them; never make them up.\n"
-        "- Closing actions (Lost, Won, transfer, cancel demo, delete) are confirmed by the user in the app: call the "
-        "tool, then tell the user to press Confirm.\n"
+        "Scope:\n"
+        "- Only help with this CRM: leads, opportunities (deals), accounts, contacts, tasks, demos, notes, the sales "
+        "pipeline, statistics and reports, how to use SalesTrack, and files the user attaches for CRM work. For "
+        "anything else (general knowledge, news, web searches, coding, personal topics) reply in one sentence that "
+        "you can only help with SalesTrack CRM work, and suggest a CRM task instead. You can't browse the web.\n"
+        "Working style:\n"
+        "- Do the work with as little back-and-forth as possible. Users give details in any order or format: a "
+        "sentence, a list, a pasted email signature or message, or an attached file (business card, resume, lead "
+        "list, meeting notes). Pick out every field yourself (name, title, company, email, phone, website, LinkedIn, "
+        "location, source, dates, amounts) and act. Ask only for details that are required and truly missing, all in "
+        "one short question.\n"
+        "- Use tools for every fact and action. Never invent ids, names or numbers: search or list first. If "
+        "several records match, ask which one.\n"
+        "- Dates: understand words like 'tomorrow 3pm', 'next Friday', 'end of month' and turn them into ISO dates "
+        "yourself.\n"
+        "- For several records (e.g. leads in an attached list), call the tools once per record in the same step.\n"
+        "- Lead stages go New -> Nurturing -> Revisit (optional) -> Demo -> Convert (a lead can be closed as "
+        "Unqualified or Lost); deals go Opportunity -> Discovery -> Proposal -> Won. Stages can't be skipped: if a "
+        "tool says a stage is missing, ask the user whether it was already done, and only then pass it in "
+        "completed_stages.\n"
+        "- Every stage change (move, convert, Won, Lost, Unqualified, cancel demo, reopen) and a new opportunity "
+        "need the user's own note (for a conversion, the Conversion Comment). Use the user's own words when they said "
+        "why (e.g. 'they loved the pricing'); if they gave no reason, ask in one short question. Never invent one. "
+        "Booking a demo is the exception: with the lead and the demo date and time, just book it (the demo itself "
+        "becomes the task and the note says when it was booked).\n"
+        "- Every stage change except Lost and Unqualified also needs a new task: its subject and due date (for Won, "
+        "a post-sale task such as handover or onboarding). Take them from what the user said; otherwise ask.\n"
+        "- New opportunity without a lead: use create_opportunity (existing accounts and contacts are reused; the "
+        "same open deal for the same person can't be added twice). To turn a lead into a deal, use convert_lead.\n"
+        "- Closing actions (Lost, Unqualified, Won, transfer, cancel demo, delete) are confirmed by the user in the "
+        "app: call the tool, then tell the user to press Confirm.\n"
+        "- Statistics and reports: always use crm_report (and pipeline_summary) for numbers, totals, rates and "
+        "comparisons, and quote its figures exactly. Say which period and scope they cover. Never count list "
+        "results, which are capped at 25. Show reports as short sections with bullet points or a markdown table.\n"
         "- The CRM never emails leads or customers automatically; only the salesperson sends emails, from Send Email.\n"
         "- If a tool returns an error, explain it plainly (e.g. missing permission) and suggest what to do.\n"
-        "- Answer briefly. Use short lists for several records. Dates like 5 Nov 2026, 3:00 PM. Amounts like 25,000."
+        "- Answer briefly. Use short lists for several records. Dates like 5 Nov 2026, 3:00 PM. Amounts like 25,000.\n"
+        f"- When there is a natural next step, end the reply with one last line: '{SUGGESTION_MARK} ' followed by 1 to 3 "
+        "short follow-up requests about the records, numbers or task just discussed, naming them (the lead, deal, "
+        "company, period), written as the user would type them and separated by ' | ' (e.g. after creating Mohan "
+        "Reddy's lead: 'NEXT: Book a demo with Mohan Reddy | Add a follow-up task for Mohan Reddy'). Never suggest "
+        "general or unrelated requests. Leave the line out when you asked the user a question, when an action waits "
+        "for Confirm, when you declined the request, or when nothing obvious comes next."
     )
+
+
+def split_suggestions(text: str) -> tuple[str, list[str]]:
+    """The reply without its closing 'NEXT: a | b | c' part (on its own line or at the end of the last one), and the
+    suggestions in it."""
+    text = (text or "").rstrip()
+    match = None
+    for match in re.finditer(r"[*_]*\bNEXT\s*:[*_]*", text, flags=re.IGNORECASE):
+        pass
+    if match is None or "\n" in text[match.end():].strip():
+        return text.strip(), []
+    items = [x.strip().strip("*_\"' ").rstrip(".") for x in text[match.end():].split("|")]
+    return text[:match.start()].strip(), [x[:120] for x in items if x][:3]
+
+
+# When the AI gives no suggestions, a follow-up is offered only after an action, about the record it touched
+FALLBACK_SUGGESTIONS = {
+    "create_lead": ["Book a demo with {name}", "Add a follow-up task for {name}"],
+    "move_lead_stage": ["Show the open tasks for {name}"],
+    "convert_lead": ["Move {name} to Discovery"],
+    "create_opportunity": ["Move {name} to Discovery"],
+    "create_task": ["What else do I have today?"],
+}
+
+
+def suggestions_for(model_items: list[str], tools_used: list[str], links: list[dict]) -> list[str]:
+    """Follow-ups that fit the conversation: the AI's own (about what was just discussed), or after an action one about
+    that record. Nothing generic: no suggestions when there's no natural next step."""
+    if model_items:
+        return model_items
+    name = links[-1]["name"] if links else None
+    for tool in reversed(tools_used):
+        if tool in FALLBACK_SUGGESTIONS and name:
+            return [s.format(name=name) for s in FALLBACK_SUGGESTIONS[tool]]
+    return []
 
 
 def call_model(messages: list[dict]) -> dict:
@@ -416,7 +620,7 @@ def converse(db: Session, history: list[dict]) -> dict:
     """Runs the tool loop until the model answers in words, or an action needs the user's confirmation.
     history: the conversation so far in OpenAI format (without the system message)."""
     messages = list(history)
-    links, done = [], []
+    links, done, used = [], [], []
     for _ in range(MAX_STEPS):
         reply = call_model([{"role": "system", "content": system_prompt()}, *messages])
         msg = {"role": "assistant", "content": reply.get("content") or ""}
@@ -425,9 +629,12 @@ def converse(db: Session, history: list[dict]) -> dict:
             msg["tool_calls"] = [{"id": c["id"], "type": "function",
                                   "function": {"name": c["function"]["name"], "arguments": c["function"]["arguments"]}}
                                  for c in calls]
-        messages.append(msg)
         if not calls:
-            return {"messages": messages, "reply": msg["content"], "links": links, "done": done, "pending": None}
+            msg["content"], items = split_suggestions(msg["content"])
+            messages.append(msg)
+            return {"messages": messages, "reply": msg["content"], "links": links, "done": done, "pending": None,
+                    "suggestions": suggestions_for(items, used, links)}
+        messages.append(msg)
         pending = None
         for c in calls:
             name = c["function"]["name"]
@@ -435,6 +642,8 @@ def converse(db: Session, history: list[dict]) -> dict:
                 args = json.loads(c["function"]["arguments"] or "{}")
             except ValueError:
                 args = {}
+            args = fill_defaults(db, name, args)
+            used.append(name)
             if name in NOTE_ARGS and not user_note(name, args):
                 # a stage change without a note: not run, no Confirm card
                 result, link = {"error": COMMENT_MISSING if name == "convert_lead" else NOTE_MISSING}, None
@@ -450,12 +659,14 @@ def converse(db: Session, history: list[dict]) -> dict:
                 if link and "error" not in result:
                     links.append(link)
                     done.append(name)
-            messages.append({"role": "tool", "tool_call_id": c["id"], "content": json.dumps(result)[:6000]})
+            messages.append({"role": "tool", "tool_call_id": c["id"], "content": json.dumps(result)[:MAX_TOOL_CHARS]})
         if pending:
-            text = msg["content"] or "This needs your confirmation:"
-            return {"messages": messages, "reply": text, "links": links, "done": done, "pending": pending}
+            text, _ = split_suggestions(msg["content"])
+            msg["content"] = text
+            return {"messages": messages, "reply": text or "This needs your confirmation:", "links": links, "done": done,
+                    "pending": pending, "suggestions": []}
     return {"messages": messages, "reply": "That took too many steps. Please break it into smaller requests.",
-            "links": links, "done": done, "pending": None}
+            "links": links, "done": done, "pending": None, "suggestions": []}
 
 
 def resolve(db: Session, history: list[dict], pending: dict, confirmed: bool) -> dict:
@@ -471,7 +682,7 @@ def resolve(db: Session, history: list[dict], pending: dict, confirmed: bool) ->
             links.append(link)
     else:
         result = {"cancelled": "The user cancelled this action. Nothing was changed."}
-    messages = [*history, {"role": "tool", "tool_call_id": pending["call_id"], "content": json.dumps(result)[:6000]}]
+    messages = [*history, {"role": "tool", "tool_call_id": pending["call_id"], "content": json.dumps(result)[:MAX_TOOL_CHARS]}]
     out = converse(db, messages)
     out["links"] = links + out["links"]
     return out
@@ -484,7 +695,7 @@ def clean_history(raw: list[dict]) -> list[dict]:
     for m in raw[-60:]:
         role = m.get("role")
         if role == "user" and isinstance(m.get("content"), str):
-            out.append({"role": "user", "content": m["content"][:4000]})
+            out.append({"role": "user", "content": m["content"][:MAX_USER_CHARS]})
         elif role == "assistant":
             msg = {"role": "assistant", "content": str(m.get("content") or "")[:8000]}
             calls = [c for c in m.get("tool_calls") or [] if isinstance(c, dict) and c.get("id") and c.get("function")]
@@ -494,7 +705,7 @@ def clean_history(raw: list[dict]) -> list[dict]:
                     for c in calls]
             out.append(msg)
         elif role == "tool" and m.get("tool_call_id"):
-            out.append({"role": "tool", "tool_call_id": str(m["tool_call_id"]), "content": str(m.get("content", ""))[:6000]})
+            out.append({"role": "tool", "tool_call_id": str(m["tool_call_id"]), "content": str(m.get("content", ""))[:MAX_TOOL_CHARS]})
     # drop tool results whose call is gone (history was cut), and answer calls that never got a result
     calls = {c["id"] for m in out if m["role"] == "assistant" for c in m.get("tool_calls", [])}
     out = [m for m in out if m["role"] != "tool" or m["tool_call_id"] in calls]

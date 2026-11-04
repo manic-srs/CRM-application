@@ -7,6 +7,7 @@ bcrypt
 python-multipart  # file uploads (email attachments)
 openpyxl  # Excel upload and download of leads
 httpx  # AI Assistant calls the OpenAI API (also used by the tests)
+pypdf  # AI Assistant: reads the text of attached PDFs
 dnspython  # email campaigns: checks that a lead's email domain has a mail server (MX)
 # tests
 pytest

@@ -390,9 +390,6 @@ def test_assistant_does_not_convert_without_a_note(client, ai):
     assert snapshot() == before  # no account, contact, opportunity or history
 
 
-@pytest.mark.xfail(strict=True, raises=AttributeError,
-                   reason="Not caused by this change (same on 8962756): the convert_lead tool's result can't be read "
-                          "by _plain/_opp_row, so the chat answers 500 after the conversion is saved")
 def test_assistant_conversion_saves_the_users_note(client, ai):
     script, _ = ai
     lead = new_lead(client)
