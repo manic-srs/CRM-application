@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { canCreateOpportunity, canCreateSales } from "./permissions.js";
 import {
   api,
   apiRequest,
@@ -780,4 +781,13 @@ test("Convert to Opportunity: exactly one open lead the user may convert", () =>
   }
   assert.match(leadConvertChoice([mine], () => ({ canEdit: true, canCreateSales: false })).reason, /Admins don't convert/);
   assert.match(leadConvertChoice([mine], () => ({ canEdit: false, canCreateSales: true })).reason, /only your own leads/);
+});
+
+test("direct opportunity creation includes Admin without granting lead conversion", () => {
+  for (const role of ["Admin", "Manager", "Salesperson"]) assert.equal(canCreateOpportunity({ role }), true);
+  assert.equal(canCreateOpportunity(null), false);
+  assert.equal(canCreateOpportunity({ role: "Unknown" }), false);
+  assert.equal(canCreateSales({ role: "Admin" }), false);
+  assert.equal(canCreateSales({ role: "Manager" }), true);
+  assert.equal(canCreateSales({ role: "Salesperson" }), true);
 });
