@@ -1,4 +1,4 @@
-"""AI Assistant: saved chats (history panel), attachments, suggestions, the CRM-only scope, free-format demo booking,
+"""AI Assistant: saved chats (history panel), attachments, greetings, the CRM-only scope, free-format demo booking,
 new opportunities, accurate reports and access for every role. A scripted stand-in replaces the AI model; all data
 is made up."""
 import io
@@ -48,7 +48,7 @@ def test_chats_are_saved_continued_renamed_and_deleted(client, ai):
     first = chat(client, "  Hi there, what can you do for my pipeline today?  ")
     conv = first["conversation"]
     assert conv["title"] == "Hi there, what can you do for my pipeline today?" and conv["created_at"]
-    assert first["reply"] == "Hello!" and first["suggestions"] == ["Show my open leads", "What is overdue?"]
+    assert first["reply"] == "Hello!" and first["suggestions"] == []  # a stray NEXT: line is removed, nothing shown
     assert [e["from"] for e in first["chat"]] == ["me", "ai"]
     second = chat(client, "show my tasks", conv["id"])
     # the server loaded the saved history: the model saw the first message too
@@ -96,30 +96,52 @@ def test_confirm_uses_the_saved_action_not_what_the_browser_sends(client, ai):
     assert again.status_code == 400  # nothing is waiting any more
 
 
-# ---------- suggestions ----------
+# ---------- no suggestions; greetings; off-topic questions ----------
 
-def test_suggestions_come_from_the_reply_or_from_what_was_done(client, ai):
+def test_no_suggestions_are_shown_after_replies(client, ai):
     assert assistant.split_suggestions("Done.\n**NEXT:** Book a demo | Add a task.") == ("Done.", ["Book a demo", "Add a task"])
-    assert assistant.split_suggestions("Just text") == ("Just text", [])
-    # the reply's own formatting is kept (e.g. bold at the end of the line above)
     assert assistant.split_suggestions("- Win rate: **50%**\nNEXT: Compare") == ("- Win rate: **50%**", ["Compare"])
     script, seen = ai
-    script += [[call("create_lead", last_name="Rao", company="Zeta")], "Created Rao."]
+    script += [[call("create_lead", last_name="Rao", company="Zeta")], "Created Rao. NEXT: Book a demo with Rao"]
     res = chat(client, "create lead Rao at Zeta")
-    assert res["suggestions"] == ["Book a demo with Rao", "Add a follow-up task for Rao"]  # about the new lead
-    # a plain answer without suggestions gets none (nothing generic)
-    script += ["You have no overdue tasks."]
-    assert chat(client, "what is overdue?", res["conversation"]["id"])["suggestions"] == []
-    assert "Never suggest general or unrelated requests" in seen[-1][0]["content"]
+    assert res["reply"] == "Created Rao." and res["suggestions"] == [] and res["chat"][-1]["suggestions"] == []
+    assert "Don't end replies with suggested next requests" in seen[0][0]["content"]
+    assert "NEXT:" not in seen[0][0]["content"]
 
 
-def test_the_assistant_is_told_to_stay_on_crm_work(client, ai):
+@pytest.mark.parametrize("message", ["hi", "Hello!", "hey there", "Good morning", "hii", " HELLO team "])
+def test_a_greeting_is_answered_with_the_time_of_day_without_the_ai(client, ai, message):
+    script, seen = ai  # nothing scripted: the AI isn't asked
+    res = chat(client, message)
+    assert seen == [] and res["pending"] is None and res["suggestions"] == []
+    assert res["reply"].startswith("Good ") and res["reply"].endswith(
+        ", Ravi! How can I help you with SalesTrack CRM today?")
+    # the greeting is part of the saved chat, so the next message continues normally
+    script += ["You have 0 overdue tasks."]
+    chat(client, "what is overdue?", res["conversation"]["id"])
+    assert [m["content"] for m in seen[-1] if m["role"] == "assistant"][0] == res["reply"]
+
+
+def test_greeting_wording_follows_the_clock(monkeypatch):
+    from datetime import datetime as dt
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(assistant, "acting_user", lambda: SimpleNamespace(full_name="Ravi Kumar"))
+    assert assistant.greeting_reply("hi", dt(2026, 1, 5, 9)).startswith("Good morning, Ravi!")
+    assert assistant.greeting_reply("hi", dt(2026, 1, 5, 13)).startswith("Good afternoon, Ravi!")
+    assert assistant.greeting_reply("hi", dt(2026, 1, 5, 19)).startswith("Good evening, Ravi!")
+    assert assistant.greeting_reply("hi, show my leads", dt(2026, 1, 5, 9)) is None  # a real request goes to the AI
+
+
+def test_off_topic_questions_get_the_sorry_reply_and_crm_writing_is_allowed(client, ai):
     script, seen = ai
-    script += ["I can only help with SalesTrack CRM work. NEXT: Show my open leads"]
-    res = chat(client, "What's the weather in Paris?")
+    script += [assistant.OFF_TOPIC_REPLY]
+    res = chat(client, "what is 10+10")
     prompt = seen[0][0]["content"]
-    assert "Only help with this CRM" in prompt and "web searches" in prompt and "can't browse the web" in prompt
-    assert res["reply"] == "I can only help with SalesTrack CRM work." and res["suggestions"] == ["Show my open leads"]
+    assert assistant.OFF_TOPIC_REPLY == "Sorry, I can help with SalesTrack CRM tasks & related information."
+    assert f'reply with exactly: "{assistant.OFF_TOPIC_REPLY}"' in prompt and "can't browse the web" in prompt
+    assert "drafting an email or message to a lead" in prompt  # e.g. telling a lead about a stage change is CRM work
+    assert res["reply"] == assistant.OFF_TOPIC_REPLY
 
 
 # ---------- attachments ----------

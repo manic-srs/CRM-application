@@ -506,6 +506,20 @@ def describe(db: Session, name: str, a: dict) -> str:
 # ---------- talking to the model ----------
 
 SUGGESTION_MARK = "NEXT:"
+OFF_TOPIC_REPLY = "Sorry, I can help with SalesTrack CRM tasks & related information."
+GREETINGS = re.compile(r"^\s*(hi+|hello+|hey+|hiya|howdy|greetings|good\s+(morning|afternoon|evening|day)|"
+                       r"namaste|hola)(\s+(there|team|all|everyone|assistant|salestrack))?[\s!.,:)]*$", re.IGNORECASE)
+
+
+def greeting_reply(message: str, now: datetime | None = None) -> str | None:
+    """A plain 'hi' / 'hello' is answered at once (no AI call): good morning / afternoon / evening, with the user's
+    first name, and how can I help with SalesTrack CRM. None for anything else."""
+    if not GREETINGS.match(message or ""):
+        return None
+    hour = (now or datetime.now()).hour
+    part = "morning" if hour < 12 else "afternoon" if hour < 17 else "evening"
+    first = (acting_user().full_name or "").split()[0] if acting_user().full_name else ""
+    return f"Good {part}{', ' + first if first else ''}! How can I help you with SalesTrack CRM today?"
 
 
 def system_prompt() -> str:
@@ -516,10 +530,13 @@ def system_prompt() -> str:
         f"Today is {now:%A, %d %B %Y}, time {now:%I:%M %p} (America/New_York). "
         f"The user is {me.full_name} ({me.role}).\n"
         "Scope:\n"
-        "- Only help with this CRM: leads, opportunities (deals), accounts, contacts, tasks, demos, notes, the sales "
-        "pipeline, statistics and reports, how to use SalesTrack, and files the user attaches for CRM work. For "
-        "anything else (general knowledge, news, web searches, coding, personal topics) reply in one sentence that "
-        "you can only help with SalesTrack CRM work, and suggest a CRM task instead. You can't browse the web.\n"
+        "- Help with SalesTrack CRM work and related information: leads, opportunities (deals), accounts, contacts, "
+        "tasks, demos, notes, stages, the sales pipeline, statistics and reports, how to use SalesTrack, files the "
+        "user attaches for CRM work, and writing for that work (e.g. drafting an email or message to a lead or "
+        "contact about a demo, a stage change, a proposal or a follow-up; summarising a record). These are CRM tasks: "
+        "do them.\n"
+        f"- For anything unrelated to SalesTrack CRM (general knowledge, maths, news, web searches, coding, personal "
+        f"topics), reply with exactly: \"{OFF_TOPIC_REPLY}\" and nothing else. You can't browse the web.\n"
         "Working style:\n"
         "- Do the work with as little back-and-forth as possible. Users give details in any order or format: a "
         "sentence, a list, a pasted email signature or message, or an attached file (business card, resume, lead "
@@ -552,12 +569,7 @@ def system_prompt() -> str:
         "- The CRM never emails leads or customers automatically; only the salesperson sends emails, from Send Email.\n"
         "- If a tool returns an error, explain it plainly (e.g. missing permission) and suggest what to do.\n"
         "- Answer briefly. Use short lists for several records. Dates like 5 Nov 2026, 3:00 PM. Amounts like 25,000.\n"
-        f"- When there is a natural next step, end the reply with one last line: '{SUGGESTION_MARK} ' followed by 1 to 3 "
-        "short follow-up requests about the records, numbers or task just discussed, naming them (the lead, deal, "
-        "company, period), written as the user would type them and separated by ' | ' (e.g. after creating Mohan "
-        "Reddy's lead: 'NEXT: Book a demo with Mohan Reddy | Add a follow-up task for Mohan Reddy'). Never suggest "
-        "general or unrelated requests. Leave the line out when you asked the user a question, when an action waits "
-        "for Confirm, when you declined the request, or when nothing obvious comes next."
+        "- Don't end replies with suggested next requests or a list of things you could do next."
     )
 
 
@@ -574,25 +586,8 @@ def split_suggestions(text: str) -> tuple[str, list[str]]:
     return text[:match.start()].strip(), [x[:120] for x in items if x][:3]
 
 
-# When the AI gives no suggestions, a follow-up is offered only after an action, about the record it touched
-FALLBACK_SUGGESTIONS = {
-    "create_lead": ["Book a demo with {name}", "Add a follow-up task for {name}"],
-    "move_lead_stage": ["Show the open tasks for {name}"],
-    "convert_lead": ["Move {name} to Discovery"],
-    "create_opportunity": ["Move {name} to Discovery"],
-    "create_task": ["What else do I have today?"],
-}
-
-
 def suggestions_for(model_items: list[str], tools_used: list[str], links: list[dict]) -> list[str]:
-    """Follow-ups that fit the conversation: the AI's own (about what was just discussed), or after an action one about
-    that record. Nothing generic: no suggestions when there's no natural next step."""
-    if model_items:
-        return model_items
-    name = links[-1]["name"] if links else None
-    for tool in reversed(tools_used):
-        if tool in FALLBACK_SUGGESTIONS and name:
-            return [s.format(name=name) for s in FALLBACK_SUGGESTIONS[tool]]
+    """Suggested next requests are no longer shown after replies (users found them distracting)."""
     return []
 
 
