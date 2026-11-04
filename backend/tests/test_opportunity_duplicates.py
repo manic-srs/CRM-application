@@ -88,12 +88,13 @@ def test_a_different_opportunity_or_person_is_allowed_and_a_closed_one_can_be_re
 
 
 def test_from_the_account_page_with_an_existing_contact(client):
-    acc = client.post("/api/accounts", json={"name": "Northwind Health"}).json()
-    contact = client.post("/api/contacts", json={"last_name": "Fernandes", "account_id": acc["id"]}).json()
+    acc = client.post("/api/accounts", json={"name": "Northwind Health", "industry": "Healthcare", "phone": "+1 555 0100"}).json()
+    contact = client.post("/api/contacts", json={"last_name": "Fernandes", "email": "fernandes@northwind.test",
+                                                 "phone": "+1 555 0120", "account_id": acc["id"]}).json()
     res = create(client, name="Northwind pilot", account_id=acc["id"], primary_contact_id=contact["id"])
     assert res.status_code == 201 and res.json()["reused"] == {"account": True, "contact": True}
     assert create(client, name="Northwind pilot", account_id=acc["id"], primary_contact_id=contact["id"]).status_code == 409
-    other = client.post("/api/accounts", json={"name": "Other Co"}).json()
+    other = client.post("/api/accounts", json={"name": "Other Co", "industry": "Healthcare", "phone": "+1 555 0100"}).json()
     assert create(client, name="X", account_id=other["id"], primary_contact_id=contact["id"]).status_code == 400
 
 
@@ -135,9 +136,9 @@ def test_convert_reuses_the_account_and_contact_and_blocks_a_second_salesperson(
 
 
 def test_convert_with_a_chosen_account_still_reuses_the_contact(client):
-    acc = client.post("/api/accounts", json={"name": "Northwind Health"}).json()
+    acc = client.post("/api/accounts", json={"name": "Northwind Health", "industry": "Healthcare", "phone": "+1 555 0100"}).json()
     contact = client.post("/api/contacts", json={"first_name": "Mira", "last_name": "Shah", "email": "mira@northwind.test",
-                                                 "account_id": acc["id"]}).json()
+                                                 "phone": "+1 555 0121", "account_id": acc["id"]}).json()
     lead = new_lead(client, "mira.s@northwind.test", company="Something Else")
     res = convert(client, lead["id"], account_id=acc["id"])
     assert res.status_code == 200, res.text
@@ -175,7 +176,7 @@ def test_duplicate_check_hides_what_the_user_cant_open(client):
 
 
 def test_a_salesperson_can_open_the_shared_account_of_their_deal(client):
-    acc = login_as(client, PRIYA).post("/api/accounts", json={"name": "Northwind Health"}).json()
+    acc = login_as(client, PRIYA).post("/api/accounts", json={"name": "Northwind Health", "industry": "Healthcare", "phone": "+1 555 0100"}).json()
     login_as(client, RAVI)
     assert client.get(f"/api/accounts/{acc['id']}").status_code == 404
     assert acc["id"] not in [a["id"] for a in client.get("/api/accounts").json()]

@@ -373,3 +373,41 @@ export function toRecordContact(to, recordEmail) {
   const list = (to || "").split(/[,;]/).map((address) => address.trim().toLowerCase()).filter(Boolean);
   return !list.length || (!!recordEmail && list.includes(recordEmail.trim().toLowerCase()));
 }
+
+// New Account / New Contact: what must be filled in before anything is sent (the server checks the same; leads converted
+// into accounts and contacts, and older records, may have these empty).
+const EMAIL_FORMAT = /^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$/; // the server's email check
+export const CONTACT_EMAIL_INVALID = "Enter a valid email address, like name@company.com.";
+const NEW_RECORD_REQUIRED = {
+  account: [
+    ["name", "Enter the account name."],
+    ["industry", "Enter the account's industry."],
+    ["phone", "Enter the account's phone number."],
+  ],
+  contact: [
+    ["last_name", "Enter the last name."],
+    ["account_id", "Choose the account."],
+    ["email", "Enter the contact's email address."],
+    ["phone", "Enter the contact's phone number."],
+  ],
+};
+// { field name: message } for the fields to fix (empty when the form can be sent)
+export function newRecordProblems(type, values) {
+  const problems = {};
+  for (const [name, message] of NEW_RECORD_REQUIRED[type] || []) if (!String(values[name] ?? "").trim()) problems[name] = message;
+  if (type === "contact" && !problems.email && !EMAIL_FORMAT.test(String(values.email).trim())) problems.email = CONTACT_EMAIL_INVALID;
+  return problems;
+}
+// Leads list > Actions > Convert to Opportunity: exactly one open lead the user may convert, by the same rules as the
+// lead page and the board (rights(lead) -> { canEdit, canCreateSales }). Returns the existing convert popup to open,
+// or the reason the item is off.
+export const CONVERT_ONE = "Select exactly one lead to convert.";
+export function leadConvertChoice(leads, rights) {
+  if (leads.length !== 1 || !leads[0]) return { reason: CONVERT_ONE };
+  const [lead] = leads;
+  if (!LEAD_OPEN_STAGES.includes(lead.stage)) return { reason: `This lead is ${lead.stage}. Only open leads can be converted.` };
+  const { canEdit, canCreateSales } = rights(lead);
+  if (!canCreateSales) return { reason: "Admins don't convert leads. The lead's owner or a Manager converts it." };
+  if (!canEdit) return { reason: "You can convert only your own leads (or others' with the Edit team records permission)." };
+  return { action: leadStageAction(lead, "Converted", { canEdit, canConvert: true }) };
+}

@@ -32,6 +32,12 @@ email, tasks and reminders, notifications, lead conversion, closing a deal, and 
 - Leads and opportunities with list views, search, sorting and an opportunity Kanban board.
 - Stage path on every record, with enforced stage order and a full stage history.
 - One-step lead conversion into an Account, a Contact and an Opportunity.
+  Start it from the lead page, the Kanban board, or the Leads list: tick one lead and choose
+  **Actions > Convert to Opportunity** (the same Convert popup; only for one open lead you may convert, otherwise
+  the menu says why). **Opportunities > Convert a Lead** opens the Leads list.
+- New Account needs **Phone** and **Industry**; New Contact needs **Email** (a valid address) and **Phone**, on the
+  forms, in the API and in the AI Assistant. Accounts and contacts made by converting a lead, by New Opportunity
+  or by an import, and older records, may still have them empty.
 - Automatic follow-up tasks and reminders at each stage.
 - One lead per email: an email already on any lead or contact can't be used again (the user is told whose record
   it is).

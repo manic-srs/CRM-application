@@ -119,11 +119,13 @@ TOOLS = [
     _tool("list_accounts", "List accounts (companies) the user can see.", {"search": S}),
     _tool("get_account", "One account with its contacts and opportunities.", {"account_id": I}, ["account_id"]),
     _tool("list_contacts", "List contacts (people at accounts).", {"search": S, "account_id": I}),
-    _tool("create_account", "Create an account (company) without a lead.", {
-        "name": S, "industry": S, "phone": S, "website": S, "address": S}, ["name"]),
-    _tool("create_contact", "Add a contact (person) to an account.", {
+    _tool("create_account", "Create an account (company) without a lead. Industry and phone are required: take them "
+          "from what the user gave, otherwise ask; never make them up.", {
+        "name": S, "industry": S, "phone": S, "website": S, "address": S}, ["name", "industry", "phone"]),
+    _tool("create_contact", "Add a contact (person) to an account. Email and phone are required: take them from what "
+          "the user gave, otherwise ask; never make them up.", {
         "account_id": I, "salutation": LEAD_FIELDS["salutation"], "first_name": S, "last_name": S, "job_title": S,
-        "email": S, "phone": S}, ["account_id", "last_name"]),
+        "email": S, "phone": S}, ["account_id", "last_name", "email", "phone"]),
     _tool("create_opportunity", "Create a new opportunity directly (without converting a lead). Give the account "
           "(account_id, or account_name: an existing account with that company name is reused) and the contact "
           "(contact_id, or contact_last_name and the rest: an existing contact with that email or name is reused). "
@@ -542,6 +544,8 @@ def system_prompt() -> str:
         "becomes the task and the note says when it was booked).\n"
         "- Every stage change except Lost and Unqualified also needs a new task: its subject and due date (for Won, "
         "a post-sale task such as handover or onboarding). Take them from what the user said; otherwise ask.\n"
+        "- A new account needs its industry and phone; a new contact needs an email and phone. Take them from what the "
+        "user gave; if any is missing, ask. Never invent them.\n"
         "- New opportunity without a lead: use create_opportunity (existing accounts and contacts are reused; the "
         "same open deal for the same person can't be added twice). To turn a lead into a deal, use convert_lead.\n"
         "- Closing actions (Lost, Unqualified, Won, transfer, cancel demo, delete) are confirmed by the user in the "

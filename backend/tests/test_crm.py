@@ -138,7 +138,7 @@ def test_convert_creates_account_contact_opportunity(client):
 
 
 def test_convert_into_existing_account(client):
-    acc = client.post("/api/accounts", json={"name": "Existing Co", "industry": "Retail"}).json()
+    acc = client.post("/api/accounts", json={"name": "Existing Co", "industry": "Retail", "phone": "+1 555 0110"}).json()
     res = convert(client, new_lead(client)["id"], account_id=acc["id"])
     assert res["account"]["id"] == acc["id"]
     page = client.get(f"/api/accounts/{acc['id']}").json()
@@ -268,11 +268,13 @@ def test_lead_without_first_name(client):
 
 
 def test_contacts_and_probability_edit(client):
-    acc = client.post("/api/accounts", json={"name": "Sunrise Hospitals", "industry": "Healthcare"}).json()
+    acc = client.post("/api/accounts", json={"name": "Sunrise Hospitals", "industry": "Healthcare", "phone": "+1 555 0111"}).json()
     c = client.post("/api/contacts", json={"salutation": "Dr.", "first_name": "Meera", "last_name": "Iyer",
-                                           "job_title": "Director", "account_id": acc["id"]}).json()
+                                           "job_title": "Director", "email": "meera@sunrise.test",
+                                           "phone": "+1 555 0112", "account_id": acc["id"]}).json()
     assert c["full_name"] == "Meera Iyer" and c["account_name"] == "Sunrise Hospitals"
-    assert client.post("/api/contacts", json={"first_name": "x", "account_id": acc["id"]}).status_code == 422
+    assert client.post("/api/contacts", json={"first_name": "x", "email": "x@sunrise.test", "phone": "+1 555 0113",
+                                              "account_id": acc["id"]}).status_code == 422  # no last name
     assert [x["full_name"] for x in client.get("/api/contacts", params={"search": "meera"}).json()] == ["Meera Iyer"]
     oid = convert(client, new_lead(client)["id"])["opportunity"]["id"]
     assert client.put(f"/api/opportunities/{oid}", json={"probability": 40}).json()["probability"] == 40
