@@ -7,11 +7,10 @@
 // - Nothing is saved or sent here; Save runs the usual checks (required fields, duplicate email).
 import React, { useEffect, useRef, useState } from "react";
 import { api } from "./api";
-import { AUTOFILL_FIELDS, autofillPlan, linkedInProfileUrl } from "./domain";
+import { AUTOFILL_FIELDS, autofillPlan, autofillSummary, linkedInProfileUrl } from "./domain";
 import { Icon } from "./ui";
 
 const TYPING_PAUSE = 800; // ms after the last key before a typed address is looked up
-const names = (list) => list.map((name) => AUTOFILL_FIELDS[name]).join(", ");
 
 export default function LinkedInField({ autofill, defaultValue, form, onCompany }) {
   const [status, setStatus] = useState({ kind: "idle" });
@@ -74,7 +73,7 @@ export default function LinkedInField({ autofill, defaultValue, form, onCompany 
       return setStatus({ kind: "unverified", text: answer.message || "The profile could not be verified. Nothing was filled." });
     }
     const plan = apply(answer.fields);
-    setStatus({ kind: "matched", filled: plan.filled, kept: plan.kept, unavailable: answer.unavailable || {} });
+    setStatus({ kind: "matched", ...autofillSummary(plan), unavailable: answer.unavailable || {} });
   };
 
   const lookup = async (url) => {
@@ -177,12 +176,9 @@ export default function LinkedInField({ autofill, defaultValue, form, onCompany 
             {status.kind === "matched" && (
               <>
                 <p>
-                  <Icon name="check" size={14} /> Profile URL verified.{" "}
-                  {status.filled.length
-                    ? `Filled by Apollo: ${names(status.filled)}. Check them before saving.`
-                    : "Apollo found this profile; the fields already had your entries."}
-                  {status.kept.length > 0 && ` Kept your entries for ${names(status.kept)}.`}
+                  <Icon name="check" size={14} /> {status.text}
                 </p>
+                {status.email && <p>{status.email}</p>}
                 {Object.keys(status.unavailable).length > 0 && (
                   <ul>
                     {Object.entries(status.unavailable).map(([name, reason]) => (

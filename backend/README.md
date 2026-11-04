@@ -117,8 +117,12 @@ Reminders and overdue tasks are checked every minute in the background (`app/sch
   `linkedin_url` (Company LinkedIn URL). The two links must pass the lead form's rules (`clean_url`), and the LinkedIn
   one must be a company, school or showcase page; otherwise they are reported, not used. Nothing is guessed (not from
   the email or the domain) and no company lookup is made.
-- The profile must be verified: fields are filled only when the LinkedIn URL in Apollo's answer is the pasted profile
+- The profile URL must match: fields are filled only when the LinkedIn URL in Apollo's answer is the pasted profile
   (`url_verified: true`). A missing, invalid or different URL fails closed (`status: "unverified"`, nothing filled).
+  A match means only that Apollo's record carries this profile address; it doesn't prove the details belong to the
+  person. The form says "Apollo returned a matching profile URL. Review all details before saving." and, when the
+  email was filled, that its verification status comes from Apollo (Apollo's deliverability check; the CRM doesn't
+  confirm who owns the address). Values are passed on as Apollo gives them: names are never split or rebuilt.
 - Same access as creating a lead. 10 lookups a minute per user; each user's answers are kept in memory for 10 minutes
   (only those fields), so the same profile doesn't use credits twice. Keys and personal details are never logged.
 - Without `APOLLO_API_KEY` the endpoint answers 503 and leads are entered by hand.

@@ -143,6 +143,21 @@ export function autofillPlan(current, previous, incoming) {
   }
   return { set, autofilled, filled, kept };
 }
+// What the form says after a match. A matching profile URL doesn't prove the details belong to the person, and an
+// email's "verified" status is Apollo's own, so neither is described as confirmed by the CRM.
+export const AUTOFILL_MATCHED = "Apollo returned a matching profile URL. Review all details before saving.";
+export const AUTOFILL_EMAIL_SOURCE =
+  "Email verification status is provided by Apollo; ownership has not been independently confirmed by this CRM.";
+const fieldNames = (list) => list.map((name) => AUTOFILL_FIELDS[name]).join(", ");
+// filled, kept: from autofillPlan. email: the Apollo note, only when Apollo's email was put in the form.
+export function autofillSummary({ filled, kept }) {
+  const parts = [
+    AUTOFILL_MATCHED,
+    filled.length ? `Filled by Apollo: ${fieldNames(filled)}.` : "Nothing was filled: the fields already had your entries.",
+  ];
+  if (kept.length) parts.push(`Kept your entries for ${fieldNames(kept)}.`);
+  return { text: parts.join(" "), email: filled.includes("email") ? AUTOFILL_EMAIL_SOURCE : "" };
+}
 export const PRIORITIES = ["Low", "Normal", "High"];
 export const dateKey = (date = new Date()) =>
   new Intl.DateTimeFormat("en-CA", {

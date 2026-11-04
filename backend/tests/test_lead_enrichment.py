@@ -1,7 +1,9 @@
 """LinkedIn autofill on New Lead (Apollo People Enrichment). Apollo is never called: every lookup goes to a mocked
 transport, and any other Apollo call fails the test. All people and companies here are made up."""
 import asyncio
+import json
 import logging
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -393,6 +395,96 @@ def test_a_matching_profile_url_is_verified(client, apollo_api, returned):
     assert body["status"] == "matched" and body["url_verified"] is True and body["fields"]["last_name"] == "Doe"
 
 
+# ---------- accuracy: each field is Apollo's own value for the matched person, unchanged ----------
+
+ANA = "https://linkedin.com/in/ana-maria-okafor-synthetic"
+MARY = "https://linkedin.com/in/mary-jo-lindqvist-synthetic"
+
+
+def synthetic(url: str, first: str, last: str, email: str, **changes) -> dict:
+    """A made-up person (compound first name, distinct surname) whose Apollo record carries the profile `url`."""
+    return person(first_name=first, last_name=last, name=f"{first} {last}", email=email,
+                  linkedin_url=url.replace("://linkedin.com/", "://www.linkedin.com/"), **changes)
+
+
+ANA_PERSON = synthetic(ANA, "Ana Maria", "Okafor", "ana.okafor@synthetic-co.example")
+MARY_PERSON = synthetic(MARY, "Mary Jo", "Lindqvist", "mj.lindqvist@synthetic-co.example", title="Buyer")
+
+
+def by_profile(*people):
+    """Answers each request with the made-up person whose profile was asked for, as Apollo would."""
+    known = {linkedin_profile_url(p["linkedin_url"]): p for p in people}
+
+    def reply(request):
+        asked = linkedin_profile_url(json.loads(request.content)["linkedin_url"])
+        return httpx.Response(200, json={"person": known[asked]})
+    return reply
+
+
+@pytest.mark.parametrize("first, last", [
+    ("Ana Maria", "Okafor"), ("Mary Jo", "Lindqvist"), ("Jean Luc", "Moreau-Petit"), ("Sofia Isabel", "de la Cruz"),
+])
+def test_names_are_apollos_first_and_last_name_as_given(client, apollo_api, first, last):
+    """A compound first name and the surname reach the form exactly as Apollo gave them: never split, joined or
+    rebuilt from the full name (which here is written differently on purpose)."""
+    _, replies = apollo_api
+    replies.append(httpx.Response(200, json={"person": person(first_name=first, last_name=last,
+                                                              name=f"{last}, {first} (synthetic)")}))
+    body = look_up(client).json()
+    assert (body["fields"]["first_name"], body["fields"]["last_name"]) == (first, last)
+
+
+@pytest.mark.parametrize("changes, missing", [
+    ({"first_name": None, "last_name": None}, {"first_name", "last_name"}),
+    ({"first_name": "Ana Maria", "last_name": ""}, {"last_name"}),
+    ({"first_name": None}, {"first_name"}),
+])
+def test_a_full_name_is_never_split_into_first_and_last(client, apollo_api, changes, missing):
+    _, replies = apollo_api
+    replies.append(httpx.Response(200, json={"person": person(name="Ana Maria Okafor", **changes)}))
+    body = look_up(client).json()
+    assert body["status"] == "matched" and missing.isdisjoint(body["fields"])
+    assert all(body["unavailable"][name] == "Apollo didn't return it" for name in missing)
+    assert "Okafor" not in json.dumps(body["fields"])
+
+
+@pytest.mark.parametrize("own, reason", [(MISSING, "has no LinkedIn profile URL"),
+                                         ("https://www.linkedin.com/in/someone-else", "different LinkedIn profile")])
+def test_the_profile_check_reads_only_the_returned_persons_own_url(client, apollo_api, own, reason):
+    """The pasted address is never taken for Apollo's: the same address elsewhere in the answer (top level, the
+    saved contact, a past job) doesn't count when the person's own linkedin_url is missing or different."""
+    _, replies = apollo_api
+    data = person(contact={"linkedin_url": JANE}, employment_history=[{"current": True, "linkedin_url": JANE}])
+    if own is MISSING:
+        del data["linkedin_url"]
+    else:
+        data["linkedin_url"] = own
+    replies.append(httpx.Response(200, json={"person": data, "linkedin_url": JANE, "match_confidence": "high"}))
+    body = look_up(client).json()
+    assert body["status"] == "unverified" and body["url_verified"] is False and body["fields"] == {}
+    assert reason in body["message"]
+
+
+@pytest.mark.parametrize("changes, email, reason", [
+    # the person has no email: another address in the answer (saved contact, personal emails) is never used
+    ({"email": None, "email_status": "unavailable", "personal_emails": ["ana.personal@mail.example"],
+      "contact": {"email": "someone.else@synthetic-co.example", "email_status": "verified"}},
+     None, "no work email was revealed"),
+    # the person's own verified email is used, never the saved contact's
+    ({"contact": {"email": "someone.else@synthetic-co.example", "email_status": "verified"}},
+     "jane.doe@synthetic-co.example", None),
+    # a verified status elsewhere doesn't make the person's own unverified email usable
+    ({"email_status": "extrapolated", "contact": {"email_status": "verified"}}, None, "only an unverified email"),
+])
+def test_the_email_is_the_matched_persons_own(client, apollo_api, changes, email, reason):
+    _, replies = apollo_api
+    replies.append(httpx.Response(200, json={"person": person(**changes)}))
+    body = look_up(client).json()
+    assert body["fields"].get("email") == email
+    if reason:
+        assert reason in body["unavailable"]["email"]
+
+
 # ---------- problems ----------
 
 def raise_(error):
@@ -481,6 +573,64 @@ def test_lookups_at_the_same_time_share_one_apollo_request(apollo_api, monkeypat
     first, second = asyncio.run(both())
     assert len(seen) == 1 and first["fields"] == second["fields"]
     assert sorted([first["cached"], second["cached"]]) == [False, True]
+
+
+def names_and_email(body: dict) -> tuple:
+    return body["linkedin_url"], body["fields"]["first_name"], body["fields"]["last_name"], body["fields"]["email"]
+
+
+ANA_SEEN = (ANA, "Ana Maria", "Okafor", "ana.okafor@synthetic-co.example")
+MARY_SEEN = (MARY, "Mary Jo", "Lindqvist", "mj.lindqvist@synthetic-co.example")
+
+
+def test_kept_answers_never_mix_profiles_or_users(client, apollo_api):
+    seen, replies = apollo_api
+    replies.extend([by_profile(ANA_PERSON, MARY_PERSON)] * 3)
+    assert names_and_email(look_up(client, ANA).json()) == ANA_SEEN
+    assert names_and_email(look_up(client, MARY).json()) == MARY_SEEN
+    # asked again, written differently: each profile gets its own kept answer
+    again = look_up(client, "https://www.linkedin.com/in/Ana-Maria-Okafor-Synthetic/").json()
+    assert again["cached"] is True and names_and_email(again) == ANA_SEEN
+    again = look_up(client, MARY + "?trk=public_profile").json()
+    assert again["cached"] is True and names_and_email(again) == MARY_SEEN
+    # another user doesn't get this user's kept answer: their own request, and their own profile's details
+    other = look_up(login_as(client, PRIYA), MARY).json()
+    assert other["cached"] is False and names_and_email(other) == MARY_SEEN
+    assert len(seen) == 3
+
+
+def test_overlapping_lookups_of_different_profiles_keep_their_own_answers(apollo_api):
+    """The first profile's answer arrives last; neither answer lands on the other profile, now or when asked again."""
+    seen, replies = apollo_api
+    answer = by_profile(ANA_PERSON, MARY_PERSON)
+
+    async def slow(request):
+        await asyncio.sleep(0.05)
+        return answer(request)
+    replies.extend([slow, answer])
+
+    async def lookups():
+        both = await asyncio.gather(apollo.enrich(RAVI, ANA), apollo.enrich(RAVI, MARY))
+        return [*both, await apollo.enrich(RAVI, ANA), await apollo.enrich(RAVI, MARY)]
+    ana, mary, ana_again, mary_again = asyncio.run(lookups())
+    assert len(seen) == 2 and names_and_email(ana) == names_and_email(ana_again) == ANA_SEEN
+    assert names_and_email(mary) == names_and_email(mary_again) == MARY_SEEN
+    assert (ana_again["cached"], mary_again["cached"]) == (True, True)
+
+
+def test_a_kept_answer_expires_and_apollos_newer_answer_replaces_it(client, apollo_api, monkeypatch):
+    seen, replies = apollo_api
+    replies.extend([httpx.Response(200, json={"person": ANA_PERSON}), httpx.Response(200, json={"person": synthetic(
+        ANA, "Ana Maria", "Okafor-Reyes", "ana.reyes@synthetic-co.example")})])
+    clock = SimpleNamespace(now=1000.0)
+    monkeypatch.setattr(apollo, "time", SimpleNamespace(monotonic=lambda: clock.now))
+    assert names_and_email(look_up(client, ANA).json()) == ANA_SEEN
+    clock.now += apollo.CACHE_SECONDS - 1
+    assert look_up(client, ANA).json()["cached"] is True
+    clock.now += 1
+    fresh = look_up(client, ANA).json()
+    assert fresh["cached"] is False and len(seen) == 2
+    assert names_and_email(fresh) == (ANA, "Ana Maria", "Okafor-Reyes", "ana.reyes@synthetic-co.example")
 
 
 def test_logs_hold_no_key_or_personal_details(client, apollo_api, caplog):
