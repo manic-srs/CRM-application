@@ -129,6 +129,21 @@ def upgrade_database() -> None:
                           "ON campaign_recipients (campaign_id, status)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_campaign_recipients_sent "
                           "ON campaign_recipients (sent_at) WHERE sent_at IS NOT NULL"))
+        # AI Assistant: saved chats (history panel) and files attached in the chat
+        conn.execute(text("""CREATE TABLE IF NOT EXISTS assistant_conversations (
+            id SERIAL PRIMARY KEY, user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            title VARCHAR(120) NOT NULL, messages TEXT NOT NULL DEFAULT '[]', chat TEXT NOT NULL DEFAULT '[]',
+            pending TEXT, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"""))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_assistant_conversations_user "
+                          "ON assistant_conversations (user_id, updated_at DESC)"))
+        conn.execute(text("""CREATE TABLE IF NOT EXISTS assistant_files (
+            id SERIAL PRIMARY KEY, user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            conversation_id INT REFERENCES assistant_conversations(id) ON DELETE SET NULL,
+            filename VARCHAR(255) NOT NULL, content_type VARCHAR(100) NOT NULL,
+            kind VARCHAR(10) NOT NULL CHECK (kind IN ('text','image')), size_bytes INT NOT NULL, text TEXT, data BYTEA,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"""))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_assistant_files_user ON assistant_files (user_id)"))
         # Unqualified is now a closed outcome (not eligible, with a reason); Revisit has a date; Discovery its details
         for table, column, kind in (
             ("leads", "unqualified_reason", "VARCHAR(20)"), ("leads", "unqualified_notes", "TEXT"),

@@ -7,6 +7,8 @@
 -- =====================================================
 
 -- Drop in reverse order so the script can be re-run (CASCADE also drops the home page views)
+DROP TABLE IF EXISTS assistant_files CASCADE;
+DROP TABLE IF EXISTS assistant_conversations CASCADE;
 DROP TABLE IF EXISTS opportunity_attachments CASCADE;
 DROP TABLE IF EXISTS lead_transfers CASCADE;
 DROP TABLE IF EXISTS email_attachments CASCADE;
@@ -402,3 +404,29 @@ CREATE TABLE email_addresses (
   invalid_at      TIMESTAMP,
   invalid_reason  VARCHAR(300)
 );
+
+-- AI Assistant: each user's saved chats (history panel) and files attached in the chat (app/assistant_store.py)
+CREATE TABLE assistant_conversations (
+  id         SERIAL PRIMARY KEY,
+  user_id    INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title      VARCHAR(120) NOT NULL,
+  messages   TEXT NOT NULL DEFAULT '[]',
+  chat       TEXT NOT NULL DEFAULT '[]',
+  pending    TEXT,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_assistant_conversations_user ON assistant_conversations (user_id, updated_at DESC);
+CREATE TABLE assistant_files (
+  id              SERIAL PRIMARY KEY,
+  user_id         INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  conversation_id INT REFERENCES assistant_conversations(id) ON DELETE SET NULL,
+  filename        VARCHAR(255) NOT NULL,
+  content_type    VARCHAR(100) NOT NULL,
+  kind            VARCHAR(10) NOT NULL CHECK (kind IN ('text','image')),
+  size_bytes      INT NOT NULL,
+  text            TEXT,
+  data            BYTEA,
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_assistant_files_user ON assistant_files (user_id);

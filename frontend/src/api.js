@@ -310,14 +310,35 @@ export const api = {
   search: (q) => apiRequest(`/search?q=${encodeURIComponent(q)}`),
   // AI Assistant (a reply can take several steps, so it may wait up to 2 minutes)
   assistantStatus: () => apiRequest("/assistant/status"),
-  assistantChat: (messages, message) =>
-    apiRequest("/assistant/chat", { method: "POST", body: { messages, message }, signal: AbortSignal.timeout(120000) }),
-  assistantConfirm: (messages, pending, confirmed) =>
-    apiRequest("/assistant/confirm", {
+  // a saved chat: the server keeps its history (conversation_id null = start a new chat)
+  assistantChat: (conversationId, message, fileIds = []) =>
+    apiRequest("/assistant/chat", {
       method: "POST",
-      body: { messages, pending, confirmed },
+      body: { conversation_id: conversationId, message, file_ids: fileIds },
       signal: AbortSignal.timeout(120000),
     }),
+  assistantConfirm: (conversationId, confirmed) =>
+    apiRequest("/assistant/confirm", {
+      method: "POST",
+      body: { conversation_id: conversationId, confirmed },
+      signal: AbortSignal.timeout(120000),
+    }),
+  assistantConversations: () => apiRequest("/assistant/conversations"),
+  assistantConversation: (id) => apiRequest(`/assistant/conversations/${id}`),
+  renameAssistantConversation: (id, title) =>
+    apiRequest(`/assistant/conversations/${id}`, { method: "PATCH", body: { title } }),
+  deleteAssistantConversation: (id) => apiRequest(`/assistant/conversations/${id}`, { method: "DELETE" }),
+  assistantUpload: (file, conversationId) => {
+    const form = new FormData();
+    form.append("file", file);
+    if (conversationId) form.append("conversation_id", String(conversationId));
+    return upload("/assistant/files", form, {
+      failed: `"${file.name}" could not be attached.`,
+      tooLarge: "Files can be up to 10 MB.",
+      timedOut: "The file took too long to upload. Try again.",
+      timeout: 120000,
+    });
+  },
   me: () => apiRequest("/auth/me"),
   // My Profile: name + which notifications also come by email
   updateProfile: (changes) => apiRequest("/auth/me", { method: "PUT", body: changes }),
