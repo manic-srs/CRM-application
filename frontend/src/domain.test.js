@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { canCreateOpportunity, canCreateSales } from "./permissions.js";
 import {
   api,
   apiRequest,
@@ -739,4 +740,14 @@ test("AI drafting greets by name only while To still addresses the record's cont
   assert.equal(toRecordContact("", "jack@bluebird.example"), true); // not chosen yet: the record's contact
   assert.equal(toRecordContact("mary.jo@other.example", "jack@bluebird.example"), false);
   assert.equal(toRecordContact("mary.jo@other.example", ""), false);
+});
+
+
+test("direct opportunity creation includes Admin without granting lead conversion", () => {
+  for (const role of ["Admin", "Manager", "Salesperson"]) assert.equal(canCreateOpportunity({ role }), true);
+  assert.equal(canCreateOpportunity(null), false);
+  assert.equal(canCreateOpportunity({ role: "Unknown" }), false);
+  assert.equal(canCreateSales({ role: "Admin" }), false);
+  assert.equal(canCreateSales({ role: "Manager" }), true);
+  assert.equal(canCreateSales({ role: "Salesperson" }), true);
 });

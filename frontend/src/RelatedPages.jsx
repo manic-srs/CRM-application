@@ -1,6 +1,6 @@
 import React from "react";
 import { EmailList, useEmails } from "./Email";
-import { canCreateSales } from "./permissions";
+import { canCreateOpportunity } from "./permissions";
 import { amount, dateTime, shortDate } from "./format";
 import { Card, Icon, ObjectIcon, PhoneReveal, StageBadge } from "./ui";
 
@@ -92,7 +92,7 @@ export function AccountPage({ id, data, user, openNew, openEmail, emailVersion }
         <button className="sf-button" onClick={() => openNew("contact", { account_id: account.id })}>
           New Contact
         </button>
-        {canCreateSales(user) && (
+        {canCreateOpportunity(user) && (
           <button className="sf-button" onClick={() => openNew("newOpportunity", { account_id: account.id })}>
             New Opportunity
           </button>

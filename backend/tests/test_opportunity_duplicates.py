@@ -1,6 +1,8 @@
 """No duplicate accounts, contacts or opportunities: New Opportunity (Opportunities and Account pages) and Convert reuse the
 company's account and the person's contact, and the same open opportunity for the same person at the same company can't
 be handled by two salespeople. All data is made up."""
+import pytest
+
 from conftest import login_as
 from test_opportunity_attachments import add_salesperson
 
@@ -104,7 +106,6 @@ def test_new_opportunity_rules(client):
     assert res.status_code == 422  # no note
     res = client.post("/api/opportunities", json={"name": "X", "account_name": "Acme", "contact_last_name": "S", "note": "n"})
     assert res.status_code == 422  # no first task
-    assert create(login_as(client, ASHA), name="X", account_name="Acme", contact_last_name="S").status_code == 403
     # a Salesperson can't give it to someone else; a Manager can
     assert create(login_as(client, RAVI), name="X", account_name="Acme", contact_last_name="S",
                   owner_id=PRIYA).status_code == 403
@@ -183,3 +184,28 @@ def test_a_salesperson_can_open_the_shared_account_of_their_deal(client):
     detail = client.get(f"/api/accounts/{acc['id']}")
     assert detail.status_code == 200 and [o["name"] for o in detail.json()["opportunities"]] == ["Pilot"]
     assert acc["id"] in [a["id"] for a in client.get("/api/accounts").json()]
+
+
+@pytest.mark.parametrize("owner_id", [None, RAVI])
+def test_admin_can_create_opportunity_and_assign_owner(client, owner_id):
+    body = {"name": "Admin reporting project", "account_name": "Example Analytics", "contact_last_name": "Patel"}
+    if owner_id is not None:
+        body["owner_id"] = owner_id
+    response = create(login_as(client, ASHA), **body)
+    assert response.status_code == 201, response.text
+    result = response.json()
+    expected_owner = ASHA if owner_id is None else owner_id
+    opp = result["opportunity"]
+    assert opp["owner_id"] == expected_owner
+    assert result["account"]["owner_id"] == expected_owner
+    assert result["contact"]["owner_id"] == expected_owner
+    assert result["new_task"]["owner_id"] == expected_owner
+    assert client.get(f"/api/opportunities/{opp['id']}").status_code == 200
+    # Admin creation still respects duplicate prevention.
+    assert create(client, **body).status_code == 409
+
+
+def test_direct_opportunity_creation_still_requires_login(client):
+    client.headers.pop("Authorization")
+    response = create(client, name="Unauthorized project", account_name="Example Analytics", contact_last_name="Patel")
+    assert response.status_code == 401
