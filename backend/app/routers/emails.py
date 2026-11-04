@@ -158,6 +158,9 @@ async def draft_email(data: ai_email.DraftRequest, db: Session = Depends(get_db)
         contact = db.get(Contact, record.primary_contact_id)
         if contact is not None and (contact.owner_id == me.id or me.sees_team):
             context.update(first_name=contact.first_name, last_name=contact.last_name)
+    if not data.recipient_is_record_contact:  # To was changed: don't greet the record's contact by name
+        context = {key: value for key, value in context.items() if key not in ("first_name", "last_name")}
+        context["recipient_is_record_contact"] = False
     draft = await ai_email.generate_draft(data, context, me.full_name, me.email)
     return ai_email.DraftResponse(**draft.model_dump(), stage=data.email_stage or context["current_stage"], record_stage=context["current_stage"], mode=ai_email.mode())
 

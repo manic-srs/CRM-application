@@ -314,38 +314,43 @@ See [backend/README.md](backend/README.md) and [frontend/README.md](frontend/REA
 
 ## AI email drafting
 
-In **New Email → Message**, type directly into **Describe your change** at the bottom
-of the message box. Press **Enter** or click the wand to generate a subject and message.
-The compact bar keeps **Describe your change**, **Polish** and its three-dot menu on one row, with Undo/Redo beside it. The **Polish** button opens three options for the current draft: **Formalize**,
-**Friendly**, and **Shorten**. These rewrite the existing message while preserving its
-meaning and factual details. A supplied subject is retained; a blank subject can be
-filled in. The server adds the sender signature once. There is no stage dropdown or
-stage-specific suggestion list; the backend still reads the latest saved CRM stage
-for context when generating a new email.
+In **New Email**, the pen icon under the message opens a compact writing bar; it stays closed until you click it.
+Type what you need in **Describe the email or change you need…**, then press **Enter** or the arrow button
+(**Shift+Enter** adds a line). Closing the bar (× or Escape) keeps your email and your instructions.
 
-Type a custom request to compose an email or describe a change to the current draft.
-Click **×** beside the bar to hide the AI controls without closing the composer or
-changing the email. **Help me write** reopens them. Closing during generation cancels
-applying that response. **Undo draft** restores the subject and message before the
-last AI change; **Redo draft** reapplies it. Manual edits disable history actions that would overwrite those edits. Sending remains explicit.
+- **New email:** when the message holds only the greeting and signature, the request writes a new CRM email, subject
+  and message. A subject you already typed is kept unless your request asks for a different one; a blank subject is
+  filled.
+- **Change the draft:** when the message has your own text, the request is applied to it. Its facts and the subject
+  are kept unless you ask to change them.
+- **Refine:** **Professional**, **Conversational** and **Concise** rewrite an existing draft. With only the greeting
+  and signature, the bar asks you to describe the email first.
+- **CRM emails only:** introductions and outreach, follow-ups, demo scheduling, discovery questions, proposals,
+  negotiation, closure and customer handover. An unrelated request (a leave request, a poem…) keeps your email and
+  shows "This assistant helps with CRM and sales emails. Describe a customer follow-up, demo, proposal, or related
+  message." A vague request asks for more sales context instead of guessing. Writing by hand is always available.
 
-The LLM receives the lead lifecycle (New → Nurturing → optional Revisit → Demo →
-Converted, with Unqualified/Lost outcomes) and opportunity lifecycle (Opportunity →
-Discovery → Proposal → Won, with Lost outcomes). Conversion is not a won deal.
-Polish actions require an existing message and AI mode; sample mode does not rewrite
-user content.
+Example: "Follow up on the demo and ask about their timeline."
 
-Example: "Write a friendly follow-up asking about their priorities. Keep it under 100 words."
+A draft fills only the subject and message. To, Cc, attachments, the related record, its owner and stage don't change,
+and nothing is sent: **Send** / **Open in Outlook** stays a separate action. The subject and message stay editable
+while a draft is written; if you edit them, change To, close the bar or the composer, or press Cancel, that answer is
+not applied. **Undo** / **Redo** restore the subject and message together and turn off once you edit the email
+yourself. Errors, timeouts and refusals keep your email as it was. Always review the draft before sending.
 
-Drafts are instructed to use professional B2B sales language: a clear subject, a concise
-customer-focused opening, short paragraphs, and one polite next step appropriate to the
-sales stage. They avoid slang, hype, pressure, invented claims, and internal CRM terminology.
-Always review the draft for factual accuracy before sending.
-
-The generated subject and message appear directly in the existing composer and remain
-editable. **Undo draft** restores the previous email until you manually edit the generated
-text. Cancellation or generation errors preserve the existing email. Sending remains a
-separate **Send** / **Open in Outlook** action.
+How the server enforces this (`app/ai_email.py`, `POST /api/emails/draft`):
+- One OpenAI request per draft, with no separate classification call. The model must answer with structured JSON:
+  `outcome` (`draft`, `unsupported` or `needs_context`), `subject` and `body`. Only a valid `draft` reaches the
+  composer; `unsupported` and `needs_context` return 422 with the messages above, whatever action or stage the client
+  sent. Clearly personal requests (leave or vacation requests, poems…) are refused before any call.
+- The server decides whether it is a new email or a revision (`draft_type`), keeps the user's subject unless the
+  request mentions the subject, adds the sender's signature once, replaces web links the user didn't supply with
+  `[link]`, and rejects replies that are empty or only a greeting and signature.
+- Drafts are instructed to use professional B2B sales language, to address the recipient as the CRM customer (never
+  as the sender's manager or colleague), and not to invent dates, amounts, links, products, commitments or completed
+  actions. The model receives the lead lifecycle (New → Nurturing → optional Revisit → Demo → Converted, with
+  Unqualified/Lost outcomes) and the opportunity lifecycle (Opportunity → Discovery → Proposal → Won, with Lost
+  outcomes); conversion is not a won deal.
 
 Enable real AI generation in the root `.env` beside `docker-compose.yml`:
 
@@ -361,10 +366,10 @@ images, frontend code, or Docker environment configuration. It is read into back
 and sent to OpenAI as an authorization header. Never commit `.env` or put the key in a
 `VITE_` variable. A backend run directly with Uvicorn can use backend environment variables.
 
-The backend uses the OpenAI Responses API with structured subject/body output and
-`store: false`. Requests include the description and minimal customer context (name,
-company when available, and actual CRM stage). Existing email text, attachments, internal
-notes, lost reasons, and email history are not included by this input. The sender signature
-is added locally. Access requires email permission and access to the related CRM record.
-The legacy sample-mode API remains available for backend tests; free-text instructions
-require AI mode. No API call sends an email or changes the CRM stage.
+The backend uses the OpenAI Responses API with structured output and `store: false`. Requests include the
+description, the latest saved CRM stage, minimal customer context (name and company when available; no name when To
+was changed to someone else) and, when a draft is being revised, its current subject and text. Instructions and draft
+text are treated as untrusted data. Email addresses, attachments, internal notes, lost reasons and email history are
+not included. Access requires the email permission and access to the related CRM record. Sample mode
+(`EMAIL_DRAFT_MODE=sample`) is for backend tests: it doesn't interpret instructions or refine drafts. No API call
+sends an email or changes the CRM.
