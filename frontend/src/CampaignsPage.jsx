@@ -163,7 +163,7 @@ export function NewCampaign({ user, users = [], leadIds = null, onClose, onCreat
   const remember = (field) => (e) => (caret.current = { field, at: e.target.selectionStart });
   const audience = useMemo(() => {
     const emails = valid.map(({ email, name, company }) => ({ email, name: name || null, company: company || null }));
-    if (leadIds) return { lead_ids: leadIds, emails };
+    if (leadIds) return { lead_ids: leadIds }; // from Leads: only the ticked leads
     if (STAGE_PICKER) return { stages, owner_id: owner ? Number(owner) : null, emails };
     return { emails };
   }, [leadIds, stages, owner, valid]);
@@ -301,28 +301,32 @@ export function NewCampaign({ user, users = [], leadIds = null, onClose, onCreat
               {!team && <p className="field-hint">Your own leads.</p>}
             </>
           )}
-          <div className="field">
-            <label htmlFor="campaign-to">
-              <span>
-                {leadIds ? "Also send to" : "To"} {!leadIds && <i>*</i>}
-              </span>
-            </label>
-            <RecipientInput
-              id="campaign-to"
-              value={recipients}
-              onChange={setRecipients}
-              placeholder="Type an email and press Enter, or paste a list"
-            />
-            <small className="field-hint">
-              {leadIds ? "Optional. " : ""}Recipients don't need to be in the CRM. First name and company are filled in from the address
-              (asha.rao@acme-retail.com → Asha, Acme Retail).
-            </small>
-            {wrong > 0 && (
-              <small className="field-error-text" role="status">
-                {`${n(wrong)} ${wrong === 1 ? "address" : "addresses"}`} in red {wrong === 1 ? "isn't" : "aren't"} valid and won't be sent to.
+          {!leadIds && (
+            // the "To" field is only on Email Campaigns > New Campaign; from Leads the recipients are the ticked leads
+            <div className="field">
+              <label htmlFor="campaign-to">
+                <span>
+                  To <i>*</i>
+                </span>
+              </label>
+              <RecipientInput
+                id="campaign-to"
+                value={recipients}
+                onChange={setRecipients}
+                placeholder="Type an email and press Enter, or paste a list"
+              />
+              <small className="field-hint">
+                Recipients don't need to be in the CRM. First name and company are filled in from the address
+                (asha.rao@acme-retail.com → Asha, Acme Retail).
               </small>
-            )}
-          </div>
+              {wrong > 0 && (
+                <small className="field-error-text" role="status">
+                  {`${n(wrong)} ${wrong === 1 ? "address" : "addresses"}`} in red {wrong === 1 ? "isn't" : "aren't"} valid and won't be
+                  sent to.
+                </small>
+              )}
+            </div>
+          )}
           {preview?.too_many > 0 && (
             <p className="form-error" role="status">
               {n(preview.too_many)} recipients. A campaign can go to up to {n(preview.max)}: choose fewer.
