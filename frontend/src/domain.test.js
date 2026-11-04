@@ -49,6 +49,10 @@ import {
   toRecordContact,
   parseRecipients,
   companyFromEmail,
+  newRecordProblems,
+  CONTACT_EMAIL_INVALID,
+  leadConvertChoice,
+  CONVERT_ONE,
 } from "./domain.js";
 
 test("lead form uses backend fields and only requires last name and company", () => {
@@ -742,6 +746,42 @@ test("AI drafting greets by name only while To still addresses the record's cont
   assert.equal(toRecordContact("mary.jo@other.example", ""), false);
 });
 
+test("New Account needs Industry and Phone; blanks and spaces don't count", () => {
+  const ok = { name: "Synthetic Harbor Co", industry: "Logistics", phone: "+1 555 0140" };
+  assert.deepEqual(newRecordProblems("account", ok), {});
+  assert.deepEqual(Object.keys(newRecordProblems("account", { ...ok, industry: "   ", phone: "" })), ["industry", "phone"]);
+  assert.deepEqual(Object.keys(newRecordProblems("account", { name: " " })), ["name", "industry", "phone"]);
+  assert.equal(newRecordProblems("account", { ...ok, phone: undefined }).phone, "Enter the account's phone number.");
+  assert.deepEqual(newRecordProblems("account", { ...ok, phone: "+44 (20) 7946-0958 ext. 12" }), {}); // no format imposed
+});
+test("New Contact needs a valid Email and a Phone", () => {
+  const ok = { last_name: "Okafor", account_id: "4", email: "ana.okafor@harbor.example", phone: "+1 555 0141" };
+  assert.deepEqual(newRecordProblems("contact", ok), {});
+  assert.deepEqual(Object.keys(newRecordProblems("contact", { ...ok, email: " ", phone: "\t" })), ["email", "phone"]);
+  assert.equal(newRecordProblems("contact", { ...ok, email: "" }).email, "Enter the contact's email address.");
+  for (const email of ["ana.okafor", "ana@harbor", "@harbor.example", "ana okafor@harbor.example", "a@b.example, c@d.example"])
+    assert.equal(newRecordProblems("contact", { ...ok, email }).email, CONTACT_EMAIL_INVALID, email);
+  assert.deepEqual(Object.keys(newRecordProblems("contact", { email: "x@y.example", phone: "1" })), ["last_name", "account_id"]);
+  assert.deepEqual(newRecordProblems("lead", {}), {}); // other forms keep their own checks
+});
+test("Convert to Opportunity: exactly one open lead the user may convert", () => {
+  const mine = { id: 7, name: "Synthetic Lead", stage: "Demo", owner_id: 2 };
+  const salesperson = () => ({ canEdit: true, canCreateSales: true });
+  const open = leadConvertChoice([mine], salesperson);
+  assert.deepEqual(open.action, { type: "convert", record: mine }); // the existing Convert popup, nothing converted yet
+  assert.equal(open.reason, undefined);
+  for (const stage of ["New", "Nurturing", "Revisit"]) assert.ok(leadConvertChoice([{ ...mine, stage }], salesperson).action);
+  assert.equal(leadConvertChoice([], salesperson).reason, CONVERT_ONE);
+  assert.equal(leadConvertChoice([mine, { ...mine, id: 8 }], salesperson).reason, CONVERT_ONE);
+  assert.equal(leadConvertChoice([undefined], salesperson).reason, CONVERT_ONE); // ticked but not loaded
+  for (const stage of ["Converted", "Lost", "Unqualified"]) {
+    const closed = leadConvertChoice([{ ...mine, stage }], salesperson);
+    assert.equal(closed.action, undefined);
+    assert.match(closed.reason, new RegExp(`This lead is ${stage}`));
+  }
+  assert.match(leadConvertChoice([mine], () => ({ canEdit: true, canCreateSales: false })).reason, /Admins don't convert/);
+  assert.match(leadConvertChoice([mine], () => ({ canEdit: false, canCreateSales: true })).reason, /only your own leads/);
+});
 
 test("direct opportunity creation includes Admin without granting lead conversion", () => {
   for (const role of ["Admin", "Manager", "Salesperson"]) assert.equal(canCreateOpportunity({ role }), true);

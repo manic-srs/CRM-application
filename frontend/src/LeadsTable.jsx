@@ -5,10 +5,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, apiRequest } from "./api";
-import { leadBoardColumns } from "./domain";
+import { leadBoardColumns, leadConvertChoice } from "./domain";
 import LeadsKanban from "./LeadsKanban";
 import { NewCampaign } from "./CampaignsPage";
-import { can } from "./permissions";
+import { can, canCreateSales } from "./permissions";
 import { ActionMenu, DateCell, Icon, PhoneReveal, StageBadge } from "./ui";
 import { dateTime } from "./format";
 import { filterSummary, rangeBounds, Th } from "./Filters";
@@ -227,6 +227,14 @@ export default function LeadsTable({
 
   // Selection: ticks stay when you change pages, so you can pick leads from several pages
   const items = result?.items || [];
+  // the rows seen so far, so a lead ticked on another page can still be opened in the Convert popup
+  const seen = useRef(new Map());
+  items.forEach((lead) => seen.current.set(lead.id, lead));
+  // Convert to Opportunity: one open lead you may convert (owner or "Edit team records"; Admins don't convert)
+  const convertChoice = leadConvertChoice([...selected].map((id) => seen.current.get(id)), (lead) => ({
+    canEdit: lead.owner_id === user?.id || can(user, "edit_team_records"),
+    canCreateSales: canCreateSales(user),
+  }));
   const canTransferAny = !!user && (user.role === "Admin" || can(user, "reassign_owner") || can(user, "transfer_leads"));
   const pageIds = items.map((l) => l.id);
   const pageTicked = pageIds.filter((id) => selected.has(id)).length;
@@ -273,6 +281,13 @@ export default function LeadsTable({
             items={
               selected.size
                 ? [
+                    // opens the usual Convert popup for the one ticked lead (nothing is converted until it's saved)
+                    {
+                      label: "Convert to Opportunity",
+                      disabled: !convertChoice.action,
+                      hint: convertChoice.reason,
+                      onClick: () => setModal(convertChoice.action),
+                    },
                     // a campaign to the ticked leads (unsubscribed / invalid emails are left out)
                     can(user, "send_campaigns") && {
                       label: "Email Campaign",

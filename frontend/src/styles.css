@@ -1612,6 +1612,10 @@ td.high {
   gap: 12px 24px;
   margin-bottom: 12px;
 }
+/* a field with an error message below it doesn't stretch the field next to it */
+.form-grid > .field {
+  align-content: start;
+}
 .field {
   display: grid;
   gap: 4px;
@@ -1669,7 +1673,8 @@ td.high {
 .stage-task .form-grid {
   margin-bottom: 4px;
 }
-.field input[aria-invalid="true"] {
+.field input[aria-invalid="true"],
+.field select[aria-invalid="true"] {
   border-color: #c23934;
 }
 /* a required stage-change note left blank (shown under the field) */
@@ -3389,6 +3394,7 @@ a.pill:hover {
   position: fixed;
   z-index: 70;
   min-width: 190px;
+  max-width: min(300px, calc(100vw - 16px)); /* fits a narrow screen */
   padding: 6px 0;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -3413,6 +3419,19 @@ a.pill:hover {
 }
 .action-menu-list button.danger {
   color: #ba0517;
+}
+/* a disabled item stays focusable (arrow keys) and shows why under its label */
+.action-menu-list button[aria-disabled="true"] {
+  color: var(--text-weak);
+  cursor: default;
+}
+.action-menu-hint {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-weak);
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: normal;
 }
 .action-menu-list hr {
   margin: 6px 0;

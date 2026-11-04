@@ -291,11 +291,11 @@ def test_new_opportunity_from_the_chat(client, ai):
 
 def test_more_crm_tools(client, ai):
     script, seen = ai
-    acc = client.post("/api/accounts", json={"name": "Northwind Health"}).json()
+    acc = client.post("/api/accounts", json={"name": "Northwind Health", "industry": "Healthcare", "phone": "+1 555 0100"}).json()
     task = client.post("/api/tasks", json={"title": "Call back", "due_date": "2030-01-10T09:00"}).json()
     lead = client.post("/api/leads", json={"last_name": "Iyer", "company": "Globex"}).json()
     script += [[call("list_accounts", search="North"), call("create_contact", account_id=acc["id"], first_name="Dev",
-                                                              last_name="Rao", email="dev@northwind.test")],
+                                                              last_name="Rao", email="dev@northwind.test", phone="+1 555 0101")],
                [call("get_account", account_id=acc["id"]), call("update_task", task_id=task["id"], due_date="2030-02-01T09:00",
                                                                 priority="High")],
                "Done."]

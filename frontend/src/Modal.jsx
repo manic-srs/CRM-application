@@ -19,6 +19,7 @@ import {
   websiteHost,
   isPersonalEmail,
   localInput,
+  newRecordProblems,
   skippedStages,
   stageNote,
   stageNoteField,
@@ -130,6 +131,15 @@ export default function Modal({ modal, close, data, run, notify, user }) {
   const noteField = stageNoteField(type, demoChoice);
   const [noteError, setNoteError] = useState(false);
   const [emailError, setEmailError] = useState(""); // lead email already in the CRM, or not on the company domain
+  // New Account / New Contact: required fields left empty (or an invalid email), shown under each field
+  const [fieldErrors, setFieldErrors] = useState({});
+  const newRecord = type === "account" || type === "contact";
+  const fieldError = (name) => (name === "email" && emailError) || fieldErrors[name] || "";
+  const errorId = (name) => (name === "email" && emailError ? "email-error" : `${name}-field-error`);
+  const clearError = (name) => {
+    if (name === "email" && emailError) setEmailError("");
+    if (fieldErrors[name]) setFieldErrors(({ [name]: _, ...rest }) => rest);
+  };
   // an email on another domain than the website is asked about once; saving again with the same pair saves it
   // (some companies use one domain for email and another for the website)
   const [domainWarned, setDomainWarned] = useState("");
@@ -218,13 +228,13 @@ export default function Modal({ modal, close, data, run, notify, user }) {
               ? 200
               : undefined
         }
-        aria-invalid={name === "email" && !!emailError ? true : undefined}
-        aria-describedby={name === "email" && emailError ? "email-error" : undefined}
-        onInput={name === "email" && emailError ? () => setEmailError("") : undefined}
+        aria-invalid={fieldError(name) ? true : undefined}
+        aria-describedby={fieldError(name) ? errorId(name) : undefined}
+        onInput={fieldError(name) ? () => clearError(name) : undefined}
       />
-      {name === "email" && emailError && (
-        <small id="email-error" className="field-error">
-          {emailError}
+      {fieldError(name) && (
+        <small id={errorId(name)} className="field-error">
+          {fieldError(name)}
         </small>
       )}
     </label>
@@ -302,7 +312,14 @@ export default function Modal({ modal, close, data, run, notify, user }) {
         {label}
         {required && <i> *</i>}
       </span>
-      <select name={name} defaultValue={value} required={required}>
+      <select
+        name={name}
+        defaultValue={value}
+        required={required}
+        aria-invalid={fieldError(name) ? true : undefined}
+        aria-describedby={fieldError(name) ? errorId(name) : undefined}
+        onChange={fieldError(name) ? () => clearError(name) : undefined}
+      >
         <option value="">
           {required ? "Select an option" : "Default / not specified"}
         </option>
@@ -315,6 +332,11 @@ export default function Modal({ modal, close, data, run, notify, user }) {
           );
         })}
       </select>
+      {fieldError(name) && (
+        <small id={errorId(name)} className="field-error">
+          {fieldError(name)}
+        </small>
+      )}
     </label>
   );
   // Only Managers and Admins can give a record to someone else; a Salesperson sees the owner read-only.
@@ -458,6 +480,15 @@ export default function Modal({ modal, close, data, run, notify, user }) {
   const submit = async (event) => {
     event.preventDefault();
     if (lock.current) return;
+    if (newRecord) {
+      const problems = newRecordProblems(type, Object.fromEntries(new FormData(event.target)));
+      setFieldErrors(problems);
+      if (Object.keys(problems).length) {
+        setError(""); // nothing is sent; what was typed stays
+        event.target.elements[Object.keys(problems)[0]]?.focus();
+        return;
+      }
+    }
     const noteInput = noteField && event.target.elements[noteField];
     const noteMissing = !!noteInput && !stageNote(noteInput.value);
     const taskProblems = taskNeeded ? stageTaskProblems(Object.fromEntries(new FormData(event.target))) : {};
@@ -523,14 +554,8 @@ export default function Modal({ modal, close, data, run, notify, user }) {
         if (!v.title.trim()) throw new Error("Task title is required.");
         saved = await run("saveTask", v, record?.id, user?.id);
       }
-      if (type === "account") {
-        if (!v.name.trim()) throw new Error("Account name is required.");
-        saved = await run("saveAccount", v);
-      }
-      if (type === "contact") {
-        if (!v.last_name.trim()) throw new Error("Last name is required.");
-        saved = await run("saveContact", v);
-      }
+      if (type === "account") saved = await run("saveAccount", v); // fields checked above
+      if (type === "contact") saved = await run("saveContact", v);
       if (revisit && !v.revisit_reason) throw new Error("Choose why the lead should be revisited.");
       const today = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD, local
       if (revisit && (v.task_due_date || "").slice(0, 10) <= today) throw new Error("Choose a revisit date after today.");
@@ -640,7 +665,12 @@ export default function Modal({ modal, close, data, run, notify, user }) {
         <header className="modal-header">
           <h2 id="modal-title">{titles[type]}</h2>
         </header>
-        <form onSubmit={submit} onInput={(e) => type === "lead" && e.target.name === "company" && lookUpCompany(e.target.value)}>
+        {/* New Account / New Contact check their fields themselves, so each message shows under its field */}
+        <form
+          onSubmit={submit}
+          noValidate={newRecord}
+          onInput={(e) => type === "lead" && e.target.name === "company" && lookUpCompany(e.target.value)}
+        >
           <div className="modal-body">
           <p className="modal-subtitle">
             {type === "convert"
@@ -654,8 +684,8 @@ export default function Modal({ modal, close, data, run, notify, user }) {
           {type === "account" && (
             <div className="form-grid">
               {field("Account Name", "name", "text", true, "")}
-              {field("Industry", "industry", "text", false, "")}
-              {field("Phone", "phone", "tel", false, "")}
+              {field("Industry", "industry", "text", true, "")}
+              {field("Phone", "phone", "tel", true, "")}
               {field("Website", "website", "text", false, "")}
               {field("Address", "address", "text", false, "")}
               {owner()}
@@ -674,8 +704,8 @@ export default function Modal({ modal, close, data, run, notify, user }) {
                 true,
               )}
               {field("Title", "job_title", "text", false, "")}
-              {field("Email", "email", "email", false, "")}
-              {field("Phone", "phone", "tel", false, "")}
+              {field("Email", "email", "email", true, "")}
+              {field("Phone", "phone", "tel", true, "")}
               {owner()}
             </div>
           )}

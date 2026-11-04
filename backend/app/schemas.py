@@ -578,13 +578,54 @@ class AccountOut(Out):
         return money(value)
 
 
+# New Account / New Contact (and the Assistant's tools for them) need these filled in. Lead conversion, New Opportunity
+# and imports build accounts and contacts themselves, and older records may have them empty.
+ACCOUNT_INDUSTRY_REQUIRED = "Enter the account's industry."
+ACCOUNT_PHONE_REQUIRED = "Enter the account's phone number."
+CONTACT_EMAIL_REQUIRED = "Enter the contact's email address."
+CONTACT_EMAIL_INVALID = "Enter a valid email address, like name@company.com."
+CONTACT_PHONE_REQUIRED = "Enter the contact's phone number."
+
+
+def required_text(value, message: str) -> str:
+    """A field that must be filled in: missing, null, empty and whitespace-only values get `message`. Spaces around
+    the value are trimmed; the value itself is kept as typed (no phone format is imposed)."""
+    if value is not None and not isinstance(value, str):
+        raise PydanticCustomError("required_text_type", "Enter text.")
+    value = (value or "").strip()
+    if not value:
+        raise PydanticCustomError("required_text", message)
+    return value
+
+
+def contact_email(value) -> str:
+    from app.services import CUSTOMER_EMAIL_RE  # the app's one email format check (also used by the Apollo lookup)
+
+    value = required_text(value, CONTACT_EMAIL_REQUIRED)
+    if not CUSTOMER_EMAIL_RE.match(value):
+        raise PydanticCustomError("contact_email_invalid", CONTACT_EMAIL_INVALID)
+    return value
+
+
+AccountIndustry = Annotated[str, BeforeValidator(lambda v: required_text(v, ACCOUNT_INDUSTRY_REQUIRED))]
+AccountPhone = Annotated[str, BeforeValidator(lambda v: required_text(v, ACCOUNT_PHONE_REQUIRED))]
+ContactEmail = Annotated[str, BeforeValidator(contact_email)]
+ContactPhone = Annotated[str, BeforeValidator(lambda v: required_text(v, CONTACT_PHONE_REQUIRED))]
+
+
 class AccountCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
-    industry: str | None = Field(None, max_length=100)
-    phone: str | None = Field(None, max_length=30)
+    industry: AccountIndustry = Field(..., max_length=100)
+    phone: AccountPhone = Field(..., max_length=30)
     website: str | None = Field(None, max_length=255)
     address: str | None = Field(None, max_length=500)
     owner_id: int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _required_left_out(cls, data):
+        """A request without industry or phone gets their own messages too (not just "Field required")."""
+        return {"industry": None, "phone": None, **data} if isinstance(data, dict) else data
 
 
 class ContactOut(Out):
@@ -609,10 +650,16 @@ class ContactCreate(BaseModel):
     first_name: str | None = Field(None, max_length=50)
     last_name: str = Field(..., min_length=1, max_length=50)
     job_title: str | None = Field(None, max_length=100)
-    email: str | None = Field(None, max_length=255)
-    phone: str | None = Field(None, max_length=30)
+    email: ContactEmail = Field(..., max_length=255)
+    phone: ContactPhone = Field(..., max_length=30)
     account_id: int
     owner_id: int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _required_left_out(cls, data):
+        """A request without email or phone gets their own messages too (not just "Field required")."""
+        return {"email": None, "phone": None, **data} if isinstance(data, dict) else data
 
 
 # ---------- Opportunities ----------

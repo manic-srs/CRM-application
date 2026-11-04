@@ -191,8 +191,8 @@ All APIs start with `/api`.
 | Won / Lost | POST /opportunities/{id}/won, POST /opportunities/{id}/lost |
 | Tasks list | GET /tasks (filters: status, due=overdue/today/upcoming, owner_id) |
 | Add / edit / complete task | POST /tasks, PUT /tasks/{id}, PUT /tasks/{id}/complete |
-| Accounts | GET /accounts, POST /accounts, GET /accounts/{id} |
-| Contacts | GET /contacts, POST /contacts, GET /contacts/{id} |
+| Accounts | GET /accounts, POST /accounts (`industry` and `phone` required), GET /accounts/{id} |
+| Contacts | GET /contacts, POST /contacts (`email`, a valid address, and `phone` required), GET /contacts/{id} |
 | Notes | GET /notes, POST /notes |
 | Notifications (bell) | GET /notifications (unseen updates + reminders for open tasks), PUT /notifications/read-all, PUT /notifications/{id}/read |
 | Send email | POST /emails (form data with files) |

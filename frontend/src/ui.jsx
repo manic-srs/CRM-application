@@ -324,10 +324,18 @@ export function Pagination({ page, pages, size, total, start, setPage, setSize }
 // "Actions ▾" button at the end of a record's buttons (Edit, Transfer, Delete...), like HubSpot / Zoho.
 // items: [{ label, onClick, danger }] or "-" for a divider. Opens under the button, right-aligned;
 // arrow keys move between items, Esc or a click outside closes it.
+// items: { label, onClick, danger, disabled, title, hint } or "-" (a divider). A disabled item stays reachable with the
+// arrow keys and says why under its label (hint), so keyboard and touch users see the reason too.
 export function ActionMenu({ items, label = "Actions", badge }) {
   const [open, setOpen] = React.useState(null);
   const ref = React.useRef(null);
   const list = React.useRef(null);
+  const id = React.useId();
+  // on a narrow screen the list may not fit to the left of its button: keep it inside the window
+  React.useLayoutEffect(() => {
+    const box = list.current?.getBoundingClientRect();
+    if (open && box && box.left < 8 && open.left === undefined) setOpen({ top: open.top, left: 8 });
+  }, [open]);
   React.useEffect(() => {
     if (!open) return;
     list.current?.querySelector("button")?.focus();
@@ -384,14 +392,21 @@ export function ActionMenu({ items, label = "Actions", badge }) {
                 type="button"
                 role="menuitem"
                 className={item.danger ? "danger" : ""}
-                disabled={item.disabled}
+                aria-disabled={item.disabled || undefined}
+                aria-describedby={item.hint ? `${id}-hint-${i}` : undefined}
                 title={item.title}
                 onClick={() => {
+                  if (item.disabled) return;
                   setOpen(null);
                   item.onClick?.();
                 }}
               >
                 {item.label}
+                {item.hint && (
+                  <small id={`${id}-hint-${i}`} className="action-menu-hint">
+                    {item.hint}
+                  </small>
+                )}
               </button>
             ),
           )}
