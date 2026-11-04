@@ -2,7 +2,7 @@
 // The backend (app/assistant.py) runs the same actions as the screens, as the logged-in user, and saves every chat
 // (the history panel on the left: rename, delete, date and time). Closing actions (Lost, Unqualified, Won, transfer,
 // cancel demo, delete) come back as a Confirm card first. Files (PDF, Word, Excel, images...) can be attached.
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { dateTime } from "./format";
 import { Icon, ObjectIcon } from "./ui";
@@ -23,35 +23,6 @@ const EXAMPLES = [
   ["Deals", ["Show my open opportunities by stage", "Which deals close this month?", "Which deals are at Proposal?"]],
   ["Tasks & demos", ["What is overdue?", "What do I have today?", "Show my upcoming demos"]],
   ["Stats", ["Give me a pipeline report for this month", "What is our win rate this quarter?", "How many leads did we convert last month?"]],
-];
-
-// Shown while typing (the ones that match what was typed)
-const PROMPTS = [
-  ...EXAMPLES.flatMap(([, items]) => items),
-  "Show my leads at Nurturing",
-  "Show leads created this week",
-  "Move the newest lead to Nurturing",
-  "Book a demo with ",
-  "Show my leads at Demo",
-  "Convert the lead ",
-  "Create a new opportunity: ",
-  "Create a follow-up task for ",
-  "Add a note to ",
-  "Transfer the lead ",
-  "Mark the lead as lost: ",
-  "Show the biggest open deals",
-  "Show deals at Proposal",
-  "Move the deal to Discovery: ",
-  "How many leads did we convert last month?",
-  "What is our conversion rate this year?",
-  "Show leads by source this month",
-  "Show won deals by owner this year",
-  "Show tasks due tomorrow",
-  "Reschedule the task ",
-  "Show the accounts I work with",
-  "Show contacts at ",
-  "Give me a summary of my day",
-  "Which leads haven't been touched this week?",
 ];
 
 const ACCEPT = ".pdf,.docx,.xlsx,.pptx,.csv,.tsv,.txt,.md,.json,.html,.htm,.eml,.xml,.log,.png,.jpg,.jpeg,.webp,.gif";
@@ -265,12 +236,10 @@ export default function AssistantPage({ user, reload }) {
   const [status, setStatus] = useState(null);
   const [chats, setChats] = useState([]);
   const [current, setCurrent] = useState(null); // saved chat id (null = new chat)
-  const [chat, setChat] = useState([]); // what the page shows: { from, text, links, pending, suggestions, files }
+  const [chat, setChat] = useState([]); // what the page shows: { from, text, links, pending, files }
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [files, setFiles] = useState([]); // attached to the next message: { key, id?, filename, kind, size_bytes, error? }
-  const [quickOpen, setQuickOpen] = useState(false);
-  const [typeahead, setTypeahead] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false); // small screens: the panel slides in
   const [historyShown, setHistoryShown] = useState(() => {
     try {
@@ -294,7 +263,6 @@ export default function AssistantPage({ user, reload }) {
   const endRef = useRef(null);
   const boxRef = useRef(null);
   const fileRef = useRef(null);
-  const quickRef = useRef(null);
 
   const off = status && !status.enabled;
   const last = chat.length ? chat[chat.length - 1] : null;
@@ -324,17 +292,6 @@ export default function AssistantPage({ user, reload }) {
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [chat, busy]);
-  useEffect(() => {
-    if (!quickOpen) return undefined;
-    const close = (e) => !quickRef.current?.contains(e.target) && setQuickOpen(false);
-    const key = (e) => e.key === "Escape" && setQuickOpen(false);
-    document.addEventListener("mousedown", close);
-    document.addEventListener("keydown", key);
-    return () => {
-      document.removeEventListener("mousedown", close);
-      document.removeEventListener("keydown", key);
-    };
-  }, [quickOpen]);
 
   const newChat = () => {
     setCurrent(null);
@@ -361,8 +318,6 @@ export default function AssistantPage({ user, reload }) {
     const attached = ready;
     setInput("");
     setFiles([]);
-    setQuickOpen(false);
-    setTypeahead(false);
     setChat((c) => [...c.map((m) => ({ ...m, pending: null })), { from: "me", text: message, files: attached }]);
     setBusy(true);
     try {
@@ -403,9 +358,7 @@ export default function AssistantPage({ user, reload }) {
   };
 
   const quick = (q) => {
-    setQuickOpen(false);
     setInput(q.text);
-    setTypeahead(false);
     setTimeout(() => {
       const box = boxRef.current;
       if (!box) return;
@@ -431,16 +384,6 @@ export default function AssistantPage({ user, reload }) {
       fail(err);
     }
   };
-
-  // Suggestions while typing: prompts that contain every word typed so far
-  const matches = useMemo(() => {
-    const words = input.trim().toLowerCase().split(/\s+/).filter(Boolean);
-    if (!typeahead || !words.length || input.length > 60) return [];
-    return PROMPTS.filter((p) => {
-      const t = p.toLowerCase();
-      return t !== input.trim().toLowerCase() && words.every((w) => t.includes(w));
-    }).slice(0, 5);
-  }, [input, typeahead]);
 
   const title = chats.find((c) => c.id === current)?.title;
 
@@ -584,15 +527,6 @@ export default function AssistantPage({ user, reload }) {
                     </div>
                   </li>
                 )}
-                {!busy && last?.from === "ai" && !pending && last.suggestions?.length > 0 && (
-                  <li className="ai-suggestions" aria-label="Suggestions">
-                    {last.suggestions.map((s) => (
-                      <button key={s} onClick={() => send(s)} disabled={off}>
-                        {s}
-                      </button>
-                    ))}
-                  </li>
-                )}
                 <li ref={endRef} aria-hidden="true" />
               </ol>
             )}
@@ -620,51 +554,7 @@ export default function AssistantPage({ user, reload }) {
                 ))}
               </div>
             )}
-            {matches.length > 0 && (
-              <ul className="ai-typeahead" role="listbox" aria-label="Suggestions">
-                {matches.map((p) => (
-                  <li key={p}>
-                    <button
-                      type="button"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        setInput(p);
-                        setTypeahead(false);
-                        boxRef.current?.focus();
-                      }}
-                    >
-                      <Icon name="search" size={13} /> {p}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
             <div className="ai-input-row">
-              <div className="ai-quick-menu" ref={quickRef}>
-                <button
-                  type="button"
-                  className="ai-tool"
-                  onClick={() => setQuickOpen((v) => !v)}
-                  aria-haspopup="menu"
-                  aria-expanded={quickOpen}
-                  aria-label="Quick actions"
-                  title="Quick actions"
-                  disabled={off}
-                >
-                  <Icon name="flash" size={18} />
-                </button>
-                {quickOpen && (
-                  <div className="ai-quick-pop" role="menu">
-                    <p>Quick actions</p>
-                    {QUICK.map((q) => (
-                      <button key={q.label} type="button" role="menuitem" onClick={() => quick(q)} disabled={busy}>
-                        <ObjectIcon type={q.icon} size={20} />
-                        {q.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
               <button
                 type="button"
                 className="ai-tool"
@@ -691,16 +581,13 @@ export default function AssistantPage({ user, reload }) {
                 value={input}
                 onChange={(e) => {
                   setInput(e.target.value);
-                  setTypeahead(true);
                 }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
                     send();
                   }
-                  if (e.key === "Escape") setTypeahead(false);
                 }}
-                onBlur={() => setTypeahead(false)}
                 rows={2}
                 placeholder={
                   pending

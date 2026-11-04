@@ -150,7 +150,12 @@ def chat(data: ChatRequest, db: Session = Depends(get_db)):
     files = store.own_files(db, data.file_ids) if data.file_ids else []
     for_ai, for_history = _with_files(message, files)
     history.append({"role": "user", "content": for_ai})
-    out = assistant.converse(db, history)
+    hello = None if files else assistant.greeting_reply(message)
+    if hello:  # "hi" / "hello": greeted straight away, without asking the AI
+        out = {"messages": [*history, {"role": "assistant", "content": hello}], "reply": hello, "links": [], "done": [],
+               "pending": None, "suggestions": []}
+    else:
+        out = assistant.converse(db, history)
     # the saved history keeps the text version of this message (images aren't stored in it)
     out["messages"] = [{**m, "content": for_history} if m.get("role") == "user" and m.get("content") is for_ai else m
                        for m in out["messages"]]
