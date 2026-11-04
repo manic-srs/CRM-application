@@ -2,9 +2,11 @@
 // every request again, so hiding a button here is only for a clean screen, not for security.
 export const can = (user, permission) => !!user?.permissions?.includes(permission);
 
-// Admins can create and edit leads, but opportunities still come from Managers and Salespeople
-// converting a lead.
+// Lead conversion is reserved for Managers and Salespeople.
 export const canCreateSales = (user) => !!user && user.role !== "Admin";
+
+// Direct opportunity creation is available to all signed-in CRM roles, including Admin.
+export const canCreateOpportunity = (user) => ["Admin", "Manager", "Salesperson"].includes(user?.role);
 
 // Transfer a lead: the Admin and Managers ("Reassign owner": any lead they can see),
 // or a user with "Transfer own leads" (their own leads)

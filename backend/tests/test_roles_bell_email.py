@@ -464,7 +464,7 @@ def test_stages_cannot_be_skipped(client, outbox):
     assert client.post(f"/api/leads/{other['id']}/lost", json={"lost_reason": "Price", "lost_notes": "Synthetic test note"}).status_code == 200
 
 
-def test_admin_creates_leads_but_not_opportunities(client, outbox):
+def test_admin_creates_leads_but_cannot_convert_them(client, outbox):
     ravis = lead(client, name="Ravi Lead")
     login_as(client, 3)
     made = client.post("/api/leads", json={"last_name": "Admin", "company": "X", "owner_id": 2})

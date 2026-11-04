@@ -1,5 +1,5 @@
 import { DownloadLeads, TransferHistory, UploadLeads } from "./LeadFiles";
-import { can, canCreateSales } from "./permissions";
+import { can, canCreateOpportunity, canCreateSales } from "./permissions";
 import LeadsTable from "./LeadsTable";
 import { applyFilters, filterSummary, opts, ownerOptions, Th, useFilters } from "./Filters";
 import { LEAD_OPEN_STAGES, LEAD_SOURCES, LEAD_STAGES, OPPORTUNITY_OPEN_STAGES, OPPORTUNITY_STAGES, UPLOAD_SOURCE } from "./domain";
@@ -174,6 +174,7 @@ function validFilters(defs, values) {
 
 const LABEL = { leads: "Leads", opportunities: "Opportunities", accounts: "Accounts", contacts: "Contacts" };
 const NEW_TYPE = { leads: "lead", opportunities: "newOpportunity", accounts: "account", contacts: "contact" };
+const NEW_LABEL = { leads: "New Lead", opportunities: "New Opportunity", accounts: "New Account", contacts: "New Contact" };
 
 function Kanban({ records, setModal }) {
   const [over, setOver] = useState(null);
@@ -379,7 +380,7 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
                 History
               </button>
             )}
-            {collection === "accounts" && canCreateSales(user) && (
+            {collection === "accounts" && canCreateOpportunity(user) && (
               <button className="sf-button" onClick={() => openNew("newOpportunity")}>
                 New Opportunity
               </button>
@@ -389,13 +390,13 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
                 Convert a Lead
               </a>
             )}
-            {collection === "opportunities" && !canCreateSales(user) ? null : NEW_TYPE[collection] ? (
+            {collection === "opportunities" && !canCreateOpportunity(user) ? null : NEW_TYPE[collection] ? (
               <button
                 className="sf-button"
                 onClick={() => openNew(NEW_TYPE[collection])}
                 title={collection === "opportunities" ? "Add an opportunity directly (no lead)" : undefined}
               >
-                New
+                {NEW_LABEL[collection]}
               </button>
             ) : (
               <a className="sf-button" href="#/leads" title="Opportunities are created by converting a lead">

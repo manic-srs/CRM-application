@@ -161,7 +161,7 @@ export default function RecordPage({ collection, item, data, user, openLead, ope
   const closed = ["Won", "Lost", "Converted", "Unqualified"].includes(item.stage);
   // Salespeople change only their own records; Managers and Admins can change any (the backend checks it too)
   const canEdit = item.owner_id === user?.id || can(user, "edit_team_records");
-  const canConvert = canEdit && canCreateSales(user); // Admins edit leads but don't create opportunities
+  const canConvert = canEdit && canCreateSales(user); // Lead conversion is reserved for Managers and Salespeople
   const canTransfer = lead && canTransferLead(user, item); // Admin: any lead; owner with "Transfer leads": their own
   const transfers = (lead && item.transfers) || [];
   const tasks = data.tasks.filter((t) => t.relatedId === item.id && t.relatedType === collection);

@@ -194,11 +194,11 @@ def require(permission: str) -> Acting:
 
 
 def forbid_admin_create(what: str) -> Acting:
-    """Admins can create leads, but opportunities still come from Managers and Salespeople converting a lead."""
+    """Lead-conversion role restriction; direct opportunity creation does not use this check."""
     me = acting_user()
     if me.role == "Admin":
-        raise HTTPException(status_code=403, detail=f"Admins can't create {what}. "
-                            "Opportunities are created by Managers and Salespeople when they convert a lead.")
+        raise HTTPException(status_code=403, detail=f"Admins can't create {what} by converting a lead. "
+                            "Use New Opportunity instead. Lead conversion is available to Managers and Salespeople.")
     return me
 
 

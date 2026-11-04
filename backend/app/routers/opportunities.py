@@ -15,7 +15,7 @@ from starlette.datastructures import UploadFile
 from app import schemas
 from app.constants import OPPORTUNITY_FLOW, OPPORTUNITY_OPEN_STAGES, OPPORTUNITY_STAGES, STAGE_PROBABILITY
 from app.database import get_db
-from app.security import (acting_user, acting_user_id, check_owner_change, forbid_admin_create, owner_for_new,
+from app.security import (acting_user, acting_user_id, check_owner_change, owner_for_new,
                           require_edit, require_view, visible)
 from app.models import Account, Contact, Lead, Opportunity, OpportunityAttachment, User
 from app import opportunity_matches as matches
@@ -99,7 +99,7 @@ def duplicate_check(
 def create_opportunity(data: schemas.OpportunityCreate, db: Session = Depends(get_db)):
     """New Opportunity without a lead. No duplicates: an existing account with the company name and an existing contact
     with the email (or name) are reused, and the same open opportunity for the same person and company is refused."""
-    me = forbid_admin_create("opportunities")
+    me = acting_user()
     owner_id = resolve_user_id(db, owner_for_new(data.owner_id))
     task_owner = stage_task_owner(db, data.task, owner_id)
     if data.account_id is not None:
