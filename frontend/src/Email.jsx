@@ -179,13 +179,14 @@ export function EmailComposer({ target, user, onClose, onSent }) {
               <span>
                 Subject <i>*</i>
               </span>
-              <input name="subject" required maxLength={255} value={subject} onChange={e => setSubject(e.target.value)} autoComplete="off" disabled={sending || aiBusy} />
+              <input name="subject" required maxLength={255} value={subject} onChange={e => setSubject(e.target.value)} autoComplete="off" disabled={sending} />
             </label>
             <div className="field">
               <label htmlFor="email-message">Message <i>*</i></label>
               <div className="email-editor">
-                <textarea id="email-message" name="body" rows={9} required value={message} onChange={e => setMessage(e.target.value)} disabled={sending || aiBusy} />
-                <EmailDraftAssistant target={target} settings={sender} subject={subject} message={message} sending={sending} onBusyChange={setAiBusy} onApply={draft => { setSubject(draft.subject); setMessage(draft.body); }} />
+                {/* stays editable while a draft is written: an answer is dropped if the email changed meanwhile */}
+                <textarea id="email-message" name="body" rows={8} required value={message} onChange={e => setMessage(e.target.value)} disabled={sending} />
+                <EmailDraftAssistant target={target} settings={sender} user={user} subject={subject} message={message} sending={sending} recipients={() => formRef.current?.elements.to?.value || ""} onBusyChange={setAiBusy} onApply={draft => { setSubject(draft.subject); setMessage(draft.body); }} />
               </div>
             </div>
             {via === "crm" && (

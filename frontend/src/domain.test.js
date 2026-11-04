@@ -44,6 +44,8 @@ import {
   skippedStages,
   emailWebsiteProblem,
   isPersonalEmail,
+  draftContent,
+  toRecordContact,
   parseRecipients,
   companyFromEmail,
 } from "./domain.js";
@@ -717,4 +719,24 @@ test("New Campaign's To field: pasted addresses, with names kept", () => {
   assert.deepEqual(parseRecipients('"Meera Iyer" <meera@lumen.com>'), [{ email: "meera@lumen.com", name: "Meera Iyer" }]);
   assert.equal(companyFromEmail("asha@acme-retail.com"), "Acme Retail");
   assert.equal(companyFromEmail("asha@gmail.com"), "");
+});
+
+test("AI drafting: a greeting and signature alone is not a draft to refine", () => {
+  const sign = ["Ravi Kumar", "ravi@crm.test"];
+  const starter = "Hi Jack,\n\n\n\nBest regards,\nRavi Kumar\nravi@crm.test"; // what New Email starts with
+  assert.equal(draftContent(starter, ...sign), "");
+  assert.equal(draftContent("", ...sign), "");
+  assert.equal(draftContent("Hello,\r\n\r\nKind regards,\r\nRavi Kumar", ...sign), "");
+  assert.equal(draftContent("Dear Ana Maria Okafor,\n\nSincerely,", ...sign), "");
+  assert.equal(draftContent("Hi Jack, let's reconnect.", ...sign), "Hi Jack, let's reconnect."); // words after the greeting
+  assert.equal(draftContent("Hi Jack,\n\nThe proposal covers 25 seats.\n\nBest regards,\nRavi Kumar\nravi@crm.test", ...sign),
+    "The proposal covers 25 seats.");
+  assert.equal(draftContent("Could you share your availability?", ...sign), "Could you share your availability?");
+});
+test("AI drafting greets by name only while To still addresses the record's contact", () => {
+  assert.equal(toRecordContact("jack@bluebird.example", "jack@bluebird.example"), true);
+  assert.equal(toRecordContact(" Jack@Bluebird.example ; ops@bluebird.example", "jack@bluebird.example"), true);
+  assert.equal(toRecordContact("", "jack@bluebird.example"), true); // not chosen yet: the record's contact
+  assert.equal(toRecordContact("mary.jo@other.example", "jack@bluebird.example"), false);
+  assert.equal(toRecordContact("mary.jo@other.example", ""), false);
 });

@@ -30,8 +30,12 @@ def request(record, **changes):
     return {"record_field": "lead_id", "record_id": record["id"], "instructions": "Thank Jack after the demo and ask about next steps.", **changes}
 
 
+def model_reply(subject, body, outcome="draft"):
+    return json.dumps({"outcome": outcome, "subject": subject, "body": body})
+
+
 def completed(text=None):
-    return {"status": "completed", "output": [{"type": "message", "content": [{"type": "output_text", "text": text or json.dumps({"subject": "Next steps after our demo", "body": "Hi Jack,\n\nThank you for your time. When would you like to discuss next steps?"})}]}]}
+    return {"status": "completed", "output": [{"type": "message", "content": [{"type": "output_text", "text": text or model_reply("Next steps after our demo", "Hi Jack,\n\nThank you for your time. When would you like to discuss next steps?")}]}]}
 
 
 @pytest.fixture
@@ -86,6 +90,58 @@ def test_missing_configuration_is_actionable(client, record, monkeypatch):
     assert 'OPENAI_API_KEY' in response.json()['detail']
 
 
+@pytest.mark.parametrize('action', ['formalize', 'friendly', 'shorten'])
+def test_refinements_use_existing_draft_and_preserve_subject_and_stage(client, record, provider, monkeypatch, action):
+    monkeypatch.setattr(mailer, 'send', lambda *a, **kw: pytest.fail('Refinement must not send email'))
+    db = next(app.dependency_overrides[get_db]())
+    db.get(Lead, record['id']).stage = 'Revisit'
+    db.commit()
+    original = 'Hi Jack,\n\nCould you confirm availability on November 12?\n\nBest regards,\nRavi Kumar\nravi@crm.test'
+    provider[1]['json'] = completed(model_reply('Model changed subject', original))
+    response = client.post('/api/emails/draft', json=request(
+        record, action=action, instructions='', current_subject='Checking your availability', current_body=original))
+    assert response.status_code == 200, response.text
+    assert response.json()['subject'] == 'Checking your availability'
+    assert response.json()['body'].count('Best regards,') == 1
+    assert response.json()['record_stage'] == 'Revisit'
+    payload = json.loads(json.loads(provider[0][0].content)['input'])
+    assert payload['existing_message'] == original
+    assert payload['email_action'] == action
+    assert payload['user_request'] == ai_email.REFINEMENTS[action]
+    assert payload['crm_context']['current_stage'] == 'Revisit'
+    assert client.get(f"/api/leads/{record['id']}").json()['stage'] == 'Revisit'
+    assert db.scalar(select(func.count()).select_from(Email)) == 0
+    db.close()
+
+
+@pytest.mark.parametrize('action', ['formalize', 'friendly', 'shorten'])
+def test_refinements_require_existing_message_before_provider_call(client, record, provider, action):
+    response = client.post('/api/emails/draft', json=request(record, action=action, current_body='   '))
+    assert response.status_code == 422
+    assert not provider[0]
+
+
+@pytest.mark.parametrize('extra', [{'option_id': 'introduce'}, {'email_stage': 'Won'}])
+def test_refinements_cannot_override_stage_or_select_a_template(client, record, provider, extra):
+    response = client.post('/api/emails/draft', json=request(record, action='friendly', current_body='Hi Jack, let’s reconnect.', **extra))
+    assert response.status_code == 422
+    assert not provider[0]
+
+
+def test_refinement_with_blank_subject_can_generate_a_subject(client, record, provider):
+    response = client.post('/api/emails/draft', json=request(record, action='shorten', current_body='Hi Jack, please share your availability.'))
+    assert response.status_code == 200
+    assert response.json()['subject'] == 'Next steps after our demo'
+
+
+def test_sample_mode_does_not_pretend_to_refine_existing_email(client, record, provider, monkeypatch):
+    monkeypatch.setenv('EMAIL_DRAFT_MODE', 'sample')
+    response = client.post('/api/emails/draft', json=request(record, action='formalize', current_body='Hi Jack, let’s reconnect.'))
+    assert response.status_code == 422
+    assert 'AI mode' in response.json()['detail']
+    assert not provider[0]
+
+
 def test_requires_login(client, record, provider):
     client.headers.pop('Authorization')
     assert client.post('/api/emails/draft', json=request(record)).status_code == 401
@@ -124,7 +180,7 @@ def test_provider_errors_are_sanitized(client, record, provider, status, expecte
     assert 'SENSITIVE_PROVIDER_DETAIL' not in response.text
 
 
-@pytest.mark.parametrize('output', [completed('not JSON'), completed('{"subject":"Hello","body":""}'), completed('{"subject":"Hello\\nInjected","body":"Text"}'), {"status": "incomplete", "output": []}])
+@pytest.mark.parametrize('output', [completed('not JSON'), completed(model_reply('Hello', '')), completed(model_reply('Hello\nInjected', 'Text')), {"status": "incomplete", "output": []}])
 def test_rejects_bad_or_incomplete_output(client, record, provider, output):
     provider[1]['json'] = output
     assert client.post('/api/emails/draft', json=request(record)).status_code == 502
@@ -409,7 +465,7 @@ def test_opportunity_suggestions_and_drafts_follow_opportunity_stage(client, pro
 ])
 def test_model_signature_is_not_added_twice(client, record, provider, closing):
     body='Hi Jack,\n\nWould a short conversation about your priorities be helpful?'
-    provider[1]['json']=completed(json.dumps({'subject':'Discussing your priorities','body':body+'\n\n'+closing}))
+    provider[1]['json']=completed(model_reply('Discussing your priorities', body+'\n\n'+closing))
     response=client.post('/api/emails/draft',json=request(record,action='custom'))
     assert response.status_code == 200, response.text
     expected=body+'\n\nBest regards,\nRavi Kumar\nravi@crm.test'
@@ -466,3 +522,167 @@ def test_default_email_stage_tracks_current_record(client, record, provider):
     content=json.loads(json.loads(provider[0][0].content)['input'])
     assert content['email_stage']=='Demo'
     db.close()
+
+
+# ---------- the drafting bar: new email or revision, CRM-only scope (all replies are mocked) ----------
+
+STARTER = 'Hi Jack,\n\n\n\nBest regards,\nRavi Kumar\nravi@crm.test'  # what New Email starts with for Ravi
+DRAFT = ('Hi Jack,\n\nThank you for the demo on November 12. The proposal covers 25 seats at $40 per seat.\n\n'
+         'Best regards,\nRavi Kumar\nravi@crm.test')
+UNRELATED = ['Write a leave request to my manager for next Friday.', 'Apply for vacation from December 20 to January 2.',
+             'Ask for a day off tomorrow.', 'Write a poem about autumn.', 'Draft my resignation letter.']
+
+
+def sent_input(provider):
+    return json.loads(json.loads(provider[0][0].content)['input'])
+
+
+@pytest.mark.parametrize('body,content', [
+    (STARTER, ''), ('', ''), ('Hello,', ''), ('Good morning Jack,\n\nBest regards,', ''),
+    ('  Dear Jack Jones,  \n\n Kind regards,\nRavi Kumar\nravi@crm.test', ''),
+    ('Hi Jack, let’s reconnect.', 'Hi Jack, let’s reconnect.'),
+    ('Hi Jack,\n\nThanks for your time.\n\nBest regards,\nRavi Kumar', 'Thanks for your time.'),
+    ('Could you share your availability?', 'Could you share your availability?'),
+])
+def test_draft_content_ignores_only_the_greeting_and_signature(body, content):
+    assert ai_email.draft_content(body, 'Ravi Kumar', 'ravi@crm.test') == content
+
+
+@pytest.mark.parametrize('body', ['', STARTER, 'Hello,\n\nBest regards,\nRavi Kumar'])
+def test_a_greeting_and_signature_alone_asks_for_a_new_email(client, record, provider, body):
+    response = client.post('/api/emails/draft', json=request(
+        record, action='custom', instructions='Invite Jack to a product demo.', current_body=body))
+    assert response.status_code == 200, response.text
+    draft = response.json()
+    assert (draft['subject'], draft['draft_type']) == ('Next steps after our demo', 'new')
+    assert draft['body'].startswith('Hi Jack,') and draft['body'].count('Best regards,') == 1
+    sent = sent_input(provider)
+    assert (sent['task'], sent['existing_message']) == ('new_email', '')
+
+
+def test_a_new_draft_keeps_the_users_subject_and_fills_a_blank_one(client, record, provider):
+    ask = request(record, action='custom', instructions='Invite Jack to a product demo.', current_body=STARTER)
+    kept = client.post('/api/emails/draft', json={**ask, 'current_subject': 'Demo invitation'}).json()
+    assert (kept['subject'], kept['draft_type']) == ('Demo invitation', 'new')
+    assert client.post('/api/emails/draft', json=ask).json()['subject'] == 'Next steps after our demo'
+
+
+def test_the_subject_changes_only_when_the_request_asks_for_it(client, record, provider):
+    response = client.post('/api/emails/draft', json=request(
+        record, action='custom', instructions='Invite Jack to a demo and suggest a clearer subject.',
+        current_subject='Hello', current_body=STARTER))
+    assert response.json()['subject'] == 'Next steps after our demo'
+
+
+def test_a_request_on_an_existing_draft_revises_it_and_keeps_the_subject(client, record, provider):
+    provider[1]['json'] = completed(model_reply('A subject from the model', DRAFT.replace('Thank you', 'Many thanks')))
+    response = client.post('/api/emails/draft', json=request(
+        record, action='custom', instructions='Make the opening warmer.', current_subject='Your proposal', current_body=DRAFT))
+    assert response.status_code == 200, response.text
+    draft = response.json()
+    assert (draft['subject'], draft['draft_type']) == ('Your proposal', 'revision')
+    assert draft['body'].count('Best regards,') == 1 and draft['body'].startswith('Hi Jack,\n\nMany thanks')
+    sent = sent_input(provider)
+    assert (sent['task'], sent['existing_message'], sent['user_request']) == ('revise_email', DRAFT, 'Make the opening warmer.')
+
+
+@pytest.mark.parametrize('action', ['formalize', 'friendly', 'shorten'])
+@pytest.mark.parametrize('body', [STARTER, 'Hello,\n\nKind regards,\nRavi Kumar'])
+def test_refine_needs_more_than_a_greeting_and_signature(client, record, provider, action, body):
+    response = client.post('/api/emails/draft', json=request(record, action=action, instructions='', current_body=body))
+    assert response.status_code == 422 and response.json()['detail'] == ai_email.DESCRIBE_FIRST
+    assert not provider[0]
+
+
+@pytest.mark.parametrize('action,label', [('formalize', 'Professional'), ('friendly', 'Conversational'), ('shorten', 'Concise')])
+def test_refine_keeps_the_facts_the_subject_and_one_signature(client, record, provider, action, label):
+    # the mocked model keeps the facts and repeats the signature; the server keeps one signature and the subject
+    provider[1]['json'] = completed(model_reply('A subject from the model', DRAFT + '\n\nBest regards,\nRavi Kumar'))
+    response = client.post('/api/emails/draft', json=request(
+        record, action=action, instructions='', current_subject='Your proposal', current_body=DRAFT))
+    assert response.status_code == 200, response.text
+    draft = response.json()
+    assert (draft['subject'], draft['draft_type']) == ('Your proposal', 'revision')
+    assert draft['body'].count('Best regards,') == 1 and draft['body'].count('ravi@crm.test') == 1
+    assert all(fact in draft['body'] for fact in ('November 12', '25 seats', '$40'))
+    sent = sent_input(provider)
+    assert sent['task'] == 'revise_email' and sent['user_request'].startswith(label + ':')
+
+
+@pytest.mark.parametrize('instructions', UNRELATED)
+@pytest.mark.parametrize('extra', [{'action': 'custom'}, {'action': 'stage'}, {'action': 'meeting'},
+                                   {'action': 'custom', 'email_stage': 'Won'}, {'option_id': 'introduce'}])
+def test_clearly_unrelated_requests_are_refused_before_any_call_whatever_the_action_or_stage(client, record, provider, instructions, extra):
+    response = client.post('/api/emails/draft', json=request(
+        record, instructions=instructions, current_subject='Kept', current_body=DRAFT, **extra))
+    assert response.status_code == 422 and response.json()['detail'] == ai_email.OUT_OF_SCOPE
+    assert not provider[0]
+
+
+def test_a_customer_note_that_mentions_leave_is_left_to_the_model(client, record, provider):
+    response = client.post('/api/emails/draft', json=request(
+        record, action='custom', instructions="Tell Jack I'm on annual leave next week and Priya will look after his account."))
+    assert response.status_code == 200 and len(provider[0]) == 1
+
+
+@pytest.mark.parametrize('extra', [{'action': 'custom'}, {'action': 'stage'}, {'action': 'thanks'},
+                                   {'action': 'custom', 'email_stage': 'Proposal'}, {'option_id': 'discover_needs'},
+                                   {'action': 'formalize', 'instructions': ''}])
+def test_the_models_unsupported_outcome_holds_for_every_action_and_stage(client, record, provider, extra):
+    provider[1]['json'] = completed(model_reply('Heater repair', 'Dear landlord, the heater is broken.', outcome='unsupported'))
+    response = client.post('/api/emails/draft', json={**request(
+        record, instructions='Write to my landlord about the broken heater.', current_subject='Kept', current_body=DRAFT), **extra})
+    assert response.status_code == 422 and response.json()['detail'] == ai_email.OUT_OF_SCOPE
+    assert 'landlord' not in response.text and len(provider[0]) == 1  # the model's text is never returned
+
+
+def test_a_vague_request_asks_for_sales_context(client, record, provider):
+    provider[1]['json'] = completed(model_reply('', '', outcome='needs_context'))
+    response = client.post('/api/emails/draft', json=request(record, action='custom', instructions='Write something.', current_body=STARTER))
+    assert response.status_code == 422 and response.json()['detail'] == ai_email.NEEDS_CONTEXT
+
+
+@pytest.mark.parametrize('output', [
+    completed(json.dumps({'subject': 'Hello', 'body': 'Hi Jack,\n\nText'})),                     # no outcome
+    completed(model_reply('Hello', 'Hi Jack,\n\nText', outcome='maybe')),                       # unknown outcome
+    completed(json.dumps({'outcome': 'draft', 'subject': 'Hi', 'body': 'Text', 'to': 'x@example.test'})),  # extra field
+    completed(model_reply('', 'Hi Jack,\n\nText')),                                             # no subject to fill one
+    completed(model_reply('Hello', 'Hi Jack,\n\nBest regards,\nRavi Kumar\nravi@crm.test')),     # greeting and signature
+    completed(model_reply('Hello', '   ')),                                                     # empty body
+    {'status': 'completed', 'output': []},                                                      # nothing at all
+])
+def test_unusable_model_output_is_rejected_so_nothing_is_applied(client, record, provider, output):
+    provider[1]['json'] = output
+    response = client.post('/api/emails/draft', json=request(record, action='custom', current_body=STARTER))
+    assert response.status_code == 502 and 'unchanged' in response.json()['detail']
+
+
+def test_links_the_user_did_not_supply_are_replaced(client, record, provider):
+    provider[1]['json'] = completed(model_reply('Demo', 'Hi Jack,\n\nBook a slot at https://booking.example/ravi or see '
+                                                       'www.vendor.example/pricing. Our guide: https://docs.example.test/start.'))
+    response = client.post('/api/emails/draft', json=request(
+        record, action='custom', instructions='Invite Jack to a demo and link our guide https://docs.example.test/start'))
+    body = response.json()['body']
+    assert 'booking.example' not in body and 'vendor.example' not in body and body.count('[link]') == 2
+    assert 'Our guide: https://docs.example.test/start.' in body
+
+
+def test_another_recipient_is_not_greeted_by_the_records_name(client, record, provider):
+    client.post('/api/emails/draft', json=request(record, action='custom', recipient_is_record_contact=False))
+    context = sent_input(provider)['crm_context']
+    assert 'first_name' not in context and 'last_name' not in context
+    assert context['recipient_is_record_contact'] is False and context['company'] == 'Bluebird'
+
+
+def test_a_draft_returns_only_the_email_text_and_changes_nothing_on_the_record(client, record, provider):
+    fields = ('stage', 'owner_id', 'email', 'company')
+    before = client.get(f"/api/leads/{record['id']}").json()
+    response = client.post('/api/emails/draft', json=request(record, action='custom', current_body=STARTER))
+    assert set(response.json()) == {'subject', 'body', 'draft_type', 'stage', 'record_stage', 'mode'}
+    after = client.get(f"/api/leads/{record['id']}").json()
+    assert {f: after[f] for f in fields} == {f: before[f] for f in fields}
+
+
+def test_instructions_state_the_scope_recipient_and_untrusted_text():
+    for phrase in ('"unsupported"', '"needs_context"', 'manager', 'untrusted data', 'meeting links'):
+        assert phrase in ai_email.INSTRUCTIONS
