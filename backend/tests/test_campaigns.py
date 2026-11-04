@@ -64,6 +64,11 @@ def make(client, lead_ids, **extra):
     return client.post("/api/campaigns", json=body)
 
 
+def notifications(client):
+    got = client.get("/api/notifications").json()
+    return got["items"] if isinstance(got, dict) else got
+
+
 def unsubscribe(client, lead_id):
     token = campaigns.unsubscribe_token(lead_id)
     return client.post("/api/public/unsubscribe", data={"t": token, "action": "unsubscribe"})
@@ -215,25 +220,37 @@ def test_same_email_twice_in_one_campaign_goes_once(client, sent):
     assert (preview["eligible"], preview["reasons"]["other"]) == (1, 1)
 
 
-def test_first_email_has_unsubscribe_and_subscribe_later_ones_only_unsubscribe(client, sent):
+def test_subscribe_link_stays_until_the_person_subscribes_then_only_unsubscribe(client, sent):
     one = lead(client)
     make(client, [one["id"]])
     run_round()
-    body = sent.items[0]["body"]
     token = campaigns.unsubscribe_token(one["id"])
+    body = sent.items[0]["body"]
     assert "Unsubscribe: " in body and f"unsubscribe?t={token}\n" in body
     assert "Subscribe: " in body and f"unsubscribe?t={token}&action=subscribe" in body
-    # the same person again: already subscribed, so only Unsubscribe
+    # a second email: they haven't subscribed yet, so both links again
     make(client, [one["id"]])
     run_round()
-    again = sent.items[1]["body"]
-    assert f"Unsubscribe: " in again and "action=subscribe" not in again and "Subscribe: " not in again
-    # the Subscribe link asks first, and subscribes an unsubscribed lead again
+    assert "action=subscribe" in sent.items[1]["body"]
+    # the Subscribe link asks first; once they confirm, emails carry only Unsubscribe, and the owner is told
+    page = client.get("/api/public/unsubscribe", params={"t": token, "action": "subscribe"})
+    assert "Subscribe" in page.text and "Cancel" in page.text
+    client.post("/api/public/unsubscribe", data={"t": token, "action": "subscribe"})
+    assert "You're subscribed" in client.get("/api/public/unsubscribe", params={"t": token, "action": "subscribe"}).text
+    make(client, [one["id"]])
+    run_round()
+    third = sent.items[2]["body"]
+    assert "Unsubscribe: " in third and "action=subscribe" not in third and "Subscribe: " not in third
+    assert any(n["title"] == "Lead subscribed" for n in notifications(client))
+    # unsubscribing undoes it; Subscribe again subscribes (and later emails are Unsubscribe-only again)
     unsubscribe(client, one["id"])
     page = client.get("/api/public/unsubscribe", params={"t": token, "action": "subscribe"})
     assert "Subscribe again" in page.text and client.get(f"/api/leads/{one['id']}").json()["unsubscribed_at"]
     client.post("/api/public/unsubscribe", data={"t": token, "action": "subscribe"})
     assert client.get(f"/api/leads/{one['id']}").json()["unsubscribed_at"] is None
+    make(client, [one["id"]])
+    run_round()
+    assert "action=subscribe" not in sent.items[3]["body"]
 
 
 def test_typed_in_emails_people_not_in_the_crm(client, sent):
@@ -269,6 +286,7 @@ def test_typed_in_emails_people_not_in_the_crm(client, sent):
     # their own link: unsubscribing leaves them out of the next campaign
     token = campaigns.recipient_token(row["id"])
     assert f"unsubscribe?t={token}\n" in ravi["body"] and f"t={token}&action=subscribe" in ravi["body"]
+    assert "Subscribe" in client.get("/api/public/unsubscribe", params={"t": token, "action": "subscribe"}).text
     assert "Are you sure" in client.get("/api/public/unsubscribe", params={"t": token}).text
     client.post("/api/public/unsubscribe", data={"t": token, "action": "unsubscribe"})
     again = client.post("/api/campaigns/preview", json={"emails": [{"email": "RAVI.KUMAR@acme-retail.example"}]}).json()

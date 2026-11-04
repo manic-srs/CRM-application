@@ -20,7 +20,7 @@ Recipients are leads (Leads > select > Actions > Email Campaign) and/or email ad
 (people who aren't in the CRM). An unsubscribed or invalid address is left out whichever way it is added
 (email_addresses table + the lead's own flags, kept in step).
 
-The first campaign email to an address ends with Unsubscribe and Subscribe links; later ones (the person is
+Campaign emails end with Unsubscribe and Subscribe links until the person clicks Subscribe; after that (they are
 subscribed) only with Unsubscribe. SMTP mail also carries the List-Unsubscribe headers that Outlook and Gmail show as
 an "Unsubscribe" button.
 Temporary problems (Outlook busy, network) are retried 3 times (after 5 minutes, 30 minutes and 2 hours).
@@ -154,13 +154,10 @@ def mark_address_invalid(db: Session, email: str, reason: str) -> None:
         mark_invalid(db, lead, reason)
 
 
-def already_emailed(db: Session, email: str, row_id: int | None = None) -> bool:
-    """This address got a campaign email before (so it's subscribed: the Subscribe link isn't needed again)."""
-    query = select(CampaignRecipient.id).where(CampaignRecipient.status == "Sent",
-                                               func.lower(CampaignRecipient.email) == (email or "").strip().lower())
-    if row_id is not None:
-        query = query.where(CampaignRecipient.id != row_id)
-    return db.scalar(query.limit(1)) is not None
+def is_subscribed(db: Session, email: str) -> bool:
+    """The person clicked Subscribe (and hasn't unsubscribed since): their emails no longer need the Subscribe link."""
+    row = address(db, email)
+    return bool(row and row.subscribed_at and not row.unsubscribed_at)
 
 
 # ---------- unsubscribe links ----------
@@ -265,12 +262,12 @@ def fill(text: str, lead, sender: User) -> str:
     return re.sub(r"\{(\w+)\}", lambda m: values.get(m.group(1), m.group(0)), text)
 
 
-def footer(lead_id: int | None = None, *, token: str | None = None, first: bool = True) -> str:
-    """The first campaign email to an address ends with both links (Unsubscribe and Subscribe); later ones, when the
-    person is already subscribed, only with Unsubscribe."""
+def footer(lead_id: int | None = None, *, token: str | None = None, subscribe: bool = True) -> str:
+    """Campaign emails end with both links (Unsubscribe and Subscribe) until the person subscribes; then only with
+    Unsubscribe."""
     lines = [f"\n\n--\nYou are receiving this email from {mailer.company_name()}.",
              f"Unsubscribe: {unsubscribe_link(lead_id, token=token)}"]
-    if first:
+    if subscribe:
         lines.append(f"Subscribe: {unsubscribe_link(lead_id, 'subscribe', token=token)}")
     return "\n".join(lines)
 
@@ -487,9 +484,9 @@ def _run(db: Session, budget: int | None, pause_seconds: float | None) -> dict:
             continue
         sender = campaign.created_by
         token = row_token(row)
-        first = not already_emailed(db, row.email, row.id)
+        subscribe = not is_subscribed(db, row.email)
         result = send_one(row.email, fill(campaign.subject, person, sender),
-                          fill(campaign.body, person, sender) + footer(row.lead_id, token=token, first=first),
+                          fill(campaign.body, person, sender) + footer(row.lead_id, token=token, subscribe=subscribe),
                           sender_name=sender.full_name, reply_to=sender.email,
                           unsubscribe=unsubscribe_link(row.lead_id, token=token))
         row.attempts += 1

@@ -67,8 +67,8 @@ email, tasks and reminders, notifications, lead conversion, closing a deal, and 
 - Paced under Outlook's limits (20 a minute and 1,800 a day by default), with automatic retries (after 5 minutes,
   30 minutes and 2 hours) and a progress page per campaign. If the mailbox settings are wrong, campaigns pause and
   the sender is notified.
-- The first campaign email to a person ends with **Unsubscribe** and **Subscribe** links; later emails to someone
-  already subscribed only with **Unsubscribe**. Outlook's one-click unsubscribe header is on every email. Each link
+- Campaign emails end with **Unsubscribe** and **Subscribe** links until the person clicks Subscribe; after that
+  only with **Unsubscribe** (the lead's owner is told when a lead subscribes or unsubscribes). Outlook's one-click unsubscribe header is on every email. Each link
   opens a page that asks first, with **Cancel**, before anything changes.
 - Unsubscribed addresses, leads with no email and invalid emails (no mail server for the domain, or rejected by the
   mail server) are left out of every campaign and listed as "left out" with the reason. One opt-out covers the

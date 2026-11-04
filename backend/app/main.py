@@ -122,6 +122,7 @@ def upgrade_database() -> None:
         conn.execute(text("""CREATE TABLE IF NOT EXISTS email_addresses (
             email VARCHAR(255) PRIMARY KEY, unsubscribed_at TIMESTAMP, invalid_at TIMESTAMP,
             invalid_reason VARCHAR(300))"""))
+        conn.execute(text("ALTER TABLE email_addresses ADD COLUMN IF NOT EXISTS subscribed_at TIMESTAMP"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_campaign_recipients_email "
                           "ON campaign_recipients (lower(email)) WHERE status = 'Sent'"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_campaign_recipients_campaign "

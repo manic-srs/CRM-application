@@ -397,6 +397,7 @@ CREATE INDEX idx_campaign_recipients_email ON campaign_recipients (lower(email))
 -- Unsubscribed / not working addresses, leads or not (typed-in recipients are only tracked here)
 CREATE TABLE email_addresses (
   email           VARCHAR(255) PRIMARY KEY,           -- lower case
+  subscribed_at   TIMESTAMP,                          -- clicked Subscribe (emails then only carry Unsubscribe)
   unsubscribed_at TIMESTAMP,
   invalid_at      TIMESTAMP,
   invalid_reason  VARCHAR(300)

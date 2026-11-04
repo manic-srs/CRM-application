@@ -419,8 +419,9 @@ def set_email_status(lead_id: int, data: EmailStatusIn, db: Session = Depends(ge
         if not (data.reason or "").strip():
             raise HTTPException(status_code=400, detail="Say when the lead asked to get emails again")
         lead.unsubscribed_at = None
-        if (row := engine.address(db, lead.email or "")) is not None:
-            row.unsubscribed_at = None
+        if lead.email:  # the lead asked for emails: subscribed
+            row = engine.address(db, lead.email, create=True)
+            row.unsubscribed_at, row.subscribed_at = None, now()
         log_activity(db, me.id, "Lead subscribed again", lead.name, data.reason.strip())
     db.commit()
     return {"id": lead.id, "email_status": engine.email_status(lead), "email_invalid_at": lead.email_invalid_at,
@@ -456,6 +457,9 @@ class Subscriber:
     email: str
     lead: Lead | None
 
+    def subscribed(self, db: Session) -> bool:
+        return engine.is_subscribed(db, self.email)
+
     def unsubscribed(self, db: Session) -> bool:
         row = engine.address(db, self.email)
         return bool((row and row.unsubscribed_at) or any(l.unsubscribed_at for l in engine.leads_with(db, self.email)))
@@ -475,20 +479,22 @@ def _set_subscribed(db: Session, who: Subscriber, subscribed: bool) -> None:
     """Unsubscribe (or subscribe again) the address everywhere: typed-in, and each lead with it (its owner is told)."""
     row = engine.address(db, who.email, create=True)
     row.unsubscribed_at = None if subscribed else now()
+    row.subscribed_at = now() if subscribed else None
     for lead in engine.leads_with(db, who.email):
-        if bool(lead.unsubscribed_at) != (not subscribed):
-            lead.unsubscribed_at = None if subscribed else now()
-            title = "Lead subscribed again" if subscribed else "Lead unsubscribed"
-            log_activity(db, None, title, lead.name, "From the link in a campaign email")
-            notify(db, lead.owner_id, title, f"{lead.name} ({lead.email}) "
-                   + ("subscribed to emails again." if subscribed else "unsubscribed from campaign emails."),
-                   link=f"/leads/{lead.id}")
+        if subscribed:
+            title = "Lead subscribed again" if lead.unsubscribed_at else "Lead subscribed"
+            text = "subscribed to emails again." if lead.unsubscribed_at else "subscribed to campaign emails."
+        elif not lead.unsubscribed_at:
+            title, text = "Lead unsubscribed", "unsubscribed from campaign emails."
+        else:
+            continue
+        lead.unsubscribed_at = None if subscribed else now()
+        log_activity(db, None, title, lead.name, "From the link in a campaign email")
+        notify(db, lead.owner_id, title, f"{lead.name} ({lead.email}) {text}", link=f"/leads/{lead.id}")
     if not subscribed:  # anything still queued for this address is left out
         db.query(CampaignRecipient).filter(func.lower(CampaignRecipient.email) == who.email.lower(),
                                            CampaignRecipient.status == "Queued").update(
             {"status": "Skipped", "error": "Unsubscribed"}, synchronize_session=False)
-    else:
-        log_activity(db, None, "Email subscribed", who.email, "From the link in a campaign email")
     db.commit()
 
 
@@ -512,8 +518,10 @@ def unsubscribe_page(t: str = Query(""), action: str = Query("unsubscribe"), db:
         if off:
             return page("Subscribe again", f"Get campaign emails from {company} at {who.email} again?", t, "subscribe",
                         ask=True)
-        return page("You're subscribed", f"{who.email} gets emails from {company}. Want to stop them?", t,
-                    "unsubscribe")
+        if who.subscribed(db):
+            return page("You're subscribed", f"{who.email} gets emails from {company}. Want to stop them?", t,
+                        "unsubscribe")
+        return page("Subscribe", f"Subscribe {who.email} to emails from {company}?", t, "subscribe", ask=True)
     if off:
         return page("You're unsubscribed", f"{who.email} won't get campaign emails from {company}. "
                                            "Changed your mind?", t, "subscribe")
@@ -532,7 +540,7 @@ def unsubscribe(t: str = Query(""), form_t: str = Form("", alias="t"), action: s
     if who is None:
         return page("Link not valid", NOT_VALID, token, None)
     if action == "subscribe":
-        if who.unsubscribed(db):
+        if not who.subscribed(db):
             _set_subscribed(db, who, True)
         return page("You're subscribed", f"{who.email} will get emails from {company} again.", token, "unsubscribe")
     if not who.unsubscribed(db):

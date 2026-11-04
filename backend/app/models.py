@@ -390,6 +390,7 @@ class EmailAddress(Base):
     __tablename__ = "email_addresses"
 
     email: Mapped[str] = mapped_column(String(255), primary_key=True)  # lower case
+    subscribed_at: Mapped[datetime | None]      # clicked Subscribe: emails then carry only the Unsubscribe link
     unsubscribed_at: Mapped[datetime | None]
     invalid_at: Mapped[datetime | None]
     invalid_reason: Mapped[str | None] = mapped_column(String(300))

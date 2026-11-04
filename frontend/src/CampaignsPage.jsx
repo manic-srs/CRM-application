@@ -422,7 +422,7 @@ export function NewCampaign({ user, users = [], leadIds = null, onClose, onCreat
             <pre>{fill(body, sample, user)}</pre>
             <pre className="email-footer">
               {"--\n"}You are receiving this email from your company.{"\n"}Unsubscribe: <u>link added automatically</u>{"\n"}Subscribe:{" "}
-              <u>link added automatically</u> <span className="muted">(only in the first email to each recipient)</span>
+              <u>link added automatically</u> <span className="muted">(until the recipient subscribes)</span>
             </pre>
           </div>
         </fieldset>
@@ -667,7 +667,7 @@ function CampaignDetail({ id, user, notify }) {
             <b>{c.subject}</b>
             <pre>{c.body}</pre>
             <p className="field-hint">
-              Every email ends with an Unsubscribe link; the first email to each recipient also has a Subscribe link.
+              Every email has an Unsubscribe link, and a Subscribe link until the recipient subscribes.
             </p>
           </div>
         </section>
@@ -848,8 +848,8 @@ export default function CampaignsPage({ id, user, data, notify }) {
         </header>
         {totals && <EmailDashboard totals={totals} />}
         <p className="campaign-rules">
-          <Icon name="mail" size={14} /> Unsubscribed and bounced addresses are never emailed again. Every email has an Unsubscribe link;
-          the first email to each recipient also has a Subscribe link.
+          <Icon name="mail" size={14} /> Unsubscribed and bounced addresses are never emailed again. Every email has an Unsubscribe link,
+          and a Subscribe link until the recipient subscribes.
         </p>
         {error && <p className="form-error pad">{error}</p>}
         <div className="table-scroll">
