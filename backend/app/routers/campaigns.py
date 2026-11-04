@@ -4,10 +4,13 @@ Who can do what:
   - Send email campaigns permission (Managers and Salespersons by default): make a campaign for the leads they can see.
     A Salesperson's campaign only reaches their own leads (unless they have team access).
   - The person who made a campaign, a Manager or the Admin can pause, resume or cancel it.
-Unsubscribed leads and invalid emails are always left out (see app/campaigns.py for the sending rules and limits).
+Recipients: leads (Leads > select > Actions > Email Campaign) and/or email addresses typed in on New Campaign, for
+people who aren't in the CRM (a typed address that belongs to a lead the user can see is treated as that lead).
+Unsubscribed and invalid addresses are always left out (see app/campaigns.py for the sending rules and limits).
 The unsubscribe page (/api/public/unsubscribe) needs no login: it's opened from the link in the email.
 """
 import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from html import escape
 from typing import Literal
@@ -21,7 +24,7 @@ from sqlalchemy.orm import Session, selectinload
 from app import campaigns as engine
 from app.constants import LEAD_OPEN_STAGES, LEAD_STAGES
 from app.database import get_db
-from app.models import Campaign, CampaignRecipient, Lead
+from app.models import Campaign, CampaignRecipient, EmailAddress, Lead
 from app.security import acting_user, require, require_edit, visible
 from app.services import log_activity, notify, now
 
@@ -32,9 +35,18 @@ public = APIRouter(prefix="/api/public", tags=["Email campaigns"])
 MAX_RECIPIENTS = 20_000
 
 
+class TypedEmail(BaseModel):
+    """An address typed in on New Campaign (name and company are optional: they fill {first_name} and {company})."""
+    email: str = Field(max_length=255)
+    name: str | None = Field(None, max_length=101)
+    company: str | None = Field(None, max_length=200)
+
+
 class Audience(BaseModel):
-    """Either the leads ticked in the Leads list (lead_ids), or every lead matching the filter."""
+    """Who gets it: the leads ticked in the Leads list (lead_ids) and/or typed-in addresses (emails).
+    With neither, every lead in `stages` (the stage picker, switched off in the app for now: see NewCampaign)."""
     lead_ids: list[int] = Field(default_factory=list, max_length=MAX_RECIPIENTS)
+    emails: list[TypedEmail] = Field(default_factory=list, max_length=MAX_RECIPIENTS)
     stages: list[str] = Field(default_factory=list)   # empty = all open stages
     owner_id: int | None = None                       # only this owner's leads (Managers)
 
@@ -70,8 +82,8 @@ class EmailStatusIn(BaseModel):
 def audience_query(data: Audience):
     me = acting_user()
     query = visible(select(Lead), Lead)
-    if data.lead_ids:
-        query = query.where(Lead.id.in_(data.lead_ids))
+    if data.lead_ids or data.emails:
+        query = query.where(Lead.id.in_(data.lead_ids))  # typed-in addresses are added by targets()
     else:
         query = query.where(Lead.stage.in_(data.stages or LEAD_OPEN_STAGES))
         if data.owner_id:
@@ -82,28 +94,62 @@ def audience_query(data: Audience):
 
 
 def audience_size(db: Session, data: Audience) -> int:
-    return db.scalar(select(func.count()).select_from(audience_query(data).subquery())) or 0
+    return (db.scalar(select(func.count()).select_from(audience_query(data).subquery())) or 0) + len(data.emails)
 
 
-def audience(db: Session, data: Audience) -> list[Lead]:
+@dataclass
+class Target:
+    """One person a campaign goes to: a lead, or a typed-in address (lead is None)."""
+    lead: Lead | None
+    person: engine.Person
+
+    @property
+    def email(self) -> str | None:
+        return self.person.email
+
+    @property
+    def name(self) -> str:
+        return (self.person.name or self.person.email or "")[:101]
+
+
+def targets(db: Session, data: Audience) -> list[Target]:
     if audience_size(db, data) > MAX_RECIPIENTS:
-        raise HTTPException(status_code=400, detail=f"A campaign can go to up to {MAX_RECIPIENTS:,} leads. "
-                                                    "Choose fewer stages or one owner.")
-    return db.scalars(audience_query(data).order_by(Lead.id)).all()
+        raise HTTPException(status_code=400, detail=f"A campaign can go to up to {MAX_RECIPIENTS:,} people. "
+                                                    "Choose fewer leads or emails.")
+    out = [Target(lead, engine.Person.of_lead(lead)) for lead in db.scalars(audience_query(data).order_by(Lead.id))]
+    typed = [e for e in data.emails if e.email.strip()]
+    if typed:
+        # a typed address that belongs to a lead this user can see is that lead (its name, company and owner)
+        wanted = {e.email.strip().lower() for e in typed}
+        mine = {}
+        for lead in db.scalars(visible(select(Lead), Lead).where(func.lower(Lead.email).in_(wanted)).order_by(Lead.id)):
+            mine.setdefault(lead.email.lower(), lead)
+        for e in typed:
+            lead = mine.get(e.email.strip().lower())
+            out.append(Target(lead, engine.Person.of_lead(lead)) if lead
+                       else Target(None, engine.Person.typed(e.email.strip(), e.name, e.company)))
+    return out
 
 
-def split(leads: list[Lead]) -> tuple[list[Lead], list[tuple[Lead, str]]]:
+def split(db: Session, people: list[Target]) -> tuple[list[Target], list[tuple[Target, str]]]:
     ok, left_out, seen = [], [], set()
-    for lead in leads:
-        reason = engine.exclusion(lead)
-        if reason is None and lead.email.lower() in seen:
-            reason = "Same email as another lead in this campaign"
+    for t in people:
+        reason = (engine.exclusion(t.lead) if t.lead else None) or engine.address_exclusion(db, t.email)
+        if reason is None and t.email.lower() in seen:
+            reason = "Same email twice in this campaign"
         if reason:
-            left_out.append((lead, reason))
+            left_out.append((t, reason))
         else:
-            ok.append(lead)
-            seen.add(lead.email.lower())
+            ok.append(t)
+            seen.add(t.email.lower())
     return ok, left_out
+
+
+def sample_of(t: Target, reason: str | None = None) -> dict:
+    p = t.person
+    out = {"id": t.lead.id if t.lead else None, "name": t.name, "email": t.email, "company": p.company,
+           "first_name": p.first_name, "last_name": p.last_name}
+    return out | ({"reason": reason} if reason else {})
 
 
 def reason_counts(left_out) -> dict:
@@ -182,10 +228,10 @@ def preview(data: Audience, db: Session = Depends(get_db)):
     if size > MAX_RECIPIENTS:  # say so instead of failing, so the screen can ask for a smaller list
         return {"eligible": 0, "left_out": 0, "reasons": reason_counts([]), "sample": [], "left_out_sample": [],
                 "too_many": size, "max": MAX_RECIPIENTS, "eta": eta(0, now())}
-    ok, left_out = split(audience(db, data))
+    ok, left_out = split(db, targets(db, data))
     return {"eligible": len(ok), "left_out": len(left_out), "reasons": reason_counts(left_out),
-            "sample": [{"id": l.id, "name": l.name, "email": l.email, "company": l.company} for l in ok[:5]],
-            "left_out_sample": [{"id": l.id, "name": l.name, "email": l.email, "reason": r} for l, r in left_out[:50]],
+            "sample": [sample_of(t) for t in ok[:5]],
+            "left_out_sample": [sample_of(t, r) for t, r in left_out[:50]],
             "eta": eta(len(ok), now())}
 
 
@@ -199,23 +245,48 @@ def create_campaign(data: CampaignIn, db: Session = Depends(get_db)):
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unknown merge field {{{unknown[0]}}}. Use: "
                                                     + ", ".join("{" + f + "}" for f in engine.MERGE_FIELDS))
-    ok, left_out = split(audience(db, data))
+    if not (data.lead_ids or data.emails or data.stages):
+        raise HTTPException(status_code=400, detail="Add the email addresses to send to")
+    ok, left_out = split(db, targets(db, data))
     if not ok:
-        raise HTTPException(status_code=400, detail="None of these leads can get the email "
+        raise HTTPException(status_code=400, detail="None of these people can get the email "
                                                     "(no email, unsubscribed or invalid email)")
     campaign = Campaign(name=data.name, subject=data.subject, body=data.body, created_by_id=me.id, send_at=send_at,
                         status="Scheduled")
     db.add(campaign)
     db.flush()
-    db.add_all([CampaignRecipient(campaign_id=campaign.id, lead_id=l.id, email=l.email, name=l.name[:101])
-                for l in ok])
-    db.add_all([CampaignRecipient(campaign_id=campaign.id, lead_id=l.id, email=l.email, name=l.name[:101],
-                                  status="Skipped", error=reason[:300]) for l, reason in left_out])
+    def row(t: Target, **extra) -> CampaignRecipient:
+        return CampaignRecipient(campaign_id=campaign.id, lead_id=t.lead.id if t.lead else None, email=t.email,
+                                 name=t.name, company=(t.person.company or None) if not t.lead else None,
+                                 manual=t.lead is None, **extra)
+    db.add_all([row(t) for t in ok])
+    db.add_all([row(t, status="Skipped", error=reason[:300]) for t, reason in left_out])
     when = "now" if send_at <= now() else f"at {send_at:%d %b %Y %I:%M %p}"
     log_activity(db, me.id, "Campaign created", campaign.name,
-                 f"{len(ok):,} leads, sending {when} • {len(left_out):,} left out (unsubscribed, invalid or no email)")
+                 f"{len(ok):,} people, sending {when} • {len(left_out):,} left out (unsubscribed, invalid or no email)")
     db.commit()
     return campaign_out(campaign, counts_of(db, [campaign.id])[campaign.id]) | {"eta": eta(len(ok), send_at)}
+
+
+def my_campaign_ids():
+    me = acting_user()
+    mine = select(Campaign.id)
+    return mine if (me.sees_team or me.is_admin) else mine.where(Campaign.created_by_id == me.id)
+
+
+def unsubscribed_emails():
+    """Every address that has unsubscribed (typed in, or on a lead), lower case."""
+    return (select(func.lower(EmailAddress.email)).where(EmailAddress.unsubscribed_at.is_not(None))
+            .union(select(func.lower(Lead.email)).where(Lead.unsubscribed_at.is_not(None), Lead.email.is_not(None))))
+
+
+def unsubscribed_rows():
+    """The latest email each unsubscribed person got from these campaigns (one row per address)."""
+    latest = (select(func.max(CampaignRecipient.id))
+              .where(CampaignRecipient.campaign_id.in_(my_campaign_ids()), CampaignRecipient.status == "Sent",
+                     func.lower(CampaignRecipient.email).in_(unsubscribed_emails()))
+              .group_by(func.lower(CampaignRecipient.email)))
+    return CampaignRecipient.id.in_(latest)
 
 
 @router.get("/summary")
@@ -223,9 +294,7 @@ def summary(db: Session = Depends(get_db)):
     """The email dashboard: totals across the campaigns this user can see (sent, not sent, not working, left out)
     and the leads they can see (working emails, invalid emails, unsubscribed)."""
     me = acting_user()
-    mine = select(Campaign.id)
-    if not (me.sees_team or me.is_admin):
-        mine = mine.where(Campaign.created_by_id == me.id)
+    mine = my_campaign_ids()
     by_status = dict(db.execute(select(CampaignRecipient.status, func.count())
                                 .where(CampaignRecipient.campaign_id.in_(mine))
                                 .group_by(CampaignRecipient.status)).all())
@@ -237,7 +306,13 @@ def summary(db: Session = Depends(get_db)):
         "campaigns": db.scalar(select(func.count()).select_from(mine.subquery())) or 0,
         "emails": {"sent": by_status.get("Sent", 0), "failed": by_status.get("Failed", 0),
                    "invalid": by_status.get("Invalid", 0), "queued": by_status.get("Queued", 0),
-                   "left_out": by_status.get("Skipped", 0)},
+                   "left_out": by_status.get("Skipped", 0),
+                   # people who unsubscribed after getting one of these campaigns, and how many people got one
+                   "unsubscribed": db.scalar(select(func.count()).select_from(CampaignRecipient)
+                                             .where(unsubscribed_rows())) or 0,
+                   "people": db.scalar(select(func.count(func.distinct(func.lower(CampaignRecipient.email))))
+                                       .where(CampaignRecipient.campaign_id.in_(mine),
+                                              CampaignRecipient.status == "Sent")) or 0},
         "leads": {
             "working": count(leads.c.email.is_not(None), leads.c.email_invalid_at.is_(None),
                              leads.c.unsubscribed_at.is_(None)),
@@ -248,17 +323,16 @@ def summary(db: Session = Depends(get_db)):
     }
 
 
-RECIPIENT_STATUSES = ("Sent", "Failed", "Invalid", "Queued", "Skipped", "Cancelled")
+RECIPIENT_STATUSES = ("Sent", "Failed", "Invalid", "Queued", "Skipped", "Cancelled", "Unsubscribed")
 
 
 @router.get("/recipients")
 def all_recipients(status: Literal[RECIPIENT_STATUSES] = Query(...), offset: int = Query(0, ge=0),
                    limit: int = Query(100, ge=1, le=500), db: Session = Depends(get_db)):
     """The email dashboard's lists: every email with this status, across the campaigns this user can see."""
-    me = acting_user()
-    query = select(CampaignRecipient, Campaign.name).join(Campaign).where(CampaignRecipient.status == status)
-    if not (me.sees_team or me.is_admin):
-        query = query.where(Campaign.created_by_id == me.id)
+    query = select(CampaignRecipient, Campaign.name).join(Campaign).where(
+        unsubscribed_rows() if status == "Unsubscribed" else CampaignRecipient.status == status,
+        Campaign.id.in_(my_campaign_ids()))
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     rows = db.execute(query.order_by(CampaignRecipient.sent_at.desc().nulls_last(), CampaignRecipient.id.desc())
                       .offset(offset).limit(limit)).all()
@@ -338,11 +412,16 @@ def set_email_status(lead_id: int, data: EmailStatusIn, db: Session = Depends(ge
         engine.mark_invalid(db, lead, (data.reason or "Marked invalid").strip() or "Marked invalid", me.id)
     elif data.status == "valid":
         lead.email_invalid_at = lead.email_invalid_reason = None
+        if (row := engine.address(db, lead.email or "")) is not None:
+            row.invalid_at = row.invalid_reason = None  # the address works for typed-in campaigns too
         log_activity(db, me.id, "Lead email marked valid", lead.name, data.reason)
     else:
         if not (data.reason or "").strip():
             raise HTTPException(status_code=400, detail="Say when the lead asked to get emails again")
         lead.unsubscribed_at = None
+        if lead.email:  # the lead asked for emails: subscribed
+            row = engine.address(db, lead.email, create=True)
+            row.unsubscribed_at, row.subscribed_at = None, now()
         log_activity(db, me.id, "Lead subscribed again", lead.name, data.reason.strip())
     db.commit()
     return {"id": lead.id, "email_status": engine.email_status(lead), "email_invalid_at": lead.email_invalid_at,
@@ -371,35 +450,83 @@ color:#181818;text-decoration:none;font-size:15px}}</style></head>
     return HTMLResponse(html)
 
 
-def _lead(db: Session, token: str) -> Lead | None:
+@dataclass
+class Subscriber:
+    """Who an unsubscribe link belongs to: a lead ('<lead id>.<sig>') or a typed-in address ('r<recipient id>.<sig>').
+    Either way the change applies to the address: its email_addresses row and every lead with that email."""
+    email: str
+    lead: Lead | None
+
+    def subscribed(self, db: Session) -> bool:
+        return engine.is_subscribed(db, self.email)
+
+    def unsubscribed(self, db: Session) -> bool:
+        row = engine.address(db, self.email)
+        return bool((row and row.unsubscribed_at) or any(l.unsubscribed_at for l in engine.leads_with(db, self.email)))
+
+
+def _subscriber(db: Session, token: str) -> Subscriber | None:
     lead_id = engine.lead_from_token(token)
-    return db.get(Lead, lead_id) if lead_id else None
+    if lead_id:
+        lead = db.get(Lead, lead_id)
+        return Subscriber(lead.email, lead) if lead and lead.email else None
+    recipient_id = engine.recipient_from_token(token)
+    row = db.get(CampaignRecipient, recipient_id) if recipient_id else None
+    return Subscriber(row.email, None) if row and row.email else None
+
+
+def _set_subscribed(db: Session, who: Subscriber, subscribed: bool) -> None:
+    """Unsubscribe (or subscribe again) the address everywhere: typed-in, and each lead with it (its owner is told)."""
+    row = engine.address(db, who.email, create=True)
+    row.unsubscribed_at = None if subscribed else now()
+    row.subscribed_at = now() if subscribed else None
+    for lead in engine.leads_with(db, who.email):
+        if subscribed:
+            title = "Lead subscribed again" if lead.unsubscribed_at else "Lead subscribed"
+            text = "subscribed to emails again." if lead.unsubscribed_at else "subscribed to campaign emails."
+        elif not lead.unsubscribed_at:
+            title, text = "Lead unsubscribed", "unsubscribed from campaign emails."
+        else:
+            continue
+        lead.unsubscribed_at = None if subscribed else now()
+        log_activity(db, None, title, lead.name, "From the link in a campaign email")
+        notify(db, lead.owner_id, title, f"{lead.name} ({lead.email}) {text}", link=f"/leads/{lead.id}")
+    if not subscribed:  # anything still queued for this address is left out
+        db.query(CampaignRecipient).filter(func.lower(CampaignRecipient.email) == who.email.lower(),
+                                           CampaignRecipient.status == "Queued").update(
+            {"status": "Skipped", "error": "Unsubscribed"}, synchronize_session=False)
+    db.commit()
+
+
+NOT_VALID = "This unsubscribe link isn't valid. Please use the link from the latest email."
 
 
 @public.get("/unsubscribe", response_class=HTMLResponse, include_in_schema=False)
 def unsubscribe_page(t: str = Query(""), action: str = Query("unsubscribe"), db: Session = Depends(get_db)):
     """Asks before changing anything: mail scanners open links, and must not unsubscribe people by themselves.
-    action=subscribe (the "Subscribe again" link) offers to subscribe."""
-    lead = _lead(db, t)
+    action=subscribe (the "Subscribe" link) offers to subscribe."""
+    who = _subscriber(db, t)
     company = engine.mailer.company_name()
-    if lead is None:
-        return page("Link not valid", "This unsubscribe link isn't valid. Please use the link from the latest email.",
-                    t, None)
+    if who is None:
+        return page("Link not valid", NOT_VALID, t, None)
+    off = who.unsubscribed(db)
     if action == "cancel":
-        state = "unsubscribed from" if lead.unsubscribed_at else "subscribed to"
-        return page("Nothing changed", f"{lead.email} is still {state} emails from {company}. You can close this page.",
+        state = "unsubscribed from" if off else "subscribed to"
+        return page("Nothing changed", f"{who.email} is still {state} emails from {company}. You can close this page.",
                     t, None)
     if action == "subscribe":
-        if lead.unsubscribed_at:
-            return page("Subscribe again", f"Get campaign emails from {company} at {lead.email} again?", t, "subscribe",
+        if off:
+            return page("Subscribe again", f"Get campaign emails from {company} at {who.email} again?", t, "subscribe",
                         ask=True)
-        return page("You're subscribed", f"{lead.email} gets emails from {company}. Want to stop them?", t,
-                    "unsubscribe")
-    if lead.unsubscribed_at:
-        return page("You're unsubscribed", f"{lead.email} won't get campaign emails from {company}. "
+        if who.subscribed(db):
+            return page("You're subscribed", f"{who.email} gets emails from {company}. Want to stop them?", t,
+                        "unsubscribe")
+        return page("Subscribe", f"Subscribe {who.email} to emails from {company}?", t, "subscribe", ask=True)
+    if off:
+        return page("You're unsubscribed", f"{who.email} won't get campaign emails from {company}. "
                                            "Changed your mind?", t, "subscribe")
     return page("Are you sure you want to unsubscribe?",
-                f"{lead.email} will stop getting campaign emails from {company}. You can subscribe again at any time.",
+                f"{who.email} will stop getting campaign emails from {company}. You can subscribe again at any time.",
                 t, "unsubscribe", ask=True)
 
 
@@ -408,28 +535,15 @@ def unsubscribe(t: str = Query(""), form_t: str = Form("", alias="t"), action: s
                 db: Session = Depends(get_db)):
     """The button on the page, and Outlook / Gmail one-click unsubscribe (RFC 8058, POST with the token in the URL)."""
     token = form_t or t
-    lead = _lead(db, token)
+    who = _subscriber(db, token)
     company = engine.mailer.company_name()
-    if lead is None:
-        return page("Link not valid", "This unsubscribe link isn't valid. Please use the link from the latest email.",
-                    token, None)
+    if who is None:
+        return page("Link not valid", NOT_VALID, token, None)
     if action == "subscribe":
-        if lead.unsubscribed_at:
-            lead.unsubscribed_at = None
-            log_activity(db, None, "Lead subscribed again", lead.name, "From the link in a campaign email")
-            notify(db, lead.owner_id, "Lead subscribed again", f"{lead.name} ({lead.email}) subscribed to emails again.",
-                   link=f"/leads/{lead.id}")
-            db.commit()
-        return page("You're subscribed", f"{lead.email} will get emails from {company} again.", token, "unsubscribe")
-    if not lead.unsubscribed_at:
-        lead.unsubscribed_at = now()
-        log_activity(db, None, "Lead unsubscribed", lead.name, "From the link in a campaign email")
-        notify(db, lead.owner_id, "Lead unsubscribed", f"{lead.name} ({lead.email}) unsubscribed from campaign emails.",
-               link=f"/leads/{lead.id}")
-        # anything still queued for this lead is left out
-        db.query(CampaignRecipient).filter(CampaignRecipient.lead_id == lead.id,
-                                           CampaignRecipient.status == "Queued").update(
-            {"status": "Skipped", "error": "Unsubscribed"}, synchronize_session=False)
-        db.commit()
-    return page("You're unsubscribed", f"{lead.email} won't get campaign emails from {company} any more.",
+        if not who.subscribed(db):
+            _set_subscribed(db, who, True)
+        return page("You're subscribed", f"{who.email} will get emails from {company} again.", token, "unsubscribe")
+    if not who.unsubscribed(db):
+        _set_subscribed(db, who, False)
+    return page("You're unsubscribed", f"{who.email} won't get campaign emails from {company} any more.",
                 token, "subscribe")

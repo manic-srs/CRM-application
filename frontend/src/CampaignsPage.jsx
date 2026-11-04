@@ -1,10 +1,12 @@
-// Email campaigns: one email to many leads, sent a few at a time under the Outlook limits (backend/app/campaigns.py).
-// - Campaigns page: every campaign with its progress; open one to see who got it, who was left out and why.
-// - New Campaign: from this page (leads by stage / owner) or from Leads > select leads > Email.
-// Unsubscribed leads and invalid emails are always left out, and every email ends with an unsubscribe link.
+// Email campaigns: one email to many people (leads, or typed-in addresses), sent a few at a time under the Outlook limits (backend/app/campaigns.py).
+// - Campaigns page: the totals (Sent, Queued, Bounced, Failed, Unsubscribed, Not sent) and every campaign with its
+//   progress; open one to see who got it, who wasn't sent it and why.
+// - New Campaign: from this page (typed-in email addresses, also people not in the CRM) or from
+//   Leads > select leads > Actions > Email Campaign.
+// Unsubscribed and bounced addresses are never emailed again, and every email ends with an unsubscribe link.
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
-import { LEAD_OPEN_STAGES, LEAD_STAGES } from "./domain";
+import { companyFromEmail, LEAD_OPEN_STAGES, LEAD_STAGES, parseRecipients } from "./domain";
 import { can } from "./permissions";
 import { Icon, ObjectIcon } from "./ui";
 
@@ -12,6 +14,8 @@ const n = (x) => Number(x || 0).toLocaleString();
 const when = (value) =>
   value ? new Date(value).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "";
 const STATUS_TONE = { Scheduled: "info", Sending: "live", Paused: "warn", Completed: "ok", Cancelled: "off" };
+// one email's status, in the words email tools use (Invalid = the address doesn't work: a bounce)
+const EMAIL_STATUS = { Queued: "Queued", Sent: "Sent", Invalid: "Bounced", Failed: "Failed", Skipped: "Not sent", Cancelled: "Cancelled" };
 const FIELDS = [
   ["first_name", "First name"],
   ["company", "Company"],
@@ -29,12 +33,14 @@ function duration(minutes, days) {
   return `about ${Math.round(minutes / 60)} hours`;
 }
 
+// the {fields} for the preview, filled like the backend does (campaigns.fill): a missing company comes from the
+// email's domain
 function fill(text, lead, user) {
   const values = {
     first_name: lead?.first_name || lead?.name?.split(" ")[0] || "there",
-    last_name: "",
+    last_name: lead?.last_name || "",
     full_name: lead?.name || "",
-    company: lead?.company || "",
+    company: lead?.company || companyFromEmail(lead?.email) || "your team",
     sender_name: user.full_name,
   };
   return text.replace(/\{(\w+)\}/g, (all, key) => (key in values ? values[key] : all));
@@ -64,9 +70,81 @@ function Dialog({ title, onClose, busy, children, footer }) {
 
 // ---------- New Campaign ----------
 
+const EMAIL_OK = /^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/;
+
+// The "To" field: type an address and press Enter (or comma / space), or paste a list; each becomes a chip.
+// A pasted "Asha Rao <asha@acme.com>" keeps the name. Backspace in the empty box removes the last chip.
+function RecipientInput({ value, onChange, id, placeholder }) {
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef(null);
+  const add = (text) => {
+    const seen = new Set(value.map((r) => r.email.toLowerCase()));
+    const next = [...value];
+    for (const r of parseRecipients(text)) {
+      if (seen.has(r.email.toLowerCase())) continue; // already in the list
+      seen.add(r.email.toLowerCase());
+      next.push({ ...r, valid: EMAIL_OK.test(r.email) });
+    }
+    if (next.length !== value.length) onChange(next);
+    setDraft("");
+  };
+  const remove = (i) => onChange(value.filter((_, j) => j !== i));
+  return (
+    <div className="recipient-box" onClick={() => inputRef.current?.focus()}>
+      {value.map((r, i) => (
+        <span key={`${r.email}-${i}`} className={`recipient-chip ${r.valid ? "" : "bad"}`} title={r.valid ? r.name || r.email : "Not an email address"}>
+          {r.name ? `${r.name} <${r.email}>` : r.email}
+          <button type="button" aria-label={`Remove ${r.email}`} onClick={(e) => (e.stopPropagation(), remove(i))}>
+            <Icon name="close" size={12} />
+          </button>
+        </span>
+      ))}
+      <input
+        ref={inputRef}
+        id={id}
+        type="text"
+        inputMode="email"
+        autoComplete="off"
+        value={draft}
+        placeholder={value.length ? "" : placeholder}
+        onChange={(e) => {
+          const text = e.target.value;
+          // a comma, semicolon or space after an address makes it a chip (not inside "Name <address")
+          if (/[,;\s]$/.test(text) && text.includes("@") && !/<[^>]*$/.test(text)) add(text);
+          else setDraft(text);
+        }}
+        onKeyDown={(e) => {
+          if ((e.key === "Enter" || e.key === "Tab") && draft.trim()) {
+            e.preventDefault();
+            add(draft);
+          } else if (e.key === "Enter") {
+            e.preventDefault();
+          } else if (e.key === "Backspace" && !draft && value.length) {
+            remove(value.length - 1);
+          }
+        }}
+        onPaste={(e) => {
+          e.preventDefault();
+          add(draft + " " + e.clipboardData.getData("text"));
+        }}
+        onBlur={() => draft.trim() && add(draft)}
+      />
+    </div>
+  );
+}
+
+// Choosing recipients by lead stage (and owner) is switched OFF for now: New Campaign takes typed-in email addresses
+// instead, so people who aren't in the CRM can be emailed too (requirement, Nov 2026). The stage picker below is kept
+// and still works in the API (Audience.stages): set STAGE_PICKER to true to bring the checkboxes back.
+const STAGE_PICKER = false;
+const plural = (count, word) => `${n(count)} ${word}${count === 1 ? "" : "s"}`;
+
 export function NewCampaign({ user, users = [], leadIds = null, onClose, onCreated }) {
   const team = user.role === "Admin" || can(user, "view_team_records");
   const [stages, setStages] = useState(LEAD_OPEN_STAGES);
+  const [recipients, setRecipients] = useState([]); // the "To" chips: { email, name?, company?, valid }
+  const valid = useMemo(() => recipients.filter((r) => r.valid), [recipients]);
+  const wrong = recipients.length - valid.length;
   const [owner, setOwner] = useState(team ? "" : String(user.id));
   const [name, setName] = useState("");
   const [subject, setSubject] = useState("Quick question for {company}");
@@ -79,16 +157,23 @@ export function NewCampaign({ user, users = [], leadIds = null, onClose, onCreat
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const bodyRef = useRef(null);
-  const audience = useMemo(
-    () => (leadIds ? { lead_ids: leadIds } : { stages, owner_id: owner ? Number(owner) : null }),
-    [leadIds, stages, owner],
-  );
+  const subjectRef = useRef(null);
+  // where the Insert buttons put a field: the box (subject or message) and cursor the user was last in
+  const caret = useRef({ field: "body", at: null });
+  const remember = (field) => (e) => (caret.current = { field, at: e.target.selectionStart });
+  const audience = useMemo(() => {
+    const emails = valid.map(({ email, name, company }) => ({ email, name: name || null, company: company || null }));
+    if (leadIds) return { lead_ids: leadIds }; // from Leads: only the ticked leads
+    if (STAGE_PICKER) return { stages, owner_id: owner ? Number(owner) : null, emails };
+    return { emails };
+  }, [leadIds, stages, owner, valid]);
+  const nobody = !leadIds && (STAGE_PICKER ? !stages.length && !valid.length : !valid.length);
 
   useEffect(() => {
     api.campaignSettings().then(setSettings).catch(() => {});
   }, []);
   useEffect(() => {
-    if (!leadIds && !stages.length) return setPreview(null);
+    if (nobody) return setPreview(null);
     let stale = false;
     setPreview((p) => (p ? { ...p, loading: true } : p));
     const timer = setTimeout(() => {
@@ -101,18 +186,20 @@ export function NewCampaign({ user, users = [], leadIds = null, onClose, onCreat
       stale = true;
       clearTimeout(timer);
     };
-  }, [audience, leadIds, stages.length]);
+  }, [audience, nobody]);
 
   const insert = (field) => {
-    const box = bodyRef.current;
     const token = `{${field}}`;
-    if (!box) return setBody((b) => b + token);
-    const start = box.selectionStart ?? body.length;
-    const end = box.selectionEnd ?? body.length;
-    setBody(body.slice(0, start) + token + body.slice(end));
+    const inSubject = caret.current.field === "subject";
+    const text = inSubject ? subject : body;
+    const at = Math.min(caret.current.at ?? text.length, text.length); // never clicked in: at the end
+    const next = text.slice(0, at) + token + text.slice(at);
+    (inSubject ? setSubject : setBody)(next);
+    caret.current = { field: caret.current.field, at: at + token.length };
+    const box = inSubject ? subjectRef.current : bodyRef.current;
     requestAnimationFrame(() => {
-      box.focus();
-      box.setSelectionRange(start + token.length, start + token.length);
+      box?.focus();
+      box?.setSelectionRange(at + token.length, at + token.length);
     });
   };
 
@@ -123,7 +210,8 @@ export function NewCampaign({ user, users = [], leadIds = null, onClose, onCreat
     if (body.trim().length < 10) return setError("Write the email.");
     if (timing === "later" && !sendAt) return setError("Choose when to send it.");
     if (timing === "later" && new Date(sendAt) < new Date()) return setError("Choose a time in the future.");
-    if (!preview?.eligible) return setError("None of these leads can get the email.");
+    if (nobody) return setError(wrong ? "Fix or remove the addresses marked in red." : "Add at least one recipient.");
+    if (!preview?.eligible) return setError("None of these recipients can be emailed (see Excluded).");
     setBusy(true);
     setError("");
     try {
@@ -146,9 +234,9 @@ export function NewCampaign({ user, users = [], leadIds = null, onClose, onCreat
   const reasons = preview?.reasons || {};
   const leftOutParts = [
     [reasons.unsubscribed, "unsubscribed"],
-    [reasons.invalid, "invalid email"],
+    [reasons.invalid, "bounced before"],
     [reasons.no_email, "no email"],
-    [reasons.other, "same email twice"],
+    [reasons.other, "duplicate"],
   ].filter(([count]) => count);
   return (
     <Dialog
@@ -164,8 +252,8 @@ export function NewCampaign({ user, users = [], leadIds = null, onClose, onCreat
             {busy
               ? "Saving…"
               : timing === "later"
-                ? `Schedule for ${n(preview?.eligible)} lead${preview?.eligible === 1 ? "" : "s"}`
-                : `Send to ${n(preview?.eligible)} lead${preview?.eligible === 1 ? "" : "s"}`}
+                ? `Schedule (${plural(preview?.eligible || 0, "recipient")})`
+                : `Send to ${plural(preview?.eligible || 0, "recipient")}`}
           </button>
         </>
       }
@@ -180,9 +268,8 @@ export function NewCampaign({ user, users = [], leadIds = null, onClose, onCreat
 
         <fieldset className="campaign-section">
           <legend>Recipients</legend>
-          {leadIds ? (
-            <p className="field-hint">The {n(leadIds.length)} leads you selected in the Leads list.</p>
-          ) : (
+          {leadIds && <p className="field-hint">The {plural(leadIds.length, "lead")} you selected in the Leads list.</p>}
+          {STAGE_PICKER && !leadIds && (
             <>
               <div className="stage-chips" role="group" aria-label="Lead Status">
                 {LEAD_STAGES.map((stage) => (
@@ -214,19 +301,45 @@ export function NewCampaign({ user, users = [], leadIds = null, onClose, onCreat
               {!team && <p className="field-hint">Your own leads.</p>}
             </>
           )}
+          {!leadIds && (
+            // the "To" field is only on Email Campaigns > New Campaign; from Leads the recipients are the ticked leads
+            <div className="field">
+              <label htmlFor="campaign-to">
+                <span>
+                  To <i>*</i>
+                </span>
+              </label>
+              <RecipientInput
+                id="campaign-to"
+                value={recipients}
+                onChange={setRecipients}
+                placeholder="Type an email and press Enter, or paste a list"
+              />
+              <small className="field-hint">
+                Recipients don't need to be in the CRM. First name and company are filled in from the address
+                (asha.rao@acme-retail.com → Asha, Acme Retail).
+              </small>
+              {wrong > 0 && (
+                <small className="field-error-text" role="status">
+                  {`${n(wrong)} ${wrong === 1 ? "address" : "addresses"}`} in red {wrong === 1 ? "isn't" : "aren't"} valid and won't be
+                  sent to.
+                </small>
+              )}
+            </div>
+          )}
           {preview?.too_many > 0 && (
             <p className="form-error" role="status">
-              {n(preview.too_many)} leads match. A campaign can go to up to {n(preview.max)}: choose fewer stages or one owner.
+              {n(preview.too_many)} recipients. A campaign can go to up to {n(preview.max)}: choose fewer.
             </p>
           )}
           {preview && !preview.too_many && (
             <div className={`audience-summary ${preview.loading ? "loading" : ""}`} aria-live="polite">
               <span className="audience-count ok">
-                <b>{n(preview.eligible)}</b> will get it
+                <b>{n(preview.eligible)}</b> {preview.eligible === 1 ? "recipient" : "recipients"}
               </span>
               {preview.left_out > 0 && (
                 <button type="button" className="audience-count off" onClick={() => setShowLeftOut((v) => !v)} aria-expanded={showLeftOut}>
-                  <b>{n(preview.left_out)}</b> left out
+                  <b>{n(preview.left_out)}</b> excluded
                   <small>{leftOutParts.map(([count, label]) => `${n(count)} ${label}`).join(" • ")}</small>
                   <span className="link">{showLeftOut ? "Hide" : "View"}</span>
                 </button>
@@ -238,18 +351,22 @@ export function NewCampaign({ user, users = [], leadIds = null, onClose, onCreat
               <table className="sf-table issue-table">
                 <thead>
                   <tr>
-                    <th>Lead</th>
+                    <th>Name</th>
                     <th>Email</th>
-                    <th>Why it's left out</th>
+                    <th>Reason</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {preview.left_out_sample.map((l) => (
-                    <tr key={l.id}>
+                  {preview.left_out_sample.map((l, i) => (
+                    <tr key={l.id ?? `typed-${i}`}>
                       <td>
-                        <a href={`#/leads/${l.id}`} target="_blank" rel="noreferrer">
-                          {l.name}
-                        </a>
+                        {l.id ? (
+                          <a href={`#/leads/${l.id}`} target="_blank" rel="noreferrer">
+                            {l.name}
+                          </a>
+                        ) : (
+                          l.name
+                        )}
                       </td>
                       <td>{l.email || <span className="muted">—</span>}</td>
                       <td className="issue-reason">{l.reason}</td>
@@ -270,10 +387,16 @@ export function NewCampaign({ user, users = [], leadIds = null, onClose, onCreat
             <span>
               Subject <i>*</i>
             </span>
-            <input value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={200} />
+            <input
+              ref={subjectRef}
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              onSelect={remember("subject")}
+              maxLength={200}
+            />
           </label>
           <div className="merge-row">
-            <span>Insert:</span>
+            <span>Insert field:</span>
             {FIELDS.map(([key, label]) => (
               <button key={key} type="button" className="merge-chip" onClick={() => insert(key)}>
                 {label}
@@ -284,15 +407,22 @@ export function NewCampaign({ user, users = [], leadIds = null, onClose, onCreat
             <span>
               Message <i>*</i>
             </span>
-            <textarea ref={bodyRef} rows={9} value={body} onChange={(e) => setBody(e.target.value)} maxLength={20000} />
+            <textarea
+              ref={bodyRef}
+              rows={9}
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              onSelect={remember("body")}
+              maxLength={20000}
+            />
           </label>
           <div className="email-sample" aria-label="Preview">
-            <small>Preview{sample ? ` for ${sample.name}` : ""}</small>
+            <small>Preview{sample ? ` for ${sample.name || sample.email}` : ""}</small>
             <b>{fill(subject, sample, user)}</b>
             <pre>{fill(body, sample, user)}</pre>
             <pre className="email-footer">
-              {"--\n"}You are receiving this email from your company.{"\n"}Unsubscribe: <u>link added automatically</u>{"\n"}Subscribe again:{" "}
-              <u>link added automatically</u>
+              {"--\n"}You are receiving this email from your company.{"\n"}Unsubscribe: <u>link added automatically</u>{"\n"}Subscribe:{" "}
+              <u>link added automatically</u> <span className="muted">(until the recipient subscribes)</span>
             </pre>
           </div>
         </fieldset>
@@ -312,8 +442,8 @@ export function NewCampaign({ user, users = [], leadIds = null, onClose, onCreat
           </div>
           {limits && preview?.eligible > 0 && (
             <p className="field-hint">
-              Sent gradually to stay inside Outlook's limits: {limits.per_minute} a minute and up to {n(limits.per_day)} in 24 hours
-              (all campaigns together). This one takes {duration(preview.eta.minutes, preview.eta.days)}.
+              Sent gradually to stay within Outlook's limits ({limits.per_minute} per minute, {n(limits.per_day)} per day across all
+              campaigns). This campaign takes {duration(preview.eta.minutes, preview.eta.days)}.
             </p>
           )}
         </fieldset>
@@ -350,11 +480,11 @@ function Progress({ counts }) {
 }
 
 const RECIPIENT_GROUPS = [
-  ["Queued", "Waiting to send", "info"],
+  ["Queued", "Queued", "info"],
   ["Sent", "Sent", "note"],
-  ["Invalid", "Invalid emails", "bad"],
+  ["Invalid", "Bounced", "bad"],
   ["Failed", "Failed", "bad"],
-  ["Skipped", "Left out", "warn"],
+  ["Skipped", "Not sent", "warn"],
   ["Cancelled", "Cancelled", "warn"],
 ];
 
@@ -490,11 +620,11 @@ function CampaignDetail({ id, user, notify }) {
             <table className="sf-table campaign-recipients">
               <thead>
                 <tr>
-                  <th>Lead</th>
+                  <th>Recipient</th>
                   <th>Email</th>
                   <th>Status</th>
                   <th>Sent</th>
-                  <th>Note</th>
+                  <th>Details</th>
                 </tr>
               </thead>
               <tbody>
@@ -503,7 +633,7 @@ function CampaignDetail({ id, user, notify }) {
                     <td title={r.name}>{r.lead_id ? <a href={`#/leads/${r.lead_id}`}>{r.name}</a> : r.name}</td>
                     <td title={r.email}>{r.email || <span className="muted">—</span>}</td>
                     <td>
-                      <span className={`recipient-status s-${r.status.toLowerCase()}`}>{r.status}</span>
+                      <span className={`recipient-status s-${r.status.toLowerCase()}`}>{EMAIL_STATUS[r.status] || r.status}</span>
                     </td>
                     <td className="nowrap">{when(r.sent_at)}</td>
                     <td className="issue-reason">
@@ -536,7 +666,9 @@ function CampaignDetail({ id, user, notify }) {
           <div className="pad">
             <b>{c.subject}</b>
             <pre>{c.body}</pre>
-            <p className="field-hint">Unsubscribe and Subscribe links are added at the end of every email.</p>
+            <p className="field-hint">
+              Every email has an Unsubscribe link, and a Subscribe link until the recipient subscribes.
+            </p>
           </div>
         </section>
       </div>
@@ -544,8 +676,6 @@ function CampaignDetail({ id, user, notify }) {
   );
 }
 
-// Email dashboard: what was sent and what wasn't, and which leads can still be emailed (Invalid / Unsubscribed open
-// the matching Leads list)
 // One dashboard number opened as a list: every email with that status, across the campaigns this user can see
 function RecipientsDialog({ status, label, onClose }) {
   const [page, setPage] = useState(0);
@@ -562,6 +692,7 @@ function RecipientsDialog({ status, label, onClose }) {
     };
   }, [status, page]);
   const pages = result ? Math.ceil(result.total / 100) : 0;
+  const dated = status === "Sent" || status === "Unsubscribed"; // show when the (last) email went
   return (
     <Dialog
       title={`${label}${result ? ` (${n(result.total)})` : ""}`}
@@ -580,10 +711,10 @@ function RecipientsDialog({ status, label, onClose }) {
             <table className="sf-table campaign-recipients">
               <thead>
                 <tr>
-                  <th>Lead</th>
+                  <th>Recipient</th>
                   <th>Email</th>
                   <th>Campaign</th>
-                  <th>{status === "Sent" ? "Sent" : "Note"}</th>
+                  <th>{dated ? "Sent" : "Reason"}</th>
                 </tr>
               </thead>
               <tbody>
@@ -594,8 +725,8 @@ function RecipientsDialog({ status, label, onClose }) {
                     <td title={r.campaign}>
                       <a href={`#/campaigns/${r.campaign_id}`}>{r.campaign}</a>
                     </td>
-                    <td className={status === "Sent" ? "nowrap" : "issue-reason"}>
-                      {status === "Sent"
+                    <td className={dated ? "nowrap" : "issue-reason"}>
+                      {dated
                         ? when(r.sent_at)
                         : r.error || (r.next_attempt_at ? `Next try ${when(r.next_attempt_at)}` : "Waiting to send")}
                     </td>
@@ -624,76 +755,47 @@ function RecipientsDialog({ status, label, onClose }) {
   );
 }
 
-// Email dashboard: every number opens its list. Email numbers open the emails (across campaigns); lead numbers open
-// the matching Leads list view.
+// Email dashboard: the standard campaign numbers, across the campaigns this user can see. Each opens its list.
+//   Sent          delivered to the mail server
+//   Queued        waiting to be sent (now or at the scheduled time)
+//   Bounced       the address doesn't work (no mail server, or the server rejected it): never emailed again
+//   Failed        not delivered after 3 tries (temporary problems)
+//   Unsubscribed  people who got a campaign and then unsubscribed
+//   Not sent      excluded when it was their turn: unsubscribed, bounced before, or no email
+const pct = (part, whole) => (whole ? `${((part / whole) * 100).toFixed(part && part / whole < 0.1 ? 1 : 0)}%` : "0%");
+
 function EmailDashboard({ totals }) {
-  const [open, setOpen] = useState(null); // [status, label] of the email list being shown
+  const [open, setOpen] = useState(null); // [status, title] of the list being shown
   const e = totals.emails;
-  const l = totals.leads;
-  const lists = (name) => `#/leads?list=${encodeURIComponent(name)}`;
-  const groups = [
-    [
-      "Emails",
-      `${n(totals.campaigns)} campaign${totals.campaigns === 1 ? "" : "s"}`,
-      [
-        ["Sent", e.sent, "ok", "Sent"],
-        ["Failed", e.failed, "bad", "Failed"],
-        ["Not working", e.invalid, "bad", "Invalid", "Bounced: the address doesn't exist"],
-        ["Waiting", e.queued, "info", "Queued"],
-        ["Left out", e.left_out, "warn", "Skipped", "Unsubscribed, invalid or no email when sending"],
-      ],
-    ],
-    [
-      "Lead emails",
-      "who can be emailed",
-      [
-        ["Working", l.working, "ok", lists("Working Emails")],
-        ["Invalid", l.invalid, "bad", lists("Invalid Emails")],
-        ["Unsubscribed", l.unsubscribed, "warn", lists("Unsubscribed Leads")],
-        ["No email", l.no_email, "muted", lists("No Email")],
-      ],
-    ],
+  const attempted = e.sent + e.invalid; // emails that reached a mail server, or bounced
+  const tiles = [
+    ["Sent", e.sent, "Sent", "ok", `to ${plural(e.people || 0, "recipient")}`],
+    ["Queued", e.queued, "Queued", "info", e.queued ? "waiting to send" : "nothing waiting"],
+    ["Bounced", e.invalid, "Invalid", "bad", `${pct(e.invalid, attempted)} bounce rate`],
+    ["Failed", e.failed, "Failed", "bad", "after 3 tries"],
+    ["Unsubscribed", e.unsubscribed || 0, "Unsubscribed", "warn", `${pct(e.unsubscribed || 0, e.people)} of recipients`],
+    ["Not sent", e.left_out, "Skipped", "muted", "excluded at send time"],
   ];
   return (
     <>
-      <section className="email-kpis" aria-label="Email dashboard">
-        {groups.map(([title, note, items]) => (
-          <div key={title} className="kpi-group">
-            <div className="kpi-title">
-              {title} <span>{note}</span>
-            </div>
-            <div className="kpi-row">
-              {items.map(([label, value, tone, target, hint]) => {
-                const inner = (
-                  <>
-                    <b>{n(value)}</b>
-                    <span>
-                      <i className={`kpi-dot ${tone}`} />
-                      {label}
-                    </span>
-                  </>
-                );
-                return target.startsWith("#") ? (
-                  <a key={label} className="kpi link" href={target} title={hint || `Open ${label.toLowerCase()} leads`}>
-                    {inner}
-                  </a>
-                ) : (
-                  <button
-                    key={label}
-                    type="button"
-                    className="kpi link"
-                    title={hint || `Show ${label.toLowerCase()} emails`}
-                    onClick={() => setOpen([target, `${label} emails`])}
-                  >
-                    {inner}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+      <section className="campaign-metrics" aria-label={`Email campaign totals, ${plural(totals.campaigns, "campaign")}`}>
+        {tiles.map(([label, value, status, tone, note]) => (
+          <button
+            key={label}
+            type="button"
+            className={`metric ${tone}`}
+            onClick={() => setOpen([status, label])}
+            title={`Show ${label.toLowerCase()} emails`}
+          >
+            <span className="metric-label">{label}</span>
+            <b>{n(value)}</b>
+            <small>{note}</small>
+          </button>
         ))}
       </section>
-      {open && <RecipientsDialog status={open[0]} label={open[1]} onClose={() => setOpen(null)} />}
+      {open && (
+        <RecipientsDialog status={open[0]} label={open[0] === "Unsubscribed" ? "Unsubscribed" : `${open[1]} emails`} onClose={() => setOpen(null)} />
+      )}
     </>
   );
 }
@@ -732,7 +834,8 @@ export default function CampaignsPage({ id, user, data, notify }) {
               <h1>Email Campaigns</h1>
               {list && (
                 <small className="muted">
-                  {n(list.sent_last_24h)} of {n(list.limits.per_day)} emails sent in the last 24 hours • {list.limits.per_minute} a minute
+                  Sending limit: {n(list.sent_last_24h)} of {n(list.limits.per_day)} emails used in the last 24 hours ·{" "}
+                  {list.limits.per_minute} per minute
                 </small>
               )}
             </div>
@@ -745,8 +848,8 @@ export default function CampaignsPage({ id, user, data, notify }) {
         </header>
         {totals && <EmailDashboard totals={totals} />}
         <p className="campaign-rules">
-          <Icon name="mail" size={14} /> Unsubscribed leads and invalid emails are always left out. Every email ends with Unsubscribe and
-          Subscribe links.
+          <Icon name="mail" size={14} /> Unsubscribed and bounced addresses are never emailed again. Every email has an Unsubscribe link,
+          and a Subscribe link until the recipient subscribes.
         </p>
         {error && <p className="form-error pad">{error}</p>}
         <div className="table-scroll">
@@ -757,10 +860,10 @@ export default function CampaignsPage({ id, user, data, notify }) {
                 <th>Campaign</th>
                 <th>Status</th>
                 <th>Progress</th>
-                <th>Invalid</th>
+                <th>Bounced</th>
                 <th>Failed</th>
-                <th>Left out</th>
-                <th>Send at</th>
+                <th>Not sent</th>
+                <th>Send time</th>
                 <th>Created by</th>
               </tr>
             </thead>
@@ -793,7 +896,8 @@ export default function CampaignsPage({ id, user, data, notify }) {
               </span>
               <b>No campaigns yet</b>
               <p>
-                Email many leads at once: tick them in <a href="#/leads">Leads</a> and choose Actions → Email, or start a new campaign.
+                Email many people at once: start a new campaign and paste their email addresses, or tick leads in{" "}
+                <a href="#/leads">Leads</a> and choose Actions → Email Campaign.
               </p>
               {canSend && (
                 <button className="sf-button brand" onClick={() => setCreating(true)}>
@@ -812,7 +916,7 @@ export default function CampaignsPage({ id, user, data, notify }) {
           onClose={() => setCreating(false)}
           onCreated={(c) => {
             setCreating(false);
-            notify(`Campaign "${c.name}" saved: ${n(c.counts.Queued)} leads.`);
+            notify(`Campaign "${c.name}" created: ${plural(c.counts.Queued, "email")} queued.`);
             window.location.hash = `#/campaigns/${c.id}`;
           }}
         />

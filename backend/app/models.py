@@ -372,6 +372,8 @@ class CampaignRecipient(Base):
     lead_id: Mapped[int | None] = mapped_column(ForeignKey("leads.id", ondelete="SET NULL"))
     email: Mapped[str | None] = mapped_column(String(255))
     name: Mapped[str] = mapped_column(String(101))
+    company: Mapped[str | None] = mapped_column(String(200))   # for {company} when the email was typed in
+    manual: Mapped[bool] = mapped_column(default=False)        # typed in (not a lead in the CRM)
     status: Mapped[str] = mapped_column(String(10), default="Queued")
     attempts: Mapped[int] = mapped_column(default=0)
     next_attempt_at: Mapped[datetime | None]
@@ -379,3 +381,16 @@ class CampaignRecipient(Base):
     error: Mapped[str | None] = mapped_column(String(300))
 
     campaign: Mapped[Campaign] = relationship(back_populates="recipients")
+
+
+class EmailAddress(Base):
+    """Campaign email state of one address, lead or not: unsubscribed, or doesn't work. Typed-in addresses (people not
+    in the CRM) are only tracked here; a lead with the same email is kept in step (leads.unsubscribed_at...)."""
+
+    __tablename__ = "email_addresses"
+
+    email: Mapped[str] = mapped_column(String(255), primary_key=True)  # lower case
+    subscribed_at: Mapped[datetime | None]      # clicked Subscribe: emails then carry only the Unsubscribe link
+    unsubscribed_at: Mapped[datetime | None]
+    invalid_at: Mapped[datetime | None]
+    invalid_reason: Mapped[str | None] = mapped_column(String(300))

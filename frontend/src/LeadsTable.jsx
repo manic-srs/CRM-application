@@ -462,7 +462,7 @@ export default function LeadsTable({
           onCreated={(c) => {
             setCampaignFor(null);
             setSelected(new Set());
-            notify(`Campaign "${c.name}" ${c.status === "Scheduled" && new Date(c.send_at) > new Date() ? "is scheduled" : "is sending"}: ${c.counts.Queued.toLocaleString()} leads.`);
+            notify(`Campaign "${c.name}" ${c.status === "Scheduled" && new Date(c.send_at) > new Date() ? "is scheduled" : "is sending"}: ${c.counts.Queued.toLocaleString()} email${c.counts.Queued === 1 ? "" : "s"} queued.`);
             window.location.hash = `#/campaigns/${c.id}`;
           }}
         />
