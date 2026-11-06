@@ -32,7 +32,7 @@ const OBJECTS = {
       ["LinkedIn", (l) => (l.linkedin_url ? "Yes" : "")],
       ["Owner", (l) => l.owner_name || ""],
     ],
-    stages: [["all", "All leads I can see"], ["open", "Open leads"], ...LEAD_STAGES.map((s) => [s.toLowerCase(), s])],
+    stages: [["all", "All Leads"], ["open", "Open leads"], ...LEAD_STAGES.map((s) => [s.toLowerCase(), s])],
   },
   opportunities: {
     label: "Opportunities",

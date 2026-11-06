@@ -57,6 +57,37 @@ function Check({ checked, some = false, onChange, label }) {
 }
 
 // Transfer / delete dialog for the selected leads
+// A short explanation with OK (nothing is saved or sent)
+function NoticeDialog({ title, message, onClose }) {
+  const ok = useRef(null);
+  useEffect(() => {
+    ok.current?.focus();
+    const key = (e) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", key);
+    return () => document.removeEventListener("keydown", key);
+  }, [onClose]);
+  return (
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <section className="modal small-modal" role="alertdialog" aria-modal="true" aria-labelledby="notice-title" aria-describedby="notice-text">
+        <button className="modal-close" aria-label="Close dialog" onClick={onClose}>
+          <Icon name="close" size={18} />
+        </button>
+        <header className="modal-header">
+          <h2 id="notice-title">{title}</h2>
+        </header>
+        <div className="modal-body">
+          <p id="notice-text">{message}</p>
+        </div>
+        <footer className="modal-footer">
+          <button ref={ok} className="sf-button brand" onClick={onClose}>
+            OK
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
 function BulkDialog({ action, count, users, me, onClose, onDone }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -171,6 +202,7 @@ export default function LeadsTable({
   const [selected, setSelected] = useState(() => new Set());
   const [bulk, setBulk] = useState(null); // { type: "transfer" | "delete", ids }
   const [campaignFor, setCampaignFor] = useState(null); // lead ids for "Email" (a campaign to the selected leads)
+  const [convertNote, setConvertNote] = useState(""); // "one lead at a time" when Convert is chosen with several ticked
   // the Actions menu sits with Upload / Download / History / New in the list header (a slot ListView renders)
   const [actionsSlot, setActionsSlot] = useState(null);
   useEffect(() => setActionsSlot(document.getElementById("lead-bulk-actions")), []);
@@ -272,44 +304,43 @@ export default function LeadsTable({
 
   return (
     <>
+      {/* Actions appears once at least one lead is ticked (and goes again when the selection is cleared) */}
       {actionsSlot &&
         !kanban &&
+        selected.size > 0 &&
         createPortal(
           <ActionMenu
             label="Actions"
-            badge={selected.size ? selected.size.toLocaleString() : null}
-            items={
-              selected.size
-                ? [
-                    // opens the usual Convert popup for the one ticked lead (nothing is converted until it's saved)
-                    {
-                      label: "Convert to Opportunity",
-                      disabled: !convertChoice.action,
-                      hint: convertChoice.reason,
-                      onClick: () => setModal(convertChoice.action),
-                    },
-                    // a campaign to the ticked leads (unsubscribed / invalid emails are left out)
-                    can(user, "send_campaigns") && {
-                      label: "Email Campaign",
-                      onClick: () => setCampaignFor([...selected]),
-                    },
-                    canTransferAny && {
-                      label: `Transfer ${selected.size === 1 ? "Lead" : "Leads"}`,
-                      disabled: selected.size > 500,
-                      title: selected.size > 500 ? "Up to 500 leads at a time" : undefined,
-                      onClick: () => setBulk({ type: "transfer", ids: [...selected] }),
-                    },
-                    "-",
-                    {
-                      label: `Delete ${selected.size === 1 ? "Lead" : "Leads"}`,
-                      danger: true,
-                      disabled: selected.size > 500,
-                      title: selected.size > 500 ? "Up to 500 leads at a time" : undefined,
-                      onClick: () => setBulk({ type: "delete", ids: [...selected] }),
-                    },
-                  ]
-                : [{ label: "Tick leads in the list first", disabled: true }]
-            }
+            badge={selected.size.toLocaleString()}
+            items={[
+              // opens the usual Convert popup for the one ticked lead (nothing is converted until it's saved);
+              // with several ticked it only explains (no request is sent)
+              {
+                label: "Convert to Opportunity",
+                disabled: !convertChoice.action && !convertChoice.explain,
+                hint: convertChoice.reason,
+                onClick: () => (convertChoice.explain ? setConvertNote(convertChoice.explain) : setModal(convertChoice.action)),
+              },
+              // a campaign to the ticked leads (unsubscribed / invalid emails are left out)
+              can(user, "send_campaigns") && {
+                label: "Email Campaign",
+                onClick: () => setCampaignFor([...selected]),
+              },
+              canTransferAny && {
+                label: `Transfer ${selected.size === 1 ? "Lead" : "Leads"}`,
+                disabled: selected.size > 500,
+                title: selected.size > 500 ? "Up to 500 leads at a time" : undefined,
+                onClick: () => setBulk({ type: "transfer", ids: [...selected] }),
+              },
+              "-",
+              {
+                label: `Delete ${selected.size === 1 ? "Lead" : "Leads"}`,
+                danger: true,
+                disabled: selected.size > 500,
+                title: selected.size > 500 ? "Up to 500 leads at a time" : undefined,
+                onClick: () => setBulk({ type: "delete", ids: [...selected] }),
+              },
+            ]}
           />,
           actionsSlot,
         )}
@@ -458,6 +489,7 @@ export default function LeadsTable({
         </>
         )}
       </section>
+      {convertNote && <NoticeDialog title="Convert to Opportunity" message={convertNote} onClose={() => setConvertNote("")} />}
       {bulk && (
         <BulkDialog
           action={bulk}

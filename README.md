@@ -320,21 +320,23 @@ See [backend/README.md](backend/README.md) and [frontend/README.md](frontend/REA
 
 ## AI email drafting
 
-In **New Email**, the pen icon under the message opens a compact writing bar; it stays closed until you click it.
-Type what you need in **Describe the email or change you need…**, then press **Enter** or the arrow button
-(**Shift+Enter** adds a line). Closing the bar (× or Escape) keeps your email and your instructions.
+In **New Email**, click **Help me write** to open the writing bar. Before a draft exists, enter your request and
+press **Enter** or the blue arrow; a blank request uses the saved sales stage. **Shift+Enter** adds a line.
+After generation, the bar shows **Describe your change**, **Polish**, the refinement menu, and undo/redo.
 
-- **New email:** when the message holds only the greeting and signature, the request writes a new CRM email, subject
-  and message. A subject you already typed is kept unless your request asks for a different one; a blank subject is
-  filled.
-- **Change the draft:** when the message has your own text, the request is applied to it. Its facts and the subject
-  are kept unless you ask to change them.
-- **Refine:** **Professional**, **Conversational** and **Concise** rewrite an existing draft. With only the greeting
-  and signature, the bar asks you to describe the email first.
+- **New email:** the request writes an editable subject and message. A subject you already typed is kept unless
+  you ask to change it; a blank subject is filled.
+- **Change the draft:** describe an edit and press **Enter** or **Polish**. You can request changes to the message,
+  the subject, or both. Otherwise the existing subject and facts are preserved.
+- **Refine:** **Formalize** uses a formal business register, **Friendly** uses warmer conversational language,
+  and **Shorten** removes filler, targeting about half the meaningful body length on longer drafts while keeping facts.
+- **Start over:** **×** moves from the editing bar to the writing bar; a second **×** returns to **Help me write**.
+  The current email stays intact until another draft succeeds. **Escape** closes the bar.
 - **CRM emails only:** introductions and outreach, follow-ups, demo scheduling, discovery questions, proposals,
   negotiation, closure and customer handover. An unrelated request (a leave request, a poem…) keeps your email and
   shows "This assistant helps with CRM and sales emails. Describe a customer follow-up, demo, proposal, or related
-  message." A vague request asks for more sales context instead of guessing. Writing by hand is always available.
+  message." A basic request such as "can you write an email" uses the saved sales stage to create a starting draft.
+  Other requests without a clear purpose ask for more context. Writing by hand is always available.
 
 Example: "Follow up on the demo and ask about their timeline."
 
@@ -345,7 +347,7 @@ not applied. **Undo** / **Redo** restore the subject and message together and tu
 yourself. Errors, timeouts and refusals keep your email as it was. Always review the draft before sending.
 
 How the server enforces this (`app/ai_email.py`, `POST /api/emails/draft`):
-- One OpenAI request per draft, with no separate classification call. The model must answer with structured JSON:
+- One provider request per draft, with no separate classification call. The model must answer with structured JSON:
   `outcome` (`draft`, `unsupported` or `needs_context`), `subject` and `body`. Only a valid `draft` reaches the
   composer; `unsupported` and `needs_context` return 422 with the messages above, whatever action or stage the client
   sent. Clearly personal requests (leave or vacation requests, poems…) are refused before any call.
@@ -372,10 +374,50 @@ images, frontend code, or Docker environment configuration. It is read into back
 and sent to OpenAI as an authorization header. Never commit `.env` or put the key in a
 `VITE_` variable. A backend run directly with Uvicorn can use backend environment variables.
 
-The backend uses the OpenAI Responses API with structured output and `store: false`. Requests include the
+In OpenAI mode, the backend uses the Responses API with structured output and `store: false`. Requests include the
 description, the latest saved CRM stage, minimal customer context (name and company when available; no name when To
 was changed to someone else) and, when a draft is being revised, its current subject and text. Instructions and draft
 text are treated as untrusted data. Email addresses, attachments, internal notes, lost reasons and email history are
 not included. Access requires the email permission and access to the related CRM record. Sample mode
 (`EMAIL_DRAFT_MODE=sample`) is for backend tests: it doesn't interpret instructions or refine drafts. No API call
 sends an email or changes the CRM.
+
+### Test email drafting locally with Ollama
+
+Install and run `qwen3.5:9b` in Ollama. For Docker Desktop on macOS, set these in the root `.env`:
+
+```dotenv
+EMAIL_DRAFT_MODE=ollama
+OLLAMA_BASE_URL=http://host.docker.internal:11434
+OLLAMA_EMAIL_MODEL=qwen3.5:9b
+OLLAMA_KEEP_ALIVE=30m
+```
+
+Run `docker compose up -d --build`, reopen New Email, choose **Help me write**, describe the email, and click the blue arrow.
+The local model needs no OpenAI key; email drafting in Ollama mode does not read or send that key.
+Keep Ollama running. The first draft can take up to two minutes while the model loads.
+The model stays loaded for 30 minutes after each draft to reduce reload delays; it continues
+to use memory during that time. Adjust `OLLAMA_KEEP_ALIVE` to change this idle period.
+Drafts use the same CRM context, validation, subject handling and signature rules as OpenAI drafts.
+Nothing is sent or saved until you send the email. To switch back, set `EMAIL_DRAFT_MODE=openai`
+and configure a valid `OPENAI_API_KEY`. For a backend running directly on your Mac, use
+`OLLAMA_BASE_URL=http://localhost:11434`.
+
+### Email drafting reliability
+
+The writing bar shows a generate arrow before a draft exists, then Polish, the refinement menu, and undo/redo.
+The arrow and Enter perform the same action; a blank request can use the record's saved sales stage.
+A completed AI edit clears the instruction field. Editing the request, subject or message cancels pending work;
+late responses are checked against the current composer before they can be applied.
+
+Drafting is authenticated and checked against the record's permissions. The model receives minimal record context,
+has no tools and cannot send email or modify a record. Requests and model output have size/schema checks; subjects
+reject control characters before a provider call and before applying generated output. Provider failures are sanitized.
+Only provider name, HTTP status and elapsed time are logged by the drafting code, without prompts, bodies or credentials.
+
+The API accepts one draft per user, one local Ollama draft at a time, and at most four active drafts per process.
+Busy requests return 429/503 with Retry-After rather than queuing indefinitely. Browser disconnects and deadlines
+cancel the API's provider coroutine. Whether a disconnected inference stops immediately also depends on the model server.
+These limits are per API process: use a shared admission/rate limiter before scaling to multiple workers or replicas
+that share one model server. Hosted API usage budgets and deployment authentication/network controls must be configured
+for the deployment. Human review remains required because model instructions and validation cannot guarantee factual accuracy.

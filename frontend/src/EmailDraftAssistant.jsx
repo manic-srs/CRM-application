@@ -1,15 +1,14 @@
 // AI writing in New Email. A pen button opens a compact instruction bar inside the composer:
 // - a request writes a new email (when the message is only the greeting and signature) or changes the current draft;
-// - Refine (Professional, Conversational, Concise) rewrites an existing draft.
+// - Polish (Formalize, Friendly, Shorten) rewrites an existing draft.
 // Only the subject and message are filled, after the server has validated the draft. It never sends, and never changes
 // To, Cc, attachments or the record. An answer is applied only if nothing changed while it was being written.
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api";
-import { draftContent, toRecordContact } from "./domain";
-import { Icon } from "./ui";
+import { draftContent, emailWritingAction, toRecordContact } from "./domain";
 
-const REFINE = [["formalize", "Professional"], ["friendly", "Conversational"], ["shorten", "Concise"]];
-const DESCRIBE_FIRST = "Describe the email you need first. Professional, Conversational, and Concise refine an existing draft.";
+const REFINE = [["formalize", "Formalize"], ["friendly", "Friendly"], ["shorten", "Shorten"]];
+const DESCRIBE_FIRST = "Describe the email you need first. Formalize, Friendly, and Shorten refine an existing draft.";
 // Server messages that already say the email was kept, or that ask for more, are shown as they are.
 const keptMessage = (text) =>
   /unchanged|kept|helps with CRM|sales context|describe the email/i.test(text) ? text : `${text} Your email is unchanged.`;
@@ -17,6 +16,7 @@ const keptMessage = (text) =>
 export default function EmailDraftAssistant({ target, settings, user, subject, message, sending, recipients, onApply, onBusyChange }) {
   const [open, setOpen] = useState(false); // closed until the pen is clicked
   const [instructions, setInstructions] = useState("");
+  const [freshStart, setFreshStart] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
@@ -32,7 +32,10 @@ export default function EmailDraftAssistant({ target, settings, user, subject, m
   const requests = useRef(0);
   const mounted = useRef(true);
   const now = useRef(null); // what the composer holds now, for an answer that arrives later
-  now.current = { subject, message, record: `${target.field}:${target.id}` };
+  now.current = { subject, message, instructions, record: `${target.field}:${target.id}` };
+  const hasDraft = !!draftContent(message, user.full_name, user.email);
+  const editing = !freshStart && (hasDraft || !!history);
+  const primaryAction = () => emailWritingAction(instructions, message, user.full_name, user.email, freshStart);
   const sampleMode = settings?.draft_mode === "sample";
   const unavailable = !settings || settings.ai_drafting_enabled === false;
   const blocked = busy || sending || unavailable || sampleMode;
@@ -69,16 +72,16 @@ export default function EmailDraftAssistant({ target, settings, user, subject, m
   };
 
   const run = async (action) => {
-    if (busy || sending) return;
+    if (request.current || busy || sending) return;
     setMenuOpen(false);
     setError("");
     if (unavailable || sampleMode) return;
-    const refining = action !== "custom";
+    const refining = REFINE.some(([name]) => name === action);
     const text = instructions.trim();
-    if (!refining && !text) return input.current?.focus();
+    if (action === "custom" && !text) return input.current?.focus();
     if (refining && !draftContent(message, user.full_name, user.email)) return setNotice(DESCRIBE_FIRST);
-    const before = { subject, message, to: recipients(), record: now.current.record };
-    const mine = { id: ++requests.current, controller: new AbortController() };
+    const before = { subject, message, instructions, to: recipients(), record: now.current.record };
+    const mine = { id: ++requests.current, controller: new AbortController(), before };
     request.current = mine;
     setNotice("");
     setBusy(true);
@@ -91,23 +94,25 @@ export default function EmailDraftAssistant({ target, settings, user, subject, m
           action,
           instructions: refining ? "" : text,
           current_subject: subject,
-          current_body: message,
+          current_body: freshStart && !refining ? "" : message,
           recipient_is_record_contact: toRecordContact(before.to, target.email),
         },
-        AbortSignal.any([mine.controller.signal, AbortSignal.timeout(50000)]),
+        AbortSignal.any([mine.controller.signal, AbortSignal.timeout(settings?.draft_mode === "ollama" ? 130000 : 50000)]),
       );
       if (!mounted.current || request.current !== mine) return; // cancelled, closed or replaced
       const latest = now.current;
-      if (latest.subject !== before.subject || latest.message !== before.message)
+      if (latest.subject !== before.subject || latest.message !== before.message || latest.instructions !== before.instructions)
         return setNotice("You changed the email while the draft was being written, so your version was kept.");
       if (latest.record !== before.record || recipients() !== before.to)
         return setNotice("The recipient changed while the draft was being written, so the draft wasn't applied.");
       const applied = { subject: draft.subject, body: draft.body };
       setHistory({ previous: { subject: before.subject, body: before.message }, applied, undone: false });
       onApply(applied);
+      setInstructions("");
+      setFreshStart(false);
       setNotice(draft.draft_type === "revision" ? "Draft updated. Review before sending." : "Draft generated. Review before sending.");
     } catch (err) {
-      if (mounted.current && request.current === mine) setError(keptMessage(err.message));
+      if (mounted.current && request.current === mine) setError(keptMessage(err.name === "TimeoutError" ? "Drafting took too long. Please try again." : err.message));
     } finally {
       if (mounted.current && request.current === mine) stopWaiting();
     }
@@ -119,7 +124,22 @@ export default function EmailDraftAssistant({ target, settings, user, subject, m
     stopWaiting();
     setNotice("Generation cancelled. Your email is unchanged.");
   };
+  useEffect(() => {
+    const pending = request.current;
+    if (pending && (pending.before.subject !== subject || pending.before.message !== message || pending.before.record !== `${target.field}:${target.id}`)) cancel();
+  }, [subject, message, target.field, target.id]);
+
   const openBar = () => {
+    setOpen(true);
+    requestAnimationFrame(() => input.current?.focus());
+  };
+  const resetToWrite = () => {
+    cancel();
+    setMenuOpen(false);
+    setInstructions("");
+    setError("");
+    setNotice("");
+    setFreshStart(true);
     setOpen(true);
     requestAnimationFrame(() => input.current?.focus());
   };
@@ -127,6 +147,9 @@ export default function EmailDraftAssistant({ target, settings, user, subject, m
     cancel(); // a pending answer would otherwise land after the bar is closed
     setMenuOpen(false);
     setOpen(false);
+    setFreshStart(true);
+    setError("");
+    setNotice("");
     requestAnimationFrame(() => toggle.current?.focus());
   };
   const openMenu = (index) => {
@@ -181,7 +204,9 @@ export default function EmailDraftAssistant({ target, settings, user, subject, m
 
   return (
     <div className="email-ai">
-      <div id={`${id}-bar`} className="email-ai-bar" role="group" aria-label="Write with AI" hidden={!open} onKeyDown={onBarKey}>
+      <div id={`${id}-bar`} className="email-ai-bar" role="group" aria-label="Write with AI" aria-busy={busy} hidden={!open} onKeyDown={onBarKey}>
+        <div className="email-ai-prompt">
+        <Pen />
         <textarea
           ref={input}
           className="email-ai-input"
@@ -189,21 +214,25 @@ export default function EmailDraftAssistant({ target, settings, user, subject, m
           value={instructions}
           maxLength={4000}
           aria-label="Describe the email or change you need"
-          placeholder="Describe the email or change you need…"
+          placeholder={editing ? "Describe your change" : "Write an email"}
+          disabled={sending}
           aria-describedby={`${id}-status`}
-          onChange={(event) => setInstructions(event.target.value)}
+          onChange={(event) => { cancel(); setInstructions(event.target.value); setError(""); }}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
-              run("custom");
+              run(primaryAction());
             }
           }}
         />
+        {editing ? (
         <div className="email-ai-refine" ref={refineBox}>
+          <button type="button" className="email-ai-polish" disabled={blocked} title="Apply your change, or polish the draft" onClick={() => run(primaryAction())}>Polish</button>
           <button
             ref={refineButton}
             type="button"
             className="email-ai-refine-button"
+            aria-label="Polish options"
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             aria-controls={menuOpen ? `${id}-menu` : undefined}
@@ -216,7 +245,7 @@ export default function EmailDraftAssistant({ target, settings, user, subject, m
               }
             }}
           >
-            Refine <Chevron />
+            <Chevron />
           </button>
           {menuOpen && (
             <div id={`${id}-menu`} ref={menu} className="email-ai-menu" role="menu" aria-label="Refine the current draft" onKeyDown={onMenuKey}>
@@ -231,56 +260,52 @@ export default function EmailDraftAssistant({ target, settings, user, subject, m
                     run(action);
                   }}
                 >
-                  {label}
+                  <PolishIcon action={action} />{label}
                 </button>
               ))}
             </div>
           )}
         </div>
-        <button
-          type="button"
-          className="email-ai-submit"
-          aria-label="Generate draft"
-          title="Generate draft (Enter)"
-          disabled={blocked || !instructions.trim()}
-          onClick={() => {
-            input.current?.focus(); // this button is disabled while the draft is written
-            run("custom");
-          }}
-        >
-          <ArrowUp />
-        </button>
-        <button type="button" className="email-ai-close" aria-label="Close AI writing bar" title="Close" onClick={closeBar}>
-          <Icon name="close" size={14} />
+        ) : (
+          <button type="button" className="email-ai-submit" aria-label="Generate email draft" title="Generate email draft (Enter)" disabled={blocked} onClick={() => run(primaryAction())}>
+            <ArrowUp />
+          </button>
+        )}
+        </div>
+        {editing && (
+        <span className="email-ai-history" role="group" aria-label="AI changes">
+          <button type="button" aria-label="Undo AI change" title="Undo AI change" disabled={busy || sending || !canUndo} onClick={undo}>
+            <HistoryIcon />
+          </button>
+          <button type="button" aria-label="Redo AI change" title="Redo AI change" disabled={busy || sending || !canRedo} onClick={redo}>
+            <HistoryIcon redo />
+          </button>
+        </span>
+        )}
+        <button type="button" className="email-ai-close" aria-label={editing ? "Start a new email draft" : "Back to Help me write"} title={editing ? "Back to write an email" : "Back to Help me write"} onClick={editing ? resetToWrite : closeBar}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6" /></svg>
         </button>
       </div>
       <div className="email-ai-tools">
+        {!open && (
         <button
           ref={toggle}
           type="button"
           className="email-ai-toggle"
-          aria-label="Write with AI"
+          aria-label="Help me write"
           title="Write or refine this email with AI"
           aria-expanded={open}
           aria-controls={`${id}-bar`}
           disabled={sending}
           onClick={() => (open ? closeBar() : openBar())}
         >
-          <Pen />
+          <Pen /> Help me write
         </button>
+        )}
         <span id={`${id}-status`} className="email-ai-status" role="status">
           {status}
         </span>
-        {history && (
-          <span className="email-ai-history" role="group" aria-label="AI changes">
-            <button type="button" aria-label="Undo AI change" title="Undo AI change" disabled={busy || sending || !canUndo} onClick={undo}>
-              <HistoryIcon />
-            </button>
-            <button type="button" aria-label="Redo AI change" title="Redo AI change" disabled={busy || sending || !canRedo} onClick={redo}>
-              <HistoryIcon redo />
-            </button>
-          </span>
-        )}
+
       </div>
       {error && (
         <p className="form-error email-ai-error" role="alert">
@@ -295,23 +320,23 @@ function Pen() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M4 20l1.2-4.2L15.6 5.4a2 2 0 0 1 2.9 0l.1.1a2 2 0 0 1 0 2.9L8.2 18.8z" />
-      <path d="M13.8 7.2l3 3M19 14.5v4M17 16.5h4" />
-    </svg>
-  );
-}
-
-function ArrowUp() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M12 19V5M6 11l6-6 6 6" />
+      <path d="M13.8 7.2l3 3M5 2v4M3 4h4M19 1v4M17 3h4M12 1v2M11 2h2" />
     </svg>
   );
 }
 
 function Chevron() {
+  return <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="12" cy="19" r="1.6" /></svg>;
+}
+
+function ArrowUp() {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 20V4M5 11l7-7 7 7" /></svg>;
+}
+
+function PolishIcon({ action }) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="m6 9 6 6 6-6" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {action === "formalize" ? <><rect x="2" y="6" width="20" height="15" rx="1" /><path d="M8 6V3h8v3" /></> : action === "friendly" ? <><path d="m8 13 6-6a1.5 1.5 0 0 1 2 2l-4 4 6-6a1.5 1.5 0 0 1 2 2l-6 6 5-5a1.5 1.5 0 0 1 2 2l-7 7a6 6 0 0 1-8-1L3 14a1.5 1.5 0 0 1 2-2l3 2-1-6a1.5 1.5 0 0 1 3-1l1 3M3 7a6 6 0 0 1 4-4M18 21a6 6 0 0 0 4-4" /></> : <path d="m6 4 6 6 6-6M6 20l6-6 6 6" />}
     </svg>
   );
 }

@@ -2950,47 +2950,53 @@ a.pill:hover {
 }
 
 /* New Email: the message box and its AI writing bar (EmailDraftAssistant.jsx). Scoped to the email composer. */
-.email-editor { position: relative; border: 1px solid var(--border-strong); border-radius: 7px; background: #fff; }
-.email-editor:has(> textarea:focus) { border-color: #0176d3; box-shadow: 0 0 0 1px #0176d3; } /* the message only; the AI bar has its own */
-.field .email-editor > textarea { display: block; width: 100%; min-height: 168px; max-height: 50vh; padding: 12px; border: 0; border-radius: 7px 7px 0 0; resize: vertical; }
+.email-editor { position: relative; border: 1px solid var(--border-strong); border-radius: 9px; background: #fff; }
+.email-editor:focus-within { border-color: #0176d3; box-shadow: 0 0 0 1px #0176d3; }
+.field .email-editor > textarea { display: block; width: 100%; min-height: 240px; max-height: 50vh; padding: 16px; border: 0; border-radius: 9px 9px 0 0; resize: vertical; }
 .field .email-editor > textarea:focus { outline: 0; border: 0; box-shadow: none; }
-.email-ai { border-top: 1px solid var(--border); }
-.email-ai-bar { display: flex; align-items: flex-end; gap: 6px; margin: 8px 8px 0; padding: 5px 5px 5px 12px; border: 1px solid #c3d4ea; border-radius: 10px; background: #f2f6fc; }
+.email-ai { padding: 0 16px 14px; }
+.email-ai-bar { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
 .email-ai-bar[hidden] { display: none; }
-.email-ai-bar:focus-within { border-color: #0176d3; }
-.field .email-ai-input { flex: 1; width: auto; min-width: 0; height: 32px; min-height: 32px; max-height: 96px; padding: 6px 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: var(--text); font: inherit; font-size: 14px; line-height: 20px; resize: none; overflow-y: auto; }
+.email-ai-prompt { display: flex; flex: 1; align-items: center; gap: 14px; min-width: 0; min-height: 56px; padding: 5px 7px 5px 16px; border: 1px solid transparent; border-radius: 32px; background: #f0f4f9; }
+.email-ai-prompt > svg { width: 26px; height: 26px; flex-shrink: 0; color: #444746; }
+.field .email-ai-input { flex: 1; width: auto; min-width: 0; height: 32px; min-height: 32px; max-height: 96px; padding: 6px 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: var(--text); font: inherit; font-size: 16px; line-height: 20px; resize: none; overflow-y: auto; }
 .field .email-ai-input:focus { border: 0; outline: 0; box-shadow: none; }
-.email-ai-refine { position: relative; flex-shrink: 0; }
-.email-ai-refine-button { display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 8px 0 12px; border: 1px solid #c3d4ea; border-radius: 16px; background: #fff; color: #23384f; font: inherit; font-size: 13px; cursor: pointer; }
-.email-ai-refine-button svg { width: 14px; height: 14px; }
-.email-ai-refine-button:hover:not(:disabled) { background: #e8f0fb; }
-.email-ai-refine-button:disabled { opacity: .55; cursor: default; }
-.email-ai-menu { position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 5; min-width: 168px; padding: 4px; border: 1px solid #d6dde8; border-radius: 8px; background: #fff; box-shadow: 0 4px 14px rgba(36, 52, 77, .18); }
-.email-ai-menu button { display: block; width: 100%; padding: 8px 12px; border: 0; border-radius: 6px; background: transparent; color: #23384f; font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.email-ai-refine { position: relative; display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.email-ai-polish { display: inline-flex; align-items: center; gap: 10px; padding: 4px 8px; border: 0; background: transparent; color: #444746; font: inherit; font-size: 16px; font-weight: 600; cursor: pointer; }
+.email-ai-submit { display: grid; place-items: center; flex-shrink: 0; width: 44px; height: 44px; padding: 10px; border: 0; border-radius: 50%; background: #c2e7ff; color: #001d35; cursor: pointer; }
+.email-ai-submit svg { width: 24px; height: 24px; }
+.email-ai-submit:hover:not(:disabled) { background: #a8dcff; }
+.email-ai-submit:disabled { opacity: .5; cursor: default; }
+.email-ai-refine-button { display: grid; place-items: center; width: 30px; height: 34px; padding: 6px; border: 0; border-radius: 50%; background: transparent; color: #444746; cursor: pointer; }
+.email-ai-refine-button svg { width: 18px; height: 18px; }
+.email-ai-refine-button:hover:not(:disabled), .email-ai-polish:hover:not(:disabled) { background: #e0eafa; }
+.email-ai-refine button:disabled { opacity: .55; cursor: default; }
+.email-ai-menu { position: absolute; right: -6px; bottom: calc(100% + 12px); z-index: 5; min-width: 224px; padding: 10px; border: 1px solid #dce3ef; border-radius: 12px; background: #fff; box-shadow: 0 3px 12px rgba(36, 52, 77, .24); }
+.email-ai-menu button { display: flex; align-items: center; gap: 18px; width: 100%; padding: 14px 12px; border: 0; border-radius: 6px; background: transparent; color: #444746; font: inherit; font-size: 17px; font-weight: 600; text-align: left; cursor: pointer; }
+.email-ai-menu svg { width: 24px; height: 24px; color: #444746; flex-shrink: 0; }
 .email-ai-menu button:hover, .email-ai-menu button:focus { background: #e8f0fb; outline: 0; }
-.email-ai-submit { display: grid; place-items: center; flex-shrink: 0; width: 32px; height: 32px; border: 0; border-radius: 50%; background: #0176d3; color: #fff; cursor: pointer; }
-.email-ai-submit svg { width: 18px; height: 18px; }
-.email-ai-submit:hover:not(:disabled) { background: #014486; }
-.email-ai-submit:disabled { background: #c5cfdc; cursor: default; }
-.email-ai-close { display: grid; place-items: center; flex-shrink: 0; width: 32px; height: 32px; border: 0; border-radius: 50%; background: transparent; color: #5b6b80; cursor: pointer; }
+.email-ai-close { display: grid; place-items: center; flex-shrink: 0; width: 32px; height: 40px; padding: 6px; border: 0; border-radius: 50%; background: transparent; color: #63758e; cursor: pointer; }
+.email-ai-close svg { width: 20px; height: 20px; }
 .email-ai-close:hover { background: #e4ecf7; }
-.email-ai-tools { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 4px 8px; }
-.email-ai-toggle { display: grid; place-items: center; flex-shrink: 0; width: 32px; height: 32px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: #35567d; cursor: pointer; }
-.email-ai-toggle svg { width: 20px; height: 20px; }
-.email-ai-toggle:hover:not(:disabled), .email-ai-toggle[aria-expanded="true"] { border-color: #c3d4ea; background: #e8f0fb; }
+.email-ai-tools { display: flex; align-items: center; gap: 8px; }
+.email-ai-toggle { display: inline-flex; align-items: center; gap: 10px; flex-shrink: 0; padding: 9px 14px; border: 1px solid #d8e3f5; border-radius: 24px; background: #f0f4fa; color: #3b5373; font: inherit; font-size: 14px; cursor: pointer; }
+.email-ai-toggle svg { width: 25px; height: 25px; }
+.email-ai-toggle:hover:not(:disabled) { background: #e8f0fb; }
 .email-ai-toggle:disabled { opacity: .55; cursor: default; }
-.email-ai-status { flex: 1; min-width: 0; color: #5a6a7e; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
-.email-ai-history { display: flex; flex-shrink: 0; gap: 2px; }
-.email-ai-history button { display: grid; place-items: center; width: 30px; height: 30px; padding: 5px; border: 0; border-radius: 50%; background: transparent; color: #3d5068; cursor: pointer; }
+.email-ai-status { flex: 1; min-width: 0; color: #454545; font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+.email-ai-status:not(:empty) { padding: 9px 4px 0; }
+.email-ai-history { display: flex; flex-shrink: 0; gap: 8px; padding: 8px; border-radius: 28px; background: #f0f4f9; }
+.email-ai-history button { display: grid; place-items: center; width: 40px; height: 40px; padding: 5px; border: 0; border-radius: 50%; background: transparent; color: #3d5068; cursor: pointer; }
 .email-ai-history button:hover:not(:disabled) { background: #e4ecf7; }
 .email-ai-history button:disabled { color: #a6b0bd; cursor: default; }
-.email-ai-history svg { width: 18px; height: 18px; }
-.email-ai-error { margin: 0 12px 10px; font-size: 12px; }
+.email-ai-history svg { width: 21px; height: 21px; }
+.email-ai-error { margin: 8px 4px 0; font-size: 12px; }
 .email-ai button:focus-visible { outline: 2px solid #0176d3; outline-offset: 2px; }
 @media (max-width: 480px) {
-  .email-ai-bar { flex-wrap: wrap; padding-left: 10px; }
-  .field .email-ai-input { flex-basis: 100%; font-size: 16px; }
-  .email-ai-refine { margin-left: auto; }
+  .email-ai-bar { flex-wrap: wrap; }
+  .email-ai-prompt { flex-basis: 100%; }
+  .field .email-ai-input { font-size: 16px; }
+  .email-ai-history { margin-left: auto; }
 }
 
 /* people and activity tables show their full text (no "…") */
@@ -3331,6 +3337,19 @@ a.pill:hover {
 }
 .th-menu > button:hover {
   background: #f3f9ff;
+}
+/* the filter menu opens inside the column header: keep the header-button rules (.sf-table th button: wider than the
+   cell, negative margin, muted colour) off its options, so they fit the menu without a horizontal scrollbar */
+.sf-table th .th-menu > button {
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 6px 12px;
+  color: var(--text);
+}
+.sf-table th .th-menu > button.on {
+  color: var(--brand-dark);
 }
 .th-custom {
   display: grid;
@@ -5836,4 +5855,12 @@ a.email-off {
   height: 30px;
   margin: 0;
   padding: 0 16px;
+}
+
+/* AI Assistant: supported files, under the attach button */
+.ai-attach-help {
+  padding-left: 2px;
+  color: var(--text-weak);
+  font-size: 12px;
+  line-height: 1.4;
 }

@@ -62,7 +62,7 @@ export default function TasksPage({ data, user, toggleTask, openTask, setModal, 
     { key: "due", label: "Due Date", type: "date", future: true, ranges: TASK_DUE_RANGES, get: (t) => t.due },
     { key: "priority", label: "Priority", options: opts(PRIORITIES), get: (t) => t.priority },
     { key: "kind", label: "Type", options: [["auto", "Automatic"], ["manual", "Manual"]], get: (t) => (t.is_auto ? "auto" : "manual") },
-    { key: "related", label: "Related To", options: [["leads", "Lead"], ["opportunities", "Opportunity"], ["general", "General"]], get: (t) => t.relatedType },
+    { key: "related", label: "Record Type", options: [["leads", "Lead"], ["opportunities", "Opportunity"], ["general", "General"]], get: (t) => t.relatedType },
     ...(team ? [{ key: "owner", label: "Assigned To", options: ownerOptions(data.users || [], user), get: (t) => String(t.owner_id) }] : []),
   ];
   const [stored, setStored] = useFilters("tasks");

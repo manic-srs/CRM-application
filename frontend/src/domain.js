@@ -400,14 +400,33 @@ export function newRecordProblems(type, values) {
 }
 // Leads list > Actions > Convert to Opportunity: exactly one open lead the user may convert, by the same rules as the
 // lead page and the board (rights(lead) -> { canEdit, canCreateSales }). Returns the existing convert popup to open,
-// or the reason the item is off.
+// a note to show when several leads are ticked (nothing is converted or sent), or the reason the item is off.
 export const CONVERT_ONE = "Select exactly one lead to convert.";
+export const CONVERT_ONE_AT_A_TIME = "Only one lead can be converted at a time. Please select one lead.";
+const ADMINS_DONT_CONVERT = "Admins don't convert leads. The lead's owner or a Manager converts it.";
 export function leadConvertChoice(leads, rights) {
+  if (leads.length > 1) {
+    const loaded = leads.find(Boolean);
+    if (loaded && !rights(loaded).canCreateSales) return { reason: ADMINS_DONT_CONVERT }; // the role rule still applies
+    return { explain: CONVERT_ONE_AT_A_TIME };
+  }
   if (leads.length !== 1 || !leads[0]) return { reason: CONVERT_ONE };
   const [lead] = leads;
   if (!LEAD_OPEN_STAGES.includes(lead.stage)) return { reason: `This lead is ${lead.stage}. Only open leads can be converted.` };
   const { canEdit, canCreateSales } = rights(lead);
-  if (!canCreateSales) return { reason: "Admins don't convert leads. The lead's owner or a Manager converts it." };
+  if (!canCreateSales) return { reason: ADMINS_DONT_CONVERT };
   if (!canEdit) return { reason: "You can convert only your own leads (or others' with the Edit team records permission)." };
   return { action: leadStageAction(lead, "Converted", { canEdit, canConvert: true }) };
 }
+
+// The primary writing action is shared by the button and Enter key.
+export function emailWritingAction(instructions, body, senderName = "", senderEmail = "", freshStart = false) {
+  if (instructions.trim()) return "custom";
+  return !freshStart && draftContent(body, senderName, senderEmail) ? "formalize" : "stage";
+}
+
+// AI Assistant attachments: the file types the backend reads (backend/app/assistant_store.py: DOC_TYPES, TEXT_TYPES,
+// IMAGE_TYPES) and its limits (MAX_FILES_PER_MESSAGE, MAX_FILE_BYTES, MAX_IMAGE_BYTES), shown under the attach button
+export const ASSISTANT_FILE_TYPES = ".pdf,.docx,.xlsx,.pptx,.csv,.tsv,.txt,.md,.json,.html,.htm,.eml,.xml,.log,.png,.jpg,.jpeg,.webp,.gif";
+export const ASSISTANT_ATTACH_HELP =
+  "PDF, Word, Excel, PowerPoint, CSV, text, HTML, email (.eml) or images (PNG, JPG, WEBP, GIF) · up to 5 files, 10 MB each (images 5 MB)";
