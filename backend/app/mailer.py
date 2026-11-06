@@ -52,8 +52,12 @@ def settings() -> dict:
 
 
 def password() -> str:
-    """The Outlook mailbox password (or app password), used exactly as written."""
-    return os.getenv("SMTP_PASSWORD", "")
+    """The mailbox password. Outlook: used exactly as written. Gmail (testing): Google shows App Passwords in groups
+    of four ("abcd efgh ijkl mnop"); the spaces aren't part of it, so they are removed."""
+    value = os.getenv("SMTP_PASSWORD", "")
+    if os.getenv("SMTP_HOST", "").strip().lower() == "smtp.gmail.com":
+        value = value.replace(" ", "")
+    return value
 
 
 def provider() -> str:

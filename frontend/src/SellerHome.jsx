@@ -90,9 +90,11 @@ function assistantItems(data, user) {
 
 // The line under the greeting: what this dashboard shows for this person and view
 function homeSummary(user, team) {
-  if (user.role === "Admin") return "Here's the sales overview across every team.";
-  if (team) return user.role === "Manager" ? "Here's how your team's pipeline and activity are tracking." : "Here's the team's pipeline and activity.";
-  return "Here's your pipeline and what needs your attention today.";
+  if (user.role === "Admin") return "Sales across every team: deals, accounts and follow-ups at a glance.";
+  if (user.role === "Manager")
+    return team ? "Your team's deals, accounts and follow-ups, and how each salesperson is doing." : "Your own deals, accounts and follow-ups for today.";
+  if (team) return "The team's deals, accounts and follow-ups at a glance.";
+  return "Your deals, accounts and follow-ups for today.";
 }
 
 // ---------- Whole team graphs: leads by stage, pipeline by stage, won vs lost this month, per salesperson ----------
@@ -220,7 +222,7 @@ export default function SellerHome({ data, user, toggleTask, openTask, scope = "
           <p>{homeSummary(user, team)}</p>
         </div>
         {teamDashboard && (
-        <div className="toggle-group scope-toggle" role="group" aria-label="Show records">
+        <div className="home-scope" role="group" aria-label="Show records">
           <button className={team ? "on" : ""} aria-pressed={team} onClick={() => setScope("team")}>
             Whole team
           </button>

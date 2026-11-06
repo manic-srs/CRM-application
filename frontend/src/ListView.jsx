@@ -1,4 +1,4 @@
-import { DownloadLeads, UploadLeads } from "./LeadFiles";
+import { DownloadLeads, TransferHistory, UploadLeads } from "./LeadFiles";
 import { can, canCreateOpportunity, canCreateSales } from "./permissions";
 import LeadsTable from "./LeadsTable";
 import { applyFilters, filterSummary, opts, ownerOptions, Th, useFilters } from "./Filters";
@@ -242,7 +242,7 @@ function Kanban({ records, setModal }) {
 }
 
 export default function ListView({ collection, data, user, openNew, setModal, query, notify, reload }) {
-  const [files, setFiles] = useState(null); // "upload" | "download" (Leads and Opportunities; their history is in Manage Access)
+  const [files, setFiles] = useState(null); // "upload" | "download" | "history" (Leads and Opportunities; History: Admin and Managers only)
   // Opportunities: the deals ticked in the list, and the Actions dialog open for them ({ type: "owner" | "lost", ids })
   const [picked, setPicked] = useState(() => new Set());
   const [oppBulk, setOppBulk] = useState(null);
@@ -374,6 +374,11 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
             {dataList && can(user, "export_data") && (
               <button className="sf-button" onClick={() => setFiles("download")}>
                 Download
+              </button>
+            )}
+            {dataList && (user.role === "Admin" || user.role === "Manager") && (
+              <button className="sf-button" onClick={() => setFiles("history")} title="Who uploaded or downloaded, when and why">
+                History
               </button>
             )}
             {collection === "accounts" && canCreateOpportunity(user) && (
@@ -570,6 +575,7 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
         />
       )}
       {files === "download" && <DownloadLeads object={collection} notify={notify} onClose={() => setFiles(null)} />}
+      {files === "history" && <TransferHistory object={collection} onClose={() => setFiles(null)} />}
     </div>
   );
 }

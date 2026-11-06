@@ -39,7 +39,8 @@ def test_off_without_api_key(client, monkeypatch):
 def test_create_lead_from_one_sentence(client, ai):
     script, seen = ai
     script += [[call("create_lead", first_name="Mohan", last_name="Reddy", company="PwC", title="Senior Consultant",
-                     email="mohan@pwc.example", source="Referral")],
+                     email="mohan@pwc.example", source="Referral", company_website="pwc.example",
+                     company_linkedin_url="https://www.linkedin.com/company/pwc-example")],
                "Created lead Mohan Reddy (PwC)."]
     res = client.post("/api/assistant/chat", json={"message": "Create a lead Mohan Reddy, Senior Consultant at PwC"}).json()
     assert res["reply"] == "Created lead Mohan Reddy (PwC)." and res["pending"] is None
