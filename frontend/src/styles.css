@@ -5307,13 +5307,13 @@ a.email-off {
 .activity-scope {
   margin: 16px 0 0;
 }
-.activity-tabs {
+.log-tabs {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 18px;
 }
-.activity-tab {
+.log-tab {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -5327,7 +5327,7 @@ a.email-off {
   font-size: 13px;
   cursor: pointer;
 }
-.activity-tab b {
+.log-tab b {
   min-width: 22px;
   padding: 1px 7px;
   border-radius: 999px;
@@ -5336,15 +5336,15 @@ a.email-off {
   font-size: 12px;
   text-align: center;
 }
-.activity-tab:hover {
+.log-tab:hover {
   border-color: var(--border-strong);
 }
-.activity-tab.on {
+.log-tab.on {
   border-color: var(--brand);
   background: #eef4ff;
   color: var(--brand-dark);
 }
-.activity-tab.on b {
+.log-tab.on b {
   background: var(--brand);
   color: var(--white);
 }
