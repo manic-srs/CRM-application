@@ -4,6 +4,7 @@
 // cancel demo, delete) come back as a Confirm card first. Files (PDF, Word, Excel, images...) can be attached.
 import React, { useEffect, useRef, useState } from "react";
 import { api } from "./api";
+import { ASSISTANT_ATTACH_HELP, ASSISTANT_FILE_TYPES } from "./domain";
 import { dateTime } from "./format";
 import { Icon, ObjectIcon } from "./ui";
 
@@ -25,7 +26,7 @@ const EXAMPLES = [
   ["Stats", ["Give me a pipeline report for this month", "What is our win rate this quarter?", "How many leads did we convert last month?"]],
 ];
 
-const ACCEPT = ".pdf,.docx,.xlsx,.pptx,.csv,.tsv,.txt,.md,.json,.html,.htm,.eml,.xml,.log,.png,.jpg,.jpeg,.webp,.gif";
+const ACCEPT = ASSISTANT_FILE_TYPES; // what the backend reads (backend/app/assistant_store.py)
 const LAST_CHAT = (user) => `crm-assistant-chat-${user.id}`;
 const remember = (user, id) => {
   try {
@@ -560,6 +561,7 @@ export default function AssistantPage({ user, reload }) {
                 className="ai-tool"
                 onClick={() => fileRef.current?.click()}
                 aria-label="Attach files"
+                aria-describedby="ai-attach-help"
                 title="Attach files: PDF, Word, Excel, PowerPoint, CSV, text or images (up to 10 MB)"
                 disabled={off || files.length >= 5}
               >
@@ -601,6 +603,9 @@ export default function AssistantPage({ user, reload }) {
                 <Icon name="up" size={18} />
               </button>
             </div>
+            <small id="ai-attach-help" className="ai-attach-help">
+              {ASSISTANT_ATTACH_HELP}
+            </small>
           </form>
         </section>
       </div>

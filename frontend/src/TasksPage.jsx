@@ -36,7 +36,8 @@ export default function TasksPage({ data, user, toggleTask, openTask, setModal, 
   const [view, setView] = useState(initial);
   const [search, setSearch] = useState("");
   const filter = views.find(([name]) => name === view)[1];
-  // Filters: Due Date, Priority, Status, Type (automatic follow-up or added by someone), Related To, Assigned To
+  // Filters: Due Date, Priority, Status, Type (automatic follow-up or added by someone), Record Type (the "Related To"
+  // column: Lead, Opportunity or General), Assigned To
   const defs = [
     { key: "due", label: "Due Date", type: "date", future: true, get: (t) => t.due },
     { key: "priority", label: "Priority", options: opts(PRIORITIES), get: (t) => t.priority },
@@ -45,7 +46,7 @@ export default function TasksPage({ data, user, toggleTask, openTask, setModal, 
       : []
     ).filter((f) => f.options.length),
     { key: "kind", label: "Type", options: [["auto", "Automatic"], ["manual", "Manual"]], get: (t) => (t.is_auto ? "auto" : "manual") },
-    { key: "related", label: "Related To", options: [["leads", "Lead"], ["opportunities", "Opportunity"], ["general", "General"]], get: (t) => t.relatedType },
+    { key: "related", label: "Record Type", options: [["leads", "Lead"], ["opportunities", "Opportunity"], ["general", "General"]], get: (t) => t.relatedType },
     ...(can(user, "view_team_records") && view.startsWith("All")
       ? [{ key: "owner", label: "Assigned To", options: ownerOptions(data.users || [], user), get: (t) => String(t.owner_id) }]
       : []),

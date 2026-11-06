@@ -672,15 +672,14 @@ export default function Modal({ modal, close, data, run, notify, user }) {
           onInput={(e) => type === "lead" && e.target.name === "company" && lookUpCompany(e.target.value)}
         >
           <div className="modal-body">
-          <p className="modal-subtitle">
-            {type === "convert"
-              ? "Creates an account (or uses an existing one), a contact and an opportunity. Open lead tasks are closed automatically."
-              : type === "stage"
-                ? "Open follow-up tasks are closed automatically and the next follow-up task is created."
-                : type === "delete"
-                  ? null
-                  : <><i className="req">*</i> = Required Information</>}
-          </p>
+          {/* no required-fields legend above the form: the red star beside each required field says it */}
+          {(type === "convert" || type === "stage") && (
+            <p className="modal-subtitle">
+              {type === "convert"
+                ? "Creates an account (or uses an existing one), a contact and an opportunity. Open lead tasks are closed automatically."
+                : "Open follow-up tasks are closed automatically and the next follow-up task is created."}
+            </p>
+          )}
           {type === "account" && (
             <div className="form-grid">
               {field("Account Name", "name", "text", true, "")}

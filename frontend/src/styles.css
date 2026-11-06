@@ -3338,6 +3338,19 @@ a.pill:hover {
 .th-menu > button:hover {
   background: #f3f9ff;
 }
+/* the filter menu opens inside the column header: keep the header-button rules (.sf-table th button: wider than the
+   cell, negative margin, muted colour) off its options, so they fit the menu without a horizontal scrollbar */
+.sf-table th .th-menu > button {
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 6px 12px;
+  color: var(--text);
+}
+.sf-table th .th-menu > button.on {
+  color: var(--brand-dark);
+}
 .th-custom {
   display: grid;
   gap: 6px;
@@ -5288,4 +5301,12 @@ a.email-off {
 }
 .ai-row-menu button.danger:hover {
   background: #fef1ee;
+}
+
+/* AI Assistant: supported files, under the attach button */
+.ai-attach-help {
+  padding-left: 2px;
+  color: var(--text-weak);
+  font-size: 12px;
+  line-height: 1.4;
 }

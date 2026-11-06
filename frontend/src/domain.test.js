@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { canCreateOpportunity, canCreateSales } from "./permissions.js";
 import {
   api,
@@ -54,6 +55,9 @@ import {
   CONTACT_EMAIL_INVALID,
   leadConvertChoice,
   CONVERT_ONE,
+  CONVERT_ONE_AT_A_TIME,
+  ASSISTANT_FILE_TYPES,
+  ASSISTANT_ATTACH_HELP,
 } from "./domain.js";
 
 test("lead form uses backend fields and only requires last name and company", () => {
@@ -773,7 +777,6 @@ test("Convert to Opportunity: exactly one open lead the user may convert", () =>
   assert.equal(open.reason, undefined);
   for (const stage of ["New", "Nurturing", "Revisit"]) assert.ok(leadConvertChoice([{ ...mine, stage }], salesperson).action);
   assert.equal(leadConvertChoice([], salesperson).reason, CONVERT_ONE);
-  assert.equal(leadConvertChoice([mine, { ...mine, id: 8 }], salesperson).reason, CONVERT_ONE);
   assert.equal(leadConvertChoice([undefined], salesperson).reason, CONVERT_ONE); // ticked but not loaded
   for (const stage of ["Converted", "Lost", "Unqualified"]) {
     const closed = leadConvertChoice([{ ...mine, stage }], salesperson);
@@ -782,6 +785,105 @@ test("Convert to Opportunity: exactly one open lead the user may convert", () =>
   }
   assert.match(leadConvertChoice([mine], () => ({ canEdit: true, canCreateSales: false })).reason, /Admins don't convert/);
   assert.match(leadConvertChoice([mine], () => ({ canEdit: false, canCreateSales: true })).reason, /only your own leads/);
+});
+
+test("Convert to Opportunity with several leads ticked only explains, and never opens the Convert form", () => {
+  const lead = (id, stage = "Demo") => ({ id, name: `Synthetic Lead ${id}`, stage, owner_id: 2 });
+  const salesperson = () => ({ canEdit: true, canCreateSales: true });
+  assert.equal(CONVERT_ONE_AT_A_TIME, "Only one lead can be converted at a time. Please select one lead.");
+  for (const leads of [[lead(1), lead(2)], [lead(1), lead(2), lead(3)], [lead(1, "Converted"), lead(2, "Lost")], [lead(1), undefined]]) {
+    const choice = leadConvertChoice(leads, salesperson);
+    assert.equal(choice.explain, CONVERT_ONE_AT_A_TIME);
+    assert.equal(choice.action, undefined); // no Convert form, so no conversion request
+    assert.equal(choice.reason, undefined);
+  }
+  // several ticked doesn't get round the role rule: Admins still can't convert (item stays off with the reason)
+  const admin = leadConvertChoice([lead(1), lead(2)], () => ({ canEdit: true, canCreateSales: false }));
+  assert.equal(admin.explain, undefined);
+  assert.equal(admin.action, undefined);
+  assert.match(admin.reason, /Admins don't convert/);
+  // one lead: the usual rules (someone else's lead without Edit team records stays off)
+  assert.match(leadConvertChoice([lead(1)], () => ({ canEdit: false, canCreateSales: true })).reason, /only your own leads/);
+  assert.deepEqual(leadConvertChoice([lead(1)], salesperson).action, { type: "convert", record: lead(1) });
+});
+
+// The UI wording and conditions below live in JSX components (not importable by the node test runner): checked in
+// the source, and in the browser
+const source = (file) => readFileSync(new URL(file, import.meta.url), "utf8");
+
+test("Leads Download offers 'All Leads' (wording only: the same 'all' value goes to the server)", () => {
+  const files = source("./LeadFiles.jsx");
+  assert.match(files, /\["all", "All Leads"\]/);
+  assert.doesNotMatch(files, /All leads I can see/);
+});
+
+test("create/edit popups have no '* = Required Information' legend; required fields keep their stars", () => {
+  for (const file of readdirSync(new URL(".", import.meta.url)).filter((f) => f.endsWith(".jsx")))
+    assert.doesNotMatch(source(`./${file}`), /=\s*Required Information/i, file);
+  const modal = source("./Modal.jsx");
+  assert.match(modal, /\{required && <i> \*<\/i>\}/); // the red star beside required fields
+  assert.match(modal, /required=\{required\}/); // and the accessible required attribute
+});
+
+test("Opportunities Actions appears only with at least one opportunity ticked, with the same actions", () => {
+  const list = source("./ListView.jsx");
+  assert.match(list, /ticks && mode !== "kanban" && picked\.size > 0 && \(\s*<ActionMenu/);
+  assert.doesNotMatch(list, /Tick opportunities in the list first/);
+  for (const action of ["Change Owner", "Mark as Lost", "Clear Selection"]) assert.match(list, new RegExp(`label: "${action}"`));
+});
+
+test("Tasks filter is called Record Type, with the Lead, Opportunity and General options and the same filtering", () => {
+  const tasks = source("./TasksPage.jsx");
+  assert.match(
+    tasks,
+    /\{ key: "related", label: "Record Type", options: \[\["leads", "Lead"\], \["opportunities", "Opportunity"\], \["general", "General"\]\], get: \(t\) => t\.relatedType \}/,
+  );
+  assert.match(tasks, /\["Related To", "related"\]/); // the column (the related record's name) keeps its name
+});
+
+test("AI Assistant attachment guidance matches the file types and limits the backend accepts", () => {
+  const types = ASSISTANT_FILE_TYPES.split(",");
+  assert.equal(new Set(types).size, types.length);
+  assert.match(source("./AssistantPage.jsx"), /const ACCEPT = ASSISTANT_FILE_TYPES/);
+  for (const words of ["PDF", "Word", "Excel", "PowerPoint", "CSV", "text", "HTML", "email (.eml)", "PNG", "JPG", "WEBP", "GIF", "5 files", "10 MB", "images 5 MB"])
+    assert.ok(ASSISTANT_ATTACH_HELP.includes(words), words);
+  const store = new URL("../../backend/app/assistant_store.py", import.meta.url);
+  if (!existsSync(store)) return; // frontend-only checkout
+  const py = readFileSync(store, "utf8");
+  const keys = (name) => [...py.match(new RegExp(`${name} = \\{([\\s\\S]*?)\\}`))[1].matchAll(/"(\.[a-z]+)":/g)].map((m) => m[1]);
+  const backend = ["DOC_TYPES", "TEXT_TYPES", "IMAGE_TYPES"].flatMap(keys);
+  assert.deepEqual([...types].sort(), [...backend].sort()); // the picker offers exactly what the backend reads
+  assert.match(py, /MAX_FILE_BYTES = 10 \* 1024 \* 1024/);
+  assert.match(py, /MAX_IMAGE_BYTES = 5 \* 1024 \* 1024/);
+  assert.match(py, /MAX_FILES_PER_MESSAGE = 5\b/);
+});
+
+test("New Campaign has no rendered preview; subject and message stay templates with merge fields", () => {
+  const campaigns = source("./CampaignsPage.jsx");
+  assert.doesNotMatch(campaigns, /email-sample|aria-label="Preview"|function fill\(/);
+  assert.match(campaigns, /className="merge-chip" onClick=\{\(\) => insert\(key\)\}/); // Insert field buttons
+  assert.match(campaigns, /const token = `\{\$\{field\}\}`/); // inserts {first_name}, not one recipient's value
+  assert.match(campaigns, /subject: subject\.trim\(\),\s*body: body\.trim\(\),/); // the templates are what's sent
+  assert.match(campaigns, /\.campaignPreview\(audience\)/); // recipient counts and exclusions still checked
+  assert.match(campaigns, /preview\?\.eligible/);
+});
+
+test("Leads Actions appears only with at least one lead ticked, keeping Convert's one-lead form and warning", () => {
+  const leads = source("./LeadsTable.jsx");
+  assert.match(leads, /actionsSlot &&\s*!kanban &&\s*selected\.size > 0 &&\s*createPortal\(/);
+  assert.doesNotMatch(leads, /Tick leads in the list first/);
+  assert.match(leads, /disabled: !convertChoice\.action && !convertChoice\.explain/);
+  assert.match(leads, /convertChoice\.explain \? setConvertNote\(convertChoice\.explain\) : setModal\(convertChoice\.action\)/);
+  for (const action of ["Email Campaign", "Transfer ", "Delete "]) assert.ok(leads.includes(`label: ${action === "Email Campaign" ? `"${action}"` : `\`${action}`}`), action);
+});
+
+test("column filter menus keep their own option layout inside table headers (no horizontal scrollbar)", () => {
+  const css = source("./styles.css");
+  // .sf-table th button (sortable headers: wider than the cell, negative margin) must not reach the menu options
+  const rule = css.match(/\.sf-table th \.th-menu > button \{([^}]*)\}/);
+  assert.ok(rule, "override for menu options inside headers");
+  for (const decl of ["width: 100%", "margin: 0", "padding: 6px 12px", "color: var(--text)"]) assert.ok(rule[1].includes(decl), decl);
+  assert.match(css, /\.sf-table th \.th-menu > button\.on \{\s*color: var\(--brand-dark\);/);
 });
 
 test("direct opportunity creation includes Admin without granting lead conversion", () => {
