@@ -411,3 +411,9 @@ export function leadConvertChoice(leads, rights) {
   if (!canEdit) return { reason: "You can convert only your own leads (or others' with the Edit team records permission)." };
   return { action: leadStageAction(lead, "Converted", { canEdit, canConvert: true }) };
 }
+
+// The primary writing action is shared by the button and Enter key.
+export function emailWritingAction(instructions, body, senderName = "", senderEmail = "", freshStart = false) {
+  if (instructions.trim()) return "custom";
+  return !freshStart && draftContent(body, senderName, senderEmail) ? "formalize" : "stage";
+}

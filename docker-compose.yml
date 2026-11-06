@@ -65,6 +65,9 @@ services:
       ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS-srsconsultinginc.com}
       SECRET_KEY: ${SECRET_KEY:-salestrack-dev-secret-change-me}
       EMAIL_DRAFT_MODE: ${EMAIL_DRAFT_MODE:-openai}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_EMAIL_MODEL: ${OLLAMA_EMAIL_MODEL:-qwen3.5:9b}
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-30m}
       OPENAI_ENV_FILE: /run/secrets/ai_settings
       OPENAI_EMAIL_MODEL: ${OPENAI_EMAIL_MODEL:-gpt-4.1-mini}
       # Email campaigns: sending pace (Outlook allows 30 a minute and 2,000 external recipients a day per mailbox)

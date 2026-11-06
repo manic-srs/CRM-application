@@ -686,3 +686,173 @@ def test_a_draft_returns_only_the_email_text_and_changes_nothing_on_the_record(c
 def test_instructions_state_the_scope_recipient_and_untrusted_text():
     for phrase in ('"unsupported"', '"needs_context"', 'manager', 'untrusted data', 'meeting links'):
         assert phrase in ai_email.INSTRUCTIONS
+
+
+@pytest.mark.parametrize("code,expected", [("expired_secret_key", "has expired"), ("invalid_api_key", "rejected the API key")])
+def test_authentication_error_explains_how_to_restore_drafting(client, record, provider, code, expected):
+    provider[1].update(status=401, json={"error": {"code": code, "message": "PRIVATE_PROVIDER_DETAIL"}})
+    response = client.post('/api/emails/draft', json=request(record))
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert expected in detail
+    assert "OPENAI_API_KEY" in detail
+    assert "PRIVATE_PROVIDER_DETAIL" not in detail
+
+
+@pytest.mark.parametrize('action,current_body', [('custom', ''), ('formalize', 'Please let me know when you can meet.')])
+def test_ollama_draft_uses_local_model_without_openai_credentials(client, record, provider, monkeypatch, action, current_body):
+    monkeypatch.setenv('EMAIL_DRAFT_MODE', 'ollama')
+    monkeypatch.setenv('OLLAMA_BASE_URL', 'http://host.docker.internal:11434/')
+    monkeypatch.setenv('OLLAMA_EMAIL_MODEL', 'qwen3.5:9b')
+    monkeypatch.setattr(ai_email, 'api_key', lambda: pytest.fail('Local drafting must not read the OpenAI key'))
+    provider[1]['json'] = {'done': True, 'done_reason': 'stop', 'message': {'content': model_reply('Demo availability', 'Hi Jack,\n\nWhen would you be available for a demo?')}}
+    response = client.post('/api/emails/draft', json=request(record, action=action, current_body=current_body))
+    assert response.status_code == 200, response.text
+    assert response.json()['mode'] == 'ollama'
+    assert 'available for a demo' in response.json()['body']
+    sent = provider[0][0]
+    assert str(sent.url) == 'http://host.docker.internal:11434/api/chat'
+    assert 'authorization' not in sent.headers
+    payload = json.loads(sent.content)
+    assert payload['model'] == 'qwen3.5:9b'
+    assert payload['format'] == ai_email.DRAFT_SCHEMA
+    assert payload['think'] is False
+    assert payload['keep_alive'] == '30m'
+    assert client.get('/api/emails/settings').json()['ai_drafting_enabled'] is True
+
+
+@pytest.mark.parametrize('reply,status,expected', [
+    ({'done': False, 'message': {'content': '{}'}}, 200, 'unusable draft'),
+    ({'done': True, 'done_reason': 'length', 'message': {'content': '{}'}}, 200, 'unusable draft'),
+    ({'error': 'PRIVATE_PROVIDER_DETAIL'}, 404, 'model was not found'),
+])
+def test_ollama_failures_keep_existing_draft(client, record, provider, monkeypatch, reply, status, expected):
+    monkeypatch.setenv('EMAIL_DRAFT_MODE', 'ollama')
+    provider[1].update(status=status, json=reply)
+    response = client.post('/api/emails/draft', json=request(record))
+    assert response.status_code == 502
+    assert expected in response.json()['detail']
+    assert 'PRIVATE_PROVIDER_DETAIL' not in response.text
+
+
+@pytest.mark.parametrize('provider_mode', ['openai', 'ollama'])
+@pytest.mark.parametrize('action', ['formalize', 'friendly', 'shorten'])
+def test_tone_edits_have_body_only_length_budget_on_both_providers(client, record, provider, monkeypatch, provider_mode, action):
+    monkeypatch.setenv('EMAIL_DRAFT_MODE', provider_mode)
+    # A signature must not inflate the shortening target or the tone-edit length guidance.
+    text = ' '.join(['Please review the proposal before our next discussion.'] * 10)
+    body = 'Hi Jack,\n\n' + text + '\n\nBest regards,\nRavi Kumar\nravi@crm.test'
+    if provider_mode == 'ollama':
+        provider[1]['json'] = {'done': True, 'message': {'content': model_reply('Proposal review', 'Hi Jack,\n\nPlease review the proposal.')}}
+    response = client.post('/api/emails/draft', json=request(record, action=action, current_body=body, current_subject='Proposal review'))
+    assert response.status_code == 200, response.text
+    sent = json.loads(provider[0][0].content)
+    if provider_mode == 'ollama':
+        instruction = sent['messages'][0]['content']
+        content = json.loads(sent['messages'][1]['content'])
+    else:
+        instruction = sent['instructions']
+        content = json.loads(sent['input'])
+    assert instruction == ai_email.EDIT_INSTRUCTIONS
+    expected_body = ai_email.without_signature(body, 'Ravi Kumar', 'ravi@crm.test') if provider_mode == 'ollama' else body
+    assert content['existing_message'] == expected_body
+    assert content['edit_budget']['source_word_count'] == len(text.split())
+    expected_words = int(len(text.split()) * .5) if action == 'shorten' else len(text.split())
+    assert content['edit_budget']['target_max_words'] == expected_words
+    assert response.json()['subject'] == 'Proposal review'
+
+
+@pytest.mark.parametrize('provider_mode', ['openai', 'ollama'])
+@pytest.mark.parametrize('instructions,expected_policy,expected_subject', [
+    ('Rewrite the email and change the subject line to "Demo availability".', 'rewrite', 'Demo availability'),
+    ('Rewrite the email but keep the subject line.', 'preserve', 'Original subject'),
+    ('Keep the email concise and change the subject line to Demo availability.', 'rewrite', 'Demo availability'),
+    ("Make the message warmer. Don't change the subject.", 'preserve', 'Original subject'),
+    ('Please write a new email asking for demo availability.', 'preserve', 'Original subject'),
+])
+def test_explicit_subject_policy_reaches_both_models(client, record, provider, monkeypatch, provider_mode, instructions, expected_policy, expected_subject):
+    monkeypatch.setenv('EMAIL_DRAFT_MODE', provider_mode)
+    reply = model_reply('Demo availability', 'Hi Jack,\n\nWhen are you available for a demo?')
+    provider[1]['json'] = completed(reply) if provider_mode == 'openai' else {'done': True, 'message': {'content': reply}}
+    response = client.post('/api/emails/draft', json=request(record, action='custom', instructions=instructions, current_subject='Original subject', current_body=DRAFT))
+    assert response.status_code == 200, response.text
+    assert response.json()['subject'] == expected_subject
+    sent = json.loads(provider[0][0].content)
+    content = json.loads(sent['input'] if provider_mode == 'openai' else sent['messages'][1]['content'])
+    assert content['subject_policy'] == expected_policy
+    if provider_mode == 'ollama':
+        assert instructions in sent['messages'][-1]['content']
+    assert 'available for a demo' in response.json()['body']
+
+
+@pytest.mark.parametrize('provider_mode', ['openai', 'ollama'])
+@pytest.mark.parametrize('stage,prompt', [('New', 'can you write an email'), ('Demo', 'Please draft an email.'), ('Nurturing', 'Could you please write an email for me?')])
+def test_generic_email_request_uses_saved_sales_purpose(client, record, provider, monkeypatch, provider_mode, stage, prompt):
+    monkeypatch.setenv('EMAIL_DRAFT_MODE', provider_mode)
+    db = next(app.dependency_overrides[get_db]())
+    db.get(Lead, record['id']).stage = stage
+    db.commit()
+    db.close()
+    reply = model_reply('Let us connect', 'Hi Jack,\n\nWhen would you be available to discuss your business needs?')
+    provider[1]['json'] = completed(reply) if provider_mode == 'openai' else {'done': True, 'message': {'content': reply}}
+    response = client.post('/api/emails/draft', json=request(record, action='custom', instructions=prompt, current_body=STARTER))
+    assert response.status_code == 200, response.text
+    sent = json.loads(provider[0][0].content)
+    content = json.loads(sent['input'] if provider_mode == 'openai' else sent['messages'][1]['content'])
+    assert ai_email.STAGE_GUIDANCE[stage] in content['user_request']
+    assert content['task'] == 'new_email'
+    assert response.json()['draft_type'] == 'new'
+
+
+@pytest.mark.parametrize('prompt', ['Write to my landlord.', 'Write something.', 'Write an email requesting leave.', 'Ask Jack to attend a demo.'])
+def test_specific_and_unrelated_requests_are_not_replaced_with_stage_defaults(prompt):
+    assert ai_email.writing_request(prompt, False, 'New') == prompt
+
+
+def test_generic_request_does_not_replace_an_existing_draft():
+    prompt = 'Can you write an email?'
+    assert ai_email.writing_request(prompt, True, 'New') == prompt
+
+
+@pytest.mark.parametrize('subject', ['Hello\x00hidden', 'Hello\x1bhidden', 'Hello\tBcc: hidden', 'Hello\r\nBcc: hidden'])
+def test_unsafe_subject_is_refused_before_provider_call(client, record, provider, subject):
+    response = client.post('/api/emails/draft', json=request(record, current_subject=subject))
+    assert response.status_code == 422
+    assert not provider[0]
+
+
+def test_provider_subject_control_characters_are_not_applied(client, record, provider):
+    provider[1]['json'] = completed(model_reply('Demo\x00hidden', 'Hi Jack,\n\nWhen can we meet?'))
+    response = client.post('/api/emails/draft', json=request(record))
+    assert response.status_code == 502
+    assert 'unchanged' in response.json()['detail']
+
+
+@pytest.mark.parametrize('url', ['not-a-url', 'http://user:private@localhost:11434', 'http://localhost:11434?secret=private'])
+def test_invalid_local_configuration_is_sanitized_before_network(client, record, provider, monkeypatch, url):
+    monkeypatch.setenv('EMAIL_DRAFT_MODE', 'ollama')
+    monkeypatch.setenv('OLLAMA_BASE_URL', url)
+    response = client.post('/api/emails/draft', json=request(record))
+    assert response.status_code == 503
+    assert 'private' not in response.text and url not in response.text
+    assert not provider[0]
+
+
+@pytest.mark.parametrize('action', ['stage', 'custom', 'formalize', 'friendly', 'shorten'])
+def test_admin_can_draft_and_refine_another_users_lead(client, record, provider, monkeypatch, action):
+    monkeypatch.setattr(mailer, 'send', lambda *args, **kwargs: pytest.fail('Drafting must not send email'))
+    login_as(client, 3)  # Asha (Admin), while the lead belongs to Ravi (Salesperson).
+    me = client.get('/api/auth/me').json()
+    assert me['role'] == 'Admin'
+    assert 'send_emails' in me['permissions']
+    assert client.get('/api/emails/settings').json()['ai_drafting_enabled'] is True
+    assert client.get('/api/emails/draft-options', params={'record_field': 'lead_id', 'record_id': record['id']}).status_code == 200
+    before = client.get(f"/api/leads/{record['id']}").json()
+    original = 'Hi Jack,\n\nCould you confirm your availability for a demo?\n\nBest regards,\nAsha Rao\nasha@crm.test'
+    response = client.post('/api/emails/draft', json=request(record, action=action, instructions='Ask Jack when he is available for a demo.' if action == 'custom' else '', current_body=original if action != 'stage' else '', current_subject='Demo availability'))
+    assert response.status_code == 200, response.text
+    assert response.json()['body'].endswith('Best regards,\nAsha Rao\nasha@crm.test')
+    assert response.json()['subject'] == 'Demo availability'
+    after = client.get(f"/api/leads/{record['id']}").json()
+    assert (after['owner_id'], after['stage']) == (before['owner_id'], before['stage'])
+    assert client.get('/api/emails', params={'lead_id': record['id']}).json() == []
