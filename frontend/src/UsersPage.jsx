@@ -727,13 +727,13 @@ function ActivityTab({ team }) {
           Activity of the Salespeople in your team (and your own). The Admin's actions are kept in the Admin's Activity Log.
         </p>
       )}
-      <div className="activity-tabs" role="tablist" aria-label="Activity type">
+      <div className="log-tabs" role="tablist" aria-label="Activity type">
         {tabs.map((t) => (
           <button
             key={t.key || "all"}
             role="tab"
             aria-selected={category === t.key}
-            className={`activity-tab ${category === t.key ? "on" : ""}`}
+            className={`log-tab ${category === t.key ? "on" : ""}`}
             onClick={() => (setCategory(t.key), setAction(""))}
           >
             {t.label}
