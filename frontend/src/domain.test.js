@@ -47,6 +47,7 @@ import {
   emailWebsiteProblem,
   isPersonalEmail,
   draftContent,
+  emailWritingAction,
   toRecordContact,
   parseRecipients,
   companyFromEmail,
@@ -892,4 +893,22 @@ test("direct opportunity creation includes Admin without granting lead conversio
   assert.equal(canCreateSales({ role: "Admin" }), false);
   assert.equal(canCreateSales({ role: "Manager" }), true);
   assert.equal(canCreateSales({ role: "Salesperson" }), true);
+});
+
+
+test("email writing button and Enter choose the same action for an empty or existing draft", () => {
+  const starter = "Hi Jack,\n\nBest regards,\nRavi Kumar\nravi@crm.test";
+  assert.equal(emailWritingAction("", starter, "Ravi Kumar", "ravi@crm.test"), "stage");
+  assert.equal(emailWritingAction("Write an email", starter, "Ravi Kumar", "ravi@crm.test"), "custom");
+  const draft = "Hi Jack,\n\nCould you share your availability?";
+  assert.equal(emailWritingAction("   ", draft, "Ravi Kumar", "ravi@crm.test"), "formalize");
+  assert.equal(emailWritingAction("Change the subject", draft, "Ravi Kumar", "ravi@crm.test"), "custom");
+});
+
+
+test("resetting the writing bar returns to generation even while the previous email is still present", () => {
+  const draft = "Hi Jack,\n\nCould you share your availability?";
+  assert.equal(emailWritingAction("", draft, "Ravi Kumar", "ravi@crm.test", true), "stage");
+  assert.equal(emailWritingAction("write an email", draft, "Ravi Kumar", "ravi@crm.test", true), "custom");
+  assert.equal(emailWritingAction("", draft, "Ravi Kumar", "ravi@crm.test", false), "formalize");
 });

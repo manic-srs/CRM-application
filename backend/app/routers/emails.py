@@ -12,11 +12,11 @@ app opens it in your own Gmail / Outlook to send (attachments have to be added t
 import re
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import ai_email, email_options, mailer, schemas
+from app import ai_email, draft_execution, email_options, mailer, schemas
 from app.database import get_db
 from app.models import Account, Contact, Email, EmailAttachment, Lead, Opportunity, User
 from app.security import acting_user, require, require_view
@@ -144,7 +144,7 @@ def draft_options(record_field: ai_email.RecordField, record_id: int = Query(gt=
 
 
 @router.post("/draft", response_model=ai_email.DraftResponse)
-async def draft_email(data: ai_email.DraftRequest, db: Session = Depends(get_db)):
+async def draft_email(data: ai_email.DraftRequest, request: Request, db: Session = Depends(get_db)):
     """Generate an editable draft for a visible record. Does not send or save an email."""
     me = require("send_emails")
     record, label = draft_record(db, data.record_field, data.record_id)
@@ -161,7 +161,12 @@ async def draft_email(data: ai_email.DraftRequest, db: Session = Depends(get_db)
     if not data.recipient_is_record_contact:  # To was changed: don't greet the record's contact by name
         context = {key: value for key, value in context.items() if key not in ("first_name", "last_name")}
         context["recipient_is_record_contact"] = False
-    draft = await ai_email.generate_draft(data, context, me.full_name, me.email)
+    local = ai_email.mode() == "ollama"
+    with draft_execution.claim_draft(me.id, local):
+        draft = await draft_execution.wait_for_draft(
+            request, ai_email.generate_draft(data, context, me.full_name, me.email),
+            timeout_seconds=125 if local else 45,
+        )
     return ai_email.DraftResponse(**draft.model_dump(), stage=data.email_stage or context["current_stage"], record_stage=context["current_stage"], mode=ai_email.mode())
 
 

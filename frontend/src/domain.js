@@ -419,6 +419,12 @@ export function leadConvertChoice(leads, rights) {
   return { action: leadStageAction(lead, "Converted", { canEdit, canConvert: true }) };
 }
 
+// The primary writing action is shared by the button and Enter key.
+export function emailWritingAction(instructions, body, senderName = "", senderEmail = "", freshStart = false) {
+  if (instructions.trim()) return "custom";
+  return !freshStart && draftContent(body, senderName, senderEmail) ? "formalize" : "stage";
+}
+
 // AI Assistant attachments: the file types the backend reads (backend/app/assistant_store.py: DOC_TYPES, TEXT_TYPES,
 // IMAGE_TYPES) and its limits (MAX_FILES_PER_MESSAGE, MAX_FILE_BYTES, MAX_IMAGE_BYTES), shown under the attach button
 export const ASSISTANT_FILE_TYPES = ".pdf,.docx,.xlsx,.pptx,.csv,.tsv,.txt,.md,.json,.html,.htm,.eml,.xml,.log,.png,.jpg,.jpeg,.webp,.gif";
