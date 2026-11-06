@@ -102,7 +102,8 @@ def test_no_suggestions_are_shown_after_replies(client, ai):
     assert assistant.split_suggestions("Done.\n**NEXT:** Book a demo | Add a task.") == ("Done.", ["Book a demo", "Add a task"])
     assert assistant.split_suggestions("- Win rate: **50%**\nNEXT: Compare") == ("- Win rate: **50%**", ["Compare"])
     script, seen = ai
-    script += [[call("create_lead", last_name="Rao", company="Zeta")], "Created Rao. NEXT: Book a demo with Rao"]
+    script += [[call("create_lead", last_name="Rao", company="Zeta", email="rao@zeta.example", company_website="zeta.example",
+                     company_linkedin_url="https://www.linkedin.com/company/zeta-example")], "Created Rao. NEXT: Book a demo with Rao"]
     res = chat(client, "create lead Rao at Zeta")
     assert res["reply"] == "Created Rao." and res["suggestions"] == [] and res["chat"][-1]["suggestions"] == []
     assert "Don't end replies with suggested next requests" in seen[0][0]["content"]
@@ -406,7 +407,8 @@ def test_pasted_details_reach_the_ai_whole_and_the_lead_is_created(client, ai):
     long_thread = SIGNATURE + "\n" + ("> earlier message in the thread\n" * 400)  # a long pasted email (~13,000 chars)
     script += [[call("create_lead", first_name="Kavya", last_name="Menon", title="Head of Operations",
                      company="Brightline Logistics", email="kavya.menon@brightline.test", phone="+1 415 555 0142",
-                     company_website="https://www.brightline.test", source="Event")], "Created Kavya Menon."]
+                     company_website="https://www.brightline.test", source="Event",
+                     company_linkedin_url="https://www.linkedin.com/company/brightline-test")], "Created Kavya Menon."]
     res = chat(client, "Create a lead from this:\n" + long_thread)
     assert user_text(seen[0]) == ("Create a lead from this:\n" + long_thread).strip()  # nothing cut off
     lead = client.get(f"/api/leads/{res['links'][0]['id']}").json()
@@ -420,7 +422,8 @@ def test_an_uploaded_list_creates_every_lead_and_stays_readable_later(client, ai
     rows = "\n".join(f"Person{i},Lastname{i},Company {i},person{i}@company{i}.test" for i in range(1, 121))
     file = upload(client, "expo-leads.csv", ("first,last,company,email\n" + rows).encode()).json()
     script += [[call("create_lead", first_name=f"Person{i}", last_name=f"Lastname{i}", company=f"Company {i}",
-                     email=f"person{i}@company{i}.test") for i in range(1, 4)], "Created the first 3 leads."]
+                     email=f"person{i}@company{i}.test", company_website=f"company{i}.test",
+                     company_linkedin_url=f"https://www.linkedin.com/company/company{i}") for i in range(1, 4)], "Created the first 3 leads."]
     first = chat(client, "Create leads for the first three rows", file_ids=[file["id"]])
     assert len(first["links"]) == 3
     assert {client.get(f"/api/leads/{l['id']}").json()["company"] for l in first["links"]} == {"Company 1", "Company 2", "Company 3"}

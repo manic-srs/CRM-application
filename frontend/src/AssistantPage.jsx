@@ -7,10 +7,14 @@ import { api } from "./api";
 import { ASSISTANT_ATTACH_HELP, ASSISTANT_FILE_TYPES } from "./domain";
 import { dateTime } from "./format";
 import { Icon, ObjectIcon } from "./ui";
+import { can } from "./permissions";
 
+// Quick actions and example questions depend on the role (and permissions), like the tools the backend offers:
+// - Salesperson: their own sales work
+// - Manager: their team first, then their own sales work (transfer only with that permission)
+// - Admin: reports, look-ups and users (the Admin's Assistant doesn't change sales records)
 // Quick actions start the sentence; the details can then be typed or pasted in any format.
-// Everything else (convert, new opportunity, reports, files...) is asked in the chat.
-const QUICK = [
+const SALES_QUICK = [
   { icon: "lead", label: "New lead", text: "Create a new lead: " },
   { icon: "event", label: "Book demo", text: "Book a demo with " },
   { icon: "task", label: "Follow-up task", text: "Create a follow-up task: " },
@@ -18,13 +22,53 @@ const QUICK = [
   { icon: "outcome", label: "Won / Lost", text: "Mark the deal as " },
 ];
 
-// Example questions, grouped like the menu (click to ask)
-const EXAMPLES = [
-  ["Lead workflow", ["Which leads should I follow up today?", "Which leads have a demo this week?", "Show my leads waiting at Nurturing"]],
-  ["Deals", ["Show my open opportunities by stage", "Which deals close this month?", "Which deals are at Proposal?"]],
-  ["Tasks & demos", ["What is overdue?", "What do I have today?", "Show my upcoming demos"]],
-  ["Stats", ["Give me a pipeline report for this month", "What is our win rate this quarter?", "How many leads did we convert last month?"]],
-];
+export function assistantFor(user) {
+  const transfer = user.role === "Admin" || can(user, "reassign_owner") || can(user, "transfer_leads");
+  if (user.role === "Admin")
+    return {
+      intro: "Ask for reports, record look-ups and user information across every team. Sales changes are made by the record's owner or their Manager.",
+      quick: [
+        { icon: "outcome", label: "Pipeline report", text: "Give me a pipeline report for " },
+        { icon: "opportunity", label: "Win rate", text: "What is the win rate for " },
+        { icon: "lead", label: "Find a record", text: "Find " },
+        { icon: "task", label: "Overdue tasks", text: "Which tasks are overdue across all teams?" },
+        { icon: "contact", label: "Users", text: "List the active users and their roles" },
+      ],
+      examples: [
+        ["Company overview", ["Give me a pipeline report for this month", "What is our win rate this quarter?", "What are the top lost reasons this quarter?"]],
+        ["Teams & people", ["List the active users and their roles", "Who won the most deals this quarter?", "Show Won by owner for this month"]],
+        ["Leads & deals", ["Which leads were created this week?", "Show the biggest open deals", "Which deals close this month?"]],
+        ["Tasks", ["Which tasks are overdue across all teams?", "How many tasks were completed this month?", "Show the upcoming demos"]],
+      ],
+    };
+  if (user.role === "Manager")
+    return {
+      intro: "Ask about your team or do your own sales work. It uses your permissions, and closing actions wait for your confirmation.",
+      quick: [
+        { icon: "outcome", label: "Team report", text: "Give me my team's pipeline report for " },
+        transfer && { icon: "contact", label: "Transfer lead", text: "Transfer the lead " },
+        { icon: "task", label: "Follow-up task", text: "Create a follow-up task: " },
+        { icon: "lead", label: "New lead", text: "Create a new lead: " },
+        { icon: "event", label: "Book demo", text: "Book a demo with " },
+      ].filter(Boolean),
+      examples: [
+        ["My team", ["Which of my team's tasks are overdue?", "Show my team's open deals by stage", "Which team leads have a demo this week?"]],
+        ["Team performance", ["Compare won deals by salesperson this quarter", "What is my team's win rate this quarter?", "How many leads did my team convert this month?"]],
+        ["Deals", ["Which team deals close this month?", "Which deals are at Proposal?", "Show the biggest open deals in my team"]],
+        ["My work", ["What do I have today?", "Which of my leads should I follow up today?", "Show my upcoming demos"]],
+      ],
+    };
+  return {
+    intro: "Ask in your own words or attach the details. It works on your own records with your permissions, and closing actions wait for your confirmation.",
+    quick: [...SALES_QUICK, can(user, "transfer_leads") && { icon: "contact", label: "Transfer lead", text: "Transfer my lead " }].filter(Boolean),
+    examples: [
+      ["My leads", ["Which leads should I follow up today?", "Which leads have a demo this week?", "Show my leads waiting at Nurturing"]],
+      ["My deals", ["Show my open opportunities by stage", "Which of my deals close this month?", "Which of my deals are at Proposal?"]],
+      ["Tasks & demos", ["What is overdue?", "What do I have today?", "Show my upcoming demos"]],
+      ["My numbers", ["Give me my pipeline report for this month", "What is my win rate this quarter?", "How many leads did I convert last month?"]],
+    ],
+  };
+}
 
 const ACCEPT = ASSISTANT_FILE_TYPES; // what the backend reads (backend/app/assistant_store.py)
 const LAST_CHAT = (user) => `crm-assistant-chat-${user.id}`;
@@ -233,6 +277,7 @@ function ChatList({ items, current, busy, onOpen, onNew, onRename, onDelete, onC
 }
 
 export default function AssistantPage({ user, reload }) {
+  const role = assistantFor(user);
   const [status, setStatus] = useState(null);
   const [chats, setChats] = useState([]);
   const [current, setCurrent] = useState(null); // saved chat id (null = new chat)
@@ -393,8 +438,7 @@ export default function AssistantPage({ user, reload }) {
         <div>
           <h1>AI Assistant</h1>
           <p>
-            Ask in your own words or attach the details. It works on your CRM data with your permissions &amp; closing actions
-            wait for your confirmation.
+            {role.intro}
           </p>
         </div>
 
@@ -441,7 +485,7 @@ export default function AssistantPage({ user, reload }) {
             <span className="ai-quick-label">
               <Icon name="flash" size={14} /> Quick actions
             </span>
-            {QUICK.map((q) => (
+            {role.quick.map((q) => (
               <button key={q.label} onClick={() => quick(q)} disabled={off || busy}>
                 <ObjectIcon type={q.icon} size={20} />
                 {q.label}
@@ -461,7 +505,7 @@ export default function AssistantPage({ user, reload }) {
             {title && <h2 className="ai-chat-title" title={title}>{title}</h2>}
             {!chat.length ? (
               <div className="ai-examples">
-                {EXAMPLES.map(([group, items]) => (
+                {role.examples.map(([group, items]) => (
                   <div key={group} className="ai-example-group">
                     <h2>{group}</h2>
                     {items.map((q) => (

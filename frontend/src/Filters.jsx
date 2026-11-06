@@ -260,9 +260,14 @@ function HeaderFilter({ def, values, onChange }) {
                 placeholder={def.placeholder || `Type part of the ${def.label.toLowerCase()}`}
                 aria-label={`${def.label} contains`}
               />
-              <button className="sf-button brand" type="submit" disabled={!typed.trim()}>
-                Apply
-              </button>
+              <div className="th-custom-actions">
+                <button type="button" className="link" disabled={!typed && !value} onClick={() => (setTyped(""), value && choose(""))}>
+                  Clear
+                </button>
+                <button className="sf-button brand small" type="submit" disabled={!typed.trim()}>
+                  Apply
+                </button>
+              </div>
             </form>
           )}
           {!choices.length && def.type !== "text" && <p className="th-menu-empty">Nothing to filter yet</p>}

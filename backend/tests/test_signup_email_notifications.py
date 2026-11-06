@@ -283,3 +283,9 @@ def test_outlook_smtp_settings(monkeypatch):
     assert (cfg["host"], cfg["port"], cfg["tls"], cfg["user"]) == ("smtp.office365.com", 587, True, "crm@srsconsultinginc.com")
     assert cfg["password"] == "synthetic pass word"  # used exactly as written
     assert mailer.mode()["mode"] == "real email"
+
+
+def test_gmail_app_password_spaces_are_removed(monkeypatch):
+    monkeypatch.setenv("SMTP_HOST", "smtp.gmail.com")
+    monkeypatch.setenv("SMTP_PASSWORD", "abcd efgh ijkl mnop")  # synthetic, as Google shows it
+    assert mailer.settings()["password"] == "abcdefghijklmnop"

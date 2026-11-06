@@ -148,9 +148,11 @@ TOOLS = [
         "description": S}, ["task_id"]),
     _tool("reopen_lead", "Bring an Unqualified lead back to New.", {"lead_id": I, "note": NOTE, **TASK_ARGS},
           ["lead_id", "note", *TASK_REQUIRED]),
-    _tool("create_lead", "Create a lead at stage New. Last name and company are required.", {
+    _tool("create_lead", "Create a lead at stage New. Required, like the New Lead form: Last Name, Company, Email, "
+          "Company Website and Company LinkedIn URL (Lead Source defaults to Other). Take them from what the user gave; "
+          "ask only for the missing required ones, never make them up.", {
         **LEAD_FIELDS, "owner_name": {"type": "string", "description": "Only when the user names another owner"}},
-        ["last_name", "company"]),
+        ["last_name", "company", "email", "company_website", "company_linkedin_url"]),
     _tool("update_lead", "Change details of a lead (not its stage or owner).", {"lead_id": I, **LEAD_FIELDS}, ["lead_id"]),
     _tool("move_lead_stage", "Move a lead to New, Nurturing, Revisit or Demo. Demo needs demo_date; Revisit needs revisit_date and revisit_reason.", {
         "lead_id": I, "stage": {"type": "string", "enum": LEAD_FLOW}, "demo_date": DATE_TIME,
@@ -204,6 +206,35 @@ TASK_TOOLS = {"move_lead_stage", "convert_lead", "move_opportunity_stage", "mark
               "create_opportunity", "reopen_lead"}
 TASK_MISSING = (f"{schemas.STAGE_TASK_REQUIRED} Ask the user for the task's subject and due date (for Won, a post-sale "
                 "task such as handover or onboarding); don't make them up.")
+
+
+# The required fields of each form in the app (the red * on the screen). A create call missing any of them isn't
+# run: the model is told to ask the user for exactly those, in one question. (New account / contact: the API's own
+# checks already name the missing Industry, Phone or Email.)
+REQUIRED_FIELDS = {
+    "create_lead": [("last_name", "Last Name"), ("company", "Company"), ("email", "Email"),
+                    ("company_website", "Company Website"), ("company_linkedin_url", "Company LinkedIn URL")],
+    "create_task": [("title", "Subject"), ("due_date", "Due Date")],
+    "create_opportunity": [("name", "Opportunity Name"), (("account_id", "account_name"), "Account (company)"),
+                           (("contact_id", "contact_last_name"), "Contact Last Name")],
+}
+
+
+def missing_required(name: str, args: dict) -> list[str]:
+    """The labels of the required fields the call leaves empty (as the app names them)."""
+    def given(key):
+        value = args.get(key)
+        return value is not None and (not isinstance(value, str) or value.strip() != "")
+    missing = []
+    for keys, label in REQUIRED_FIELDS.get(name, []):
+        if not any(given(k) for k in (keys if isinstance(keys, tuple) else (keys,))):
+            missing.append(label)
+    return missing
+
+
+def required_message(missing: list[str]) -> str:
+    return (f"Not created yet. Required fields missing: {', '.join(missing)}. Ask the user for only these, in one short "
+            "question (other fields are optional; don't list them). Never make them up.")
 
 
 # ---------- what each role is offered (the API still checks every call) ----------
@@ -612,8 +643,16 @@ def system_prompt() -> str:
         "becomes the task and the note says when it was booked).\n"
         "- Every stage change except Lost and Unqualified also needs a new task: its subject and due date (for Won, "
         "a post-sale task such as handover or onboarding). Take them from what the user said; otherwise ask.\n"
-        "- A new account needs its industry and phone; a new contact needs an email and phone. Take them from what the "
-        "user gave; if any is missing, ask. Never invent them.\n"
+        "- Required fields are the ones marked * in SalesTrack's forms:\n"
+        "  - New lead: Last Name, Company, Email, Company Website, Company LinkedIn URL (Lead Source defaults to Other).\n"
+        "  - New account: Account Name, Industry, Phone. New contact: Account, Last Name, Email, Phone.\n"
+        "  - New task: Subject and Due Date (Priority defaults to Normal).\n"
+        "  - New opportunity: Opportunity Name, Account (company), Contact Last Name, the user's comment, and a task "
+        "(subject and due date).\n"
+        "  When the user starts a task without the details (e.g. 'Create a new lead'), ask for the required fields of "
+        "that form only, as a short list, and add one line saying any other details (title, phone, industry...) are "
+        "optional. Never list optional fields one by one or mark fields '(optional)'. Take what the user already gave "
+        "and ask only for what is still missing. Never invent required values.\n"
         "- New opportunity without a lead: use create_opportunity (existing accounts and contacts are reused; the "
         "same open deal for the same person can't be added twice). To turn a lead into a deal, use convert_lead.\n"
         "- Closing actions (Lost, Unqualified, Won, transfer, cancel demo, delete) are confirmed by the user in the "
@@ -697,6 +736,8 @@ def converse(db: Session, history: list[dict]) -> dict:
             offered = {t["function"]["name"] for t in tools_for(acting_user())}
             if name not in offered:  # e.g. a sales action asked of the Admin
                 result, link = {"error": f"{name} isn't available for the {acting_user().role} role."}, None
+            elif missing := missing_required(name, args):
+                result, link = {"error": required_message(missing)}, None  # e.g. a lead without its Email
             elif name in NOTE_ARGS and not user_note(name, args):
                 # a stage change without a note: not run, no Confirm card
                 result, link = {"error": COMMENT_MISSING if name == "convert_lead" else NOTE_MISSING}, None

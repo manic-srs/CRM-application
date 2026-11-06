@@ -5864,3 +5864,112 @@ a.email-off {
   font-size: 12px;
   line-height: 1.4;
 }
+
+/* Home: Whole team / My records - a rounded switch in line with the greeting */
+.home-scope {
+  display: inline-flex;
+  flex: none;
+  align-self: center;
+  gap: 2px;
+  margin-left: auto;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--white);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+.home-scope button {
+  height: 32px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-weak);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.home-scope button:hover:not(.on) {
+  background: var(--bg);
+  color: var(--text);
+}
+.home-scope button.on {
+  background: var(--brand);
+  color: var(--white);
+}
+.home-scope button:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+/* AI email draft bar in New Email: sized for the dialog */
+.email-ai { padding: 0 14px 10px; }
+.email-ai-bar { gap: 8px; margin-top: 6px; }
+.email-ai-prompt { gap: 10px; min-height: 40px; padding: 3px 6px 3px 12px; border-radius: 22px; }
+.email-ai-prompt > svg { width: 18px; height: 18px; }
+.field .email-ai-input { height: 28px; min-height: 28px; max-height: 84px; padding: 5px 0; font-size: 14px; line-height: 18px; }
+.email-ai-polish { gap: 6px; padding: 4px 8px; border-radius: 14px; font-size: 13px; }
+.email-ai-refine { gap: 2px; }
+.email-ai-refine-button { width: 26px; height: 28px; padding: 5px; }
+.email-ai-refine-button svg { width: 15px; height: 15px; }
+.email-ai-submit { width: 32px; height: 32px; padding: 7px; }
+.email-ai-submit svg { width: 18px; height: 18px; }
+.email-ai-menu { bottom: calc(100% + 8px); min-width: 168px; padding: 6px; border-radius: 10px; }
+.email-ai-menu button { gap: 10px; padding: 8px 10px; font-size: 14px; font-weight: 500; }
+.email-ai-menu svg { width: 17px; height: 17px; }
+.email-ai-close { width: 28px; height: 28px; padding: 5px; }
+.email-ai-close svg { width: 16px; height: 16px; }
+.email-ai-toggle { gap: 6px; padding: 5px 12px; border-radius: 18px; font-size: 13px; }
+.email-ai-toggle svg { width: 18px; height: 18px; }
+.email-ai-history { gap: 2px; padding: 3px; border-radius: 20px; }
+.email-ai-history button { width: 30px; height: 30px; padding: 5px; }
+.email-ai-history svg { width: 16px; height: 16px; }
+.email-ai-status { font-size: 12px; }
+.email-ai-status:not(:empty) { padding: 6px 4px 0; }
+
+/* Campaign page (after sending): same spacing as the lead and opportunity pages */
+.campaign-page .highlights {
+  padding: 18px 20px;
+}
+.campaign-page .campaign-columns {
+  gap: 12px;
+  margin-top: 12px;
+}
+.campaign-page .campaign-columns > .card {
+  overflow: hidden;
+}
+.campaign-page .card-header {
+  padding: 16px 20px 0;
+}
+.campaign-page .pad-cards {
+  padding: 12px 20px 16px;
+}
+.campaign-page .pad-cards .issue-card {
+  min-width: 150px;
+}
+.campaign-page .campaign-recipients th:first-child,
+.campaign-page .campaign-recipients td:first-child {
+  padding-left: 20px;
+}
+.campaign-page .campaign-email .pad {
+  padding: 12px 20px 20px;
+}
+.campaign-page .campaign-email pre {
+  margin-top: 10px;
+  line-height: 1.6;
+}
+.campaign-page .campaign-email .field-hint {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.campaign-page .campaign-progress {
+  min-width: 180px;
+  padding-top: 6px;
+}
+.campaign-page .campaign-progress small {
+  display: block;
+  margin-top: 6px;
+}

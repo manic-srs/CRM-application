@@ -36,7 +36,8 @@ def test_ai_changes_are_in_the_admins_activity_log(client, monkeypatch):
     replies = iter([
         {"role": "assistant", "content": None, "tool_calls": [{"id": "c1", "type": "function", "function": {
             "name": "create_lead", "arguments": json.dumps({"first_name": "Rhea", "last_name": "Kapoor", "company": "Lumen",
-                                                            "email": "rhea@lumen.example"})}}]},
+                                                            "email": "rhea@lumen.example", "company_website": "lumen.example",
+                                                            "company_linkedin_url": "https://www.linkedin.com/company/lumen-example"})}}]},
         {"role": "assistant", "content": "Done: Rhea Kapoor."},
     ])
     monkeypatch.setattr(assistant, "call_model", lambda messages: next(replies))
@@ -78,3 +79,24 @@ def test_campaign_draft_uses_placeholders(client, monkeypatch):
     made = client.post("/api/campaigns", json={"name": "Demo invite", "subject": draft["subject"], "body": draft["body"],
                                                "emails": [{"email": "asha.rao@acme-retail.example"}]})
     assert made.status_code == 201, made.text
+
+
+def test_the_assistant_asks_for_the_required_fields_of_the_form(client, monkeypatch):
+    """A lead missing fields the New Lead form requires isn't created; the model is told exactly which to ask for."""
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-key")
+    seen = []
+    replies = iter([
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "c1", "type": "function", "function": {
+            "name": "create_lead", "arguments": json.dumps({"first_name": "Janu", "last_name": "Rao", "company": "Northwind",
+                                                            "email": "janu@northwind.example"})}}]},
+        {"role": "assistant", "content": "Please give the Company Website and Company LinkedIn URL."},
+    ])
+    monkeypatch.setattr(assistant, "call_model", lambda messages: seen.append(messages) or next(replies))
+    res = client.post("/api/assistant/chat", json={"message": "New lead Janu Rao, Northwind, janu@northwind.example"}).json()
+    assert res["links"] == []
+    told = json.loads(seen[1][-1]["content"])["error"]
+    assert "Company Website, Company LinkedIn URL" in told and "Email" not in told
+    assert "New lead: Last Name, Company, Email, Company Website, Company LinkedIn URL" in seen[0][0]["content"]
+    assert assistant.missing_required("create_task", {"title": "Call", "due_date": " "}) == ["Due Date"]
+    assert assistant.missing_required("create_opportunity", {"name": "Deal", "account_name": "Northwind",
+                                                             "contact_id": 4}) == []
