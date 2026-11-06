@@ -6,7 +6,7 @@
 // Unsubscribed and bounced addresses are never emailed again, and every email ends with an unsubscribe link.
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
-import { companyFromEmail, LEAD_OPEN_STAGES, LEAD_STAGES, parseRecipients } from "./domain";
+import { LEAD_OPEN_STAGES, LEAD_STAGES, parseRecipients } from "./domain";
 import { can } from "./permissions";
 import { Icon, ObjectIcon } from "./ui";
 
@@ -31,19 +31,6 @@ function duration(minutes, days) {
   if (minutes < 2) return "about a minute";
   if (minutes < 90) return `about ${minutes} minutes`;
   return `about ${Math.round(minutes / 60)} hours`;
-}
-
-// the {fields} for the preview, filled like the backend does (campaigns.fill): a missing company comes from the
-// email's domain
-function fill(text, lead, user) {
-  const values = {
-    first_name: lead?.first_name || lead?.name?.split(" ")[0] || "there",
-    last_name: lead?.last_name || "",
-    full_name: lead?.name || "",
-    company: lead?.company || companyFromEmail(lead?.email) || "your team",
-    sender_name: user.full_name,
-  };
-  return text.replace(/\{(\w+)\}/g, (all, key) => (key in values ? values[key] : all));
 }
 
 function Dialog({ title, onClose, busy, children, footer }) {
@@ -230,7 +217,6 @@ export function NewCampaign({ user, users = [], leadIds = null, onClose, onCreat
   };
 
   const limits = settings?.limits;
-  const sample = preview?.sample?.[0];
   const reasons = preview?.reasons || {};
   const leftOutParts = [
     [reasons.unsubscribed, "unsubscribed"],
@@ -416,15 +402,10 @@ export function NewCampaign({ user, users = [], leadIds = null, onClose, onCreat
               maxLength={20000}
             />
           </label>
-          <div className="email-sample" aria-label="Preview">
-            <small>Preview{sample ? ` for ${sample.name || sample.email}` : ""}</small>
-            <b>{fill(subject, sample, user)}</b>
-            <pre>{fill(body, sample, user)}</pre>
-            <pre className="email-footer">
-              {"--\n"}You are receiving this email from your company.{"\n"}Unsubscribe: <u>link added automatically</u>{"\n"}Subscribe:{" "}
-              <u>link added automatically</u> <span className="muted">(until the recipient subscribes)</span>
-            </pre>
-          </div>
+          {/* no rendered preview: the subject and message stay templates; the backend fills the fields for each recipient */}
+          <p className="field-hint">
+            Fields such as {"{first_name}"} are filled in for each recipient when the email is sent. An Unsubscribe link is added automatically.
+          </p>
         </fieldset>
 
         <fieldset className="campaign-section">
