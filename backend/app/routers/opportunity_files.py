@@ -21,7 +21,7 @@ from app.database import get_db
 from app.models import Account, Contact, Opportunity, StageHistory, User
 from app.routers.lead_files import EMAIL_RE, MAX_FILE_BYTES, MAX_ROWS, issue_list, key, number, read_rows, text_of
 from app.security import owner_for_new, require, visible
-from app.services import log_activity, notify
+from app.services import log_activity, notify, notify_data_owners
 
 router = APIRouter(prefix="/api/opportunities", tags=["Opportunities: upload and download"])
 
@@ -297,6 +297,7 @@ def export_opportunities(
     for admin_id in db.scalars(select(User.id).where(User.role == "Admin", User.is_active.is_(True), User.id != me.id)).all():
         notify(db, admin_id, "Opportunities downloaded", f"{me.full_name} downloaded {what}.\nReason: {reason}",
                link="/activity")
+    notify_data_owners(db, me, {o.owner_id for o in opps}, "Opportunities downloaded", what, reason)
     db.commit()
     return Response(content=body, media_type=media,
                     headers={"Content-Disposition": f'attachment; filename="{filename}"',

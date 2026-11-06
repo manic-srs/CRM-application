@@ -164,7 +164,6 @@ function ChatList({ items, current, busy, onOpen, onNew, onRename, onDelete, onC
           <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Search chats" aria-label="Search chats" />
         </label>
       )}
-      {!items.length && <p className="ai-history-empty">Your chats are saved here. Start one on the right.</p>}
       <ul className="ai-history-list">
         {shown.map((c) => (
           <li key={c.id} className={c.id === current ? "on" : ""}>

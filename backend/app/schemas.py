@@ -49,6 +49,8 @@ class UserOut(Out):
     created_at: datetime | None = None
     role_changed_at: datetime | None = None
     access_changed_at: datetime | None = None
+    reports_to_id: int | None = None    # a Salesperson's Manager
+    reports_to_name: str | None = None
     permissions: list[str] = []  # filled for the logged-in user (login, /auth/me)
 
 
@@ -63,6 +65,7 @@ class UserCreate(BaseModel):
     email: str = Field(..., max_length=255)
     password: str = Field(..., min_length=8, max_length=128)
     role: UserRole = "Salesperson"
+    reports_to_id: int | None = None  # a Salesperson's Manager (a Manager adding someone: always themselves)
 
 
 class UserUpdate(BaseModel):
@@ -70,6 +73,7 @@ class UserUpdate(BaseModel):
     email: str | None = Field(None, max_length=255)  # the login username
     role: UserRole | None = None
     is_active: bool | None = None
+    reports_to_id: int | None = None  # 0 = no Manager
 
 
 class ProfileUpdate(BaseModel):
@@ -572,6 +576,8 @@ class AccountOut(Out):
     owner_id: int
     owner_name: str | None = None
     created_at: datetime | None
+    updated_at: datetime | None = None
+    last_activity_at: datetime | None = None  # the latest change on the account, its contacts, deals, tasks or emails
 
     @field_serializer("annual_revenue")
     def _revenue(self, value):

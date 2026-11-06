@@ -35,6 +35,7 @@ from app.constants import (LEAD_FLOW, LEAD_STAGES, OPPORTUNITY_FLOW, OPPORTUNITY
 from app.models import Lead, User
 from app.routers import accounts, activity, home, leads, opportunities, tasks
 from app.security import acting_user
+from app.services import log_activity
 
 log = logging.getLogger("crm.assistant")
 MAX_STEPS = 10         # model <-> tool round trips per message
@@ -203,6 +204,38 @@ TASK_TOOLS = {"move_lead_stage", "convert_lead", "move_opportunity_stage", "mark
               "create_opportunity", "reopen_lead"}
 TASK_MISSING = (f"{schemas.STAGE_TASK_REQUIRED} Ask the user for the task's subject and due date (for Won, a post-sale "
                 "task such as handover or onboarding); don't make them up.")
+
+
+# ---------- what each role is offered (the API still checks every call) ----------
+
+READ_TOOLS = {"search", "list_leads", "get_lead", "list_opportunities", "get_opportunity", "list_tasks", "list_users",
+              "pipeline_summary", "crm_report", "list_accounts", "get_account", "list_contacts"}
+SALES_TOOLS = {"create_lead", "update_lead", "move_lead_stage", "reschedule_demo", "convert_lead", "move_opportunity_stage",
+               "mark_lead_lost", "cancel_demo", "mark_opportunity_won", "mark_opportunity_lost", "mark_lead_unqualified",
+               "reopen_lead"}
+NEEDS_PERMISSION = {"transfer_lead": ("transfer_leads", "reassign_owner")}
+
+
+def tools_for(me) -> list[dict]:
+    """The tools offered to this user, by role and permissions:
+    - Admin: reports, lists and user information only - no sales actions (leads, stages, deals, tasks)
+    - Manager / Salesperson: the sales tools; transfer and delete only with those permissions.
+    Record access is unchanged: every tool runs through the same API as the screens, as this user."""
+    if me.role == "Admin":
+        return [t for t in TOOLS if t["function"]["name"] in READ_TOOLS]
+    return [t for t in TOOLS if not (need := NEEDS_PERMISSION.get(t["function"]["name"])) or any(me.can(p) for p in need)]
+
+
+def role_guidance(me) -> str:
+    if me.role == "Admin":
+        return ("Role: Admin. Help with reports, statistics, record look-ups and user information. You don't do sales "
+                "work (creating or changing leads, deals, stages, tasks or notes): if asked, say that the record's owner "
+                "or their Manager does it in SalesTrack.\n")
+    if me.role == "Manager":
+        return ("Role: Manager. You can work on the team's records and report on the team. For a report about one "
+                "salesperson, pass their name as the owner.\n")
+    scope = "the whole team's records (view only)" if me.can("view_team_records") else "only your own records"
+    return f"Role: Salesperson. You work on {scope}; reports cover your own records unless the user has team access.\n"
 
 
 def stage_task(args: dict) -> dict | None:
@@ -465,9 +498,13 @@ def run_tool(db: Session, name: str, args: dict) -> tuple[dict, dict | None]:
 
 
 def safe_run(db: Session, name: str, args: dict) -> tuple[dict, dict | None]:
-    """Like run_tool, but a refusal (no permission, missing field, wrong stage...) goes back to the model as text."""
+    """Like run_tool, but a refusal (no permission, missing field, wrong stage...) goes back to the model as text.
+    Every change made through the assistant is also written to the Admin's Activity Log (AI Assistant tab)."""
     try:
-        return run_tool(db, name, args)
+        result, link = run_tool(db, name, args)
+        if name not in READ_TOOLS and "error" not in result:
+            log_ai_action(db, name, args, link)
+        return result, link
     except HTTPException as exc:
         db.rollback()
         return {"error": exc.detail if isinstance(exc.detail, str) else json.dumps(exc.detail)}, None
@@ -477,6 +514,19 @@ def safe_run(db: Session, name: str, args: dict) -> tuple[dict, dict | None]:
     except (KeyError, TypeError, ValueError) as exc:
         db.rollback()
         return {"error": f"Missing or wrong value: {exc}"}, None
+
+
+def log_ai_action(db: Session, name: str, args: dict, link: dict | None) -> None:
+    """Activity Log line for a change made by the AI Assistant: 'AI Assistant: Move lead stage', the record, and
+    what was done. Saved straight away (the change itself is already saved by the screen's own API)."""
+    try:
+        details = describe(db, name, args)
+    except Exception:  # noqa: BLE001 - the log line must never break the action
+        details = None
+    target = (link or {}).get("name") or (details or name.replace("_", " "))
+    log_activity(db, acting_user().id, f"AI Assistant: {name.replace('_', ' ').capitalize()}"[:60], target[:200],
+                 (details or "")[:1000] or None)
+    db.commit()
 
 
 def describe(db: Session, name: str, a: dict) -> str:
@@ -531,6 +581,7 @@ def system_prompt() -> str:
         "You are the SalesTrack CRM assistant. You help the logged-in user do their CRM work by calling tools. "
         f"Today is {now:%A, %d %B %Y}, time {now:%I:%M %p} (America/New_York). "
         f"The user is {me.full_name} ({me.role}).\n"
+        + role_guidance(me) +
         "Scope:\n"
         "- Help with SalesTrack CRM work and related information: leads, opportunities (deals), accounts, contacts, "
         "tasks, demos, notes, stages, the sales pipeline, statistics and reports, how to use SalesTrack, files the "
@@ -601,7 +652,7 @@ def call_model(messages: list[dict]) -> dict:
     try:
         res = httpx.post(f"{cfg['base_url']}/chat/completions", timeout=60,
                          headers={"Authorization": f"Bearer {cfg['key']}"},
-                         json={"model": cfg["model"], "messages": messages, "tools": TOOLS, "temperature": 0.1})
+                         json={"model": cfg["model"], "messages": messages, "tools": tools_for(acting_user()), "temperature": 0.1})
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"The AI service could not be reached: {exc}") from exc
     if res.status_code == 401:
@@ -643,7 +694,10 @@ def converse(db: Session, history: list[dict]) -> dict:
                 args = {}
             args = fill_defaults(db, name, args)
             used.append(name)
-            if name in NOTE_ARGS and not user_note(name, args):
+            offered = {t["function"]["name"] for t in tools_for(acting_user())}
+            if name not in offered:  # e.g. a sales action asked of the Admin
+                result, link = {"error": f"{name} isn't available for the {acting_user().role} role."}, None
+            elif name in NOTE_ARGS and not user_note(name, args):
                 # a stage change without a note: not run, no Confirm card
                 result, link = {"error": COMMENT_MISSING if name == "convert_lead" else NOTE_MISSING}, None
             elif name in TASK_TOOLS and not has_task(args):

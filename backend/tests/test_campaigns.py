@@ -124,13 +124,13 @@ def test_unsubscribe_link_asks_first_then_unsubscribes_and_can_subscribe_again(c
     assert client.get(f"/api/leads/{one['id']}").json()["unsubscribed_at"] is None  # opening the link changes nothing
     # Outlook / Gmail one-click (RFC 8058): POST with the token in the URL
     done = client.post(f"/api/public/unsubscribe?t={token}", data={"List-Unsubscribe": "One-Click"})
-    assert "You're unsubscribed" in done.text
+    assert "Thank you. You've been unsubscribed." in done.text and "won't receive further" in done.text
     assert client.get(f"/api/leads/{one['id']}").json()["unsubscribed_at"] is not None
     assert [l["id"] for l in client.get("/api/leads/page", params={"view": "unsubscribed"}).json()["items"]] == [one["id"]]
     assert any(n["title"] == "Lead unsubscribed" for n in client.get("/api/notifications").json())
     assert make(client, [one["id"]]).status_code == 400  # nobody left to email
     again = client.post("/api/public/unsubscribe", data={"t": token, "action": "subscribe"})
-    assert "You're subscribed" in again.text and make(client, [one["id"]]).status_code == 201
+    assert "Thank you. You're subscribed again." in again.text and make(client, [one["id"]]).status_code == 201
     # a wrong token does nothing
     assert "isn't valid" in client.get("/api/public/unsubscribe", params={"t": f"{one['id']}.forged"}).text
 

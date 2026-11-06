@@ -49,6 +49,7 @@ CREATE TABLE users (
   team_access         BOOLEAN NOT NULL DEFAULT FALSE,  -- a Manager let this user see the whole team's records
   role_changed_at     TIMESTAMP,   -- last time the Admin changed the role
   access_changed_at   TIMESTAMP,   -- last activate / deactivate / team access change
+  reports_to_id       INT REFERENCES users(id),  -- a Salesperson's Manager (their team)
   created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

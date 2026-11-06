@@ -65,3 +65,25 @@
 @media (min-width: 761px) and (max-height: 640px) { .signin-features { display: none; } }
 @media (max-width: 1100px) { .signin-story { padding: 36px 28px; } .signin-brand { font-size: 22px; } .signin-overview { margin-top: 38px; } .signin-features { gap: 9px; } .signin-feature { padding: 13px; border-radius: 14px; } .signin-panel { padding: 72px 26px 20px; } .signin-card { padding: 28px; } .signin-form { gap: 24px; } .signin-story-footer { gap: 16px; } }
 @media (max-width: 760px) { .signin-page { grid-template-columns: 1fr; height: auto; min-height: 100svh; overflow: visible; } .signin-story { overflow: visible; } .signin-story { padding: 28px 24px; } .signin-brand .brand-mark { width: 40px !important; height: 40px !important; } .signin-brand { gap: 14px; } .signin-overview { margin-top: 28px; } .signin-overview h1 { font-size: 36px; } .signin-overview h1 br { display: none; } .signin-summary { max-width: 100%; } .signin-pipeline, .signin-features, .signin-description, .signin-story-footer { display: none; } .signin-panel { padding: 80px 20px 28px; } .signin-corner-logo { top: 20px; right: 22px; } .signin-corner-logo .signin-srs-logo { width: auto; height: 36px; } .signin-content { max-width: 520px; } .signin-card { padding: 28px 22px; border-radius: 22px; } .signin-form { margin-top: 28px; } .signin-card h2 { font-size: 30px; } .signin-field input { font-size: 16px; } .signin-help { margin: 24px 0 0; } .signin-copyright { margin-top: 34px; } }
+/* ---------- Light sky blue left panel (matches the app) and the SRS logo placed above the card ---------- */
+.signin-story { background: radial-gradient(ellipse at 85% 10%, #ffffffb3, transparent 55%), radial-gradient(ellipse at 10% 90%, #bfe3fbb3, transparent 60%), linear-gradient(150deg, #e6f4fe 0%, #cfe9fc 55%, #b8defa 100%); color: #12304f; }
+.signin-brand { color: #0b3a66; }
+.signin-eyebrow { color: #0176d3; }
+.signin-overview h1 { color: #0b2a4a; }
+.signin-summary, .signin-description { color: #3d5a78; }
+.signin-pipeline-hub::after { background: #8fbde3; }
+.signin-pipeline-stages { border-top-color: #8fbde3; }
+.signin-stage::before { border-left-color: #8fbde3; }
+.signin-stage p { color: #2d4b6b; font-weight: 600; }
+.signin-stage > span { box-shadow: 0 4px 12px #0176d326; }
+.signin-feature { border-color: #ffffffcc; background: #ffffff8c; box-shadow: 0 2px 8px #0b3a660d; }
+.signin-feature-icon { border-color: #bfe0f7; background: #e3f2fd; color: #0176d3; }
+.signin-feature h2 { color: #0b2a4a; }
+.signin-feature p { color: #4a6683; }
+.signin-story-footer { border-top-color: #8fbde380; color: #3d5a78; }
+.signin-panel { padding-top: 24px; }
+.signin-corner-logo { position: static; align-self: flex-end; margin-bottom: 8px; }
+.signin-corner-logo .signin-srs-logo { height: 46px; }
+.signin-submit { border-color: #0167b8; background: #0176d3; }
+.signin-submit:hover:not(:disabled) { background: #015ba6; }
+.signin-forgot { color: #0176d3; }

@@ -7,14 +7,14 @@ Pass owner_id to see only one salesperson's records ("owned by me"); leave it ou
 """
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.constants import LEAD_OPEN_STAGES, LEAD_STAGES, OPPORTUNITY_OPEN_STAGES, OPPORTUNITY_STAGES
 from app.database import get_db
-from app.security import acting_user
-from app.models import Account, Contact, Lead, Opportunity, Task
+from app.security import acting_user, team_ids
+from app.models import Account, Contact, Lead, Opportunity, Task, User
 from app.serializers import task_out
 from app.services import now
 
@@ -181,3 +181,64 @@ def home_page(owner_id: int | None = Query(None, description="Only this salesper
         },
     }
 
+
+
+# ---------- Home > Whole team: charts ----------
+
+@router.get("/home/team-charts")
+def team_charts(db: Session = Depends(get_db)):
+    """Graphs for the Whole team view on Home: leads by stage, pipeline value by opportunity stage, won vs lost this
+    month, and each salesperson's numbers. A Manager with a team sees their team (themselves and the Salespeople who
+    report to them); the Admin, and Managers without a team yet, see everyone."""
+    me = acting_user()
+    if not me.can("view_team_dashboard"):
+        raise HTTPException(status_code=403, detail="You don't have the \"View team dashboard\" permission")
+    members = team_ids(db, me.id) if me.role == "Manager" else set()
+    scope = "team" if members else "all"
+    if members:
+        members.add(me.id)
+        people = db.scalars(select(User).where(User.id.in_(members)).order_by(User.full_name)).all()
+    else:
+        people = db.scalars(select(User).where(User.is_active.is_(True), User.role != "Admin").order_by(User.full_name)).all()
+    ids = [p.id for p in people]
+
+    def scoped(query, model):
+        return query.where(model.owner_id.in_(ids)) if scope == "team" else query
+
+    leads_by_stage = dict(db.execute(scoped(select(Lead.stage, func.count()), Lead).group_by(Lead.stage)).all())
+    pipeline = {stage: (count, float(value or 0)) for stage, count, value in db.execute(
+        scoped(select(Opportunity.stage, func.count(), func.sum(Opportunity.expected_value)), Opportunity)
+        .where(Opportunity.stage.in_(OPPORTUNITY_OPEN_STAGES)).group_by(Opportunity.stage)).all()}
+    today = date.today()
+    month_start = datetime(today.year, today.month, 1)
+    closed = {stage: (count, float(value or 0)) for stage, count, value in db.execute(
+        scoped(select(Opportunity.stage, func.count(),
+                      func.sum(func.coalesce(Opportunity.final_value, Opportunity.expected_value))), Opportunity)
+        .where(Opportunity.stage.in_(("Won", "Lost")), Opportunity.closed_at >= month_start)
+        .group_by(Opportunity.stage)).all()}
+
+    def per_person(query):
+        return dict(db.execute(query).all())
+
+    open_leads = per_person(select(Lead.owner_id, func.count()).where(Lead.owner_id.in_(ids), Lead.stage.in_(LEAD_OPEN_STAGES))
+                            .group_by(Lead.owner_id))
+    converted = per_person(select(Lead.owner_id, func.count()).where(Lead.owner_id.in_(ids), Lead.stage == "Converted",
+                                                                    Lead.converted_at >= month_start).group_by(Lead.owner_id))
+    open_value = per_person(select(Opportunity.owner_id, func.sum(Opportunity.expected_value))
+                            .where(Opportunity.owner_id.in_(ids), Opportunity.stage.in_(OPPORTUNITY_OPEN_STAGES))
+                            .group_by(Opportunity.owner_id))
+    won = per_person(select(Opportunity.owner_id, func.sum(func.coalesce(Opportunity.final_value, Opportunity.expected_value)))
+                     .where(Opportunity.owner_id.in_(ids), Opportunity.stage == "Won", Opportunity.closed_at >= month_start)
+                     .group_by(Opportunity.owner_id))
+    return {
+        "scope": scope,
+        "month": today.strftime("%B %Y"),
+        "leads_by_stage": [{"stage": s, "count": leads_by_stage.get(s, 0)} for s in LEAD_STAGES],
+        "pipeline_by_stage": [{"stage": s, "count": pipeline.get(s, (0, 0))[0], "value": pipeline.get(s, (0, 0))[1]}
+                              for s in OPPORTUNITY_OPEN_STAGES],
+        "won_lost_month": {k.lower(): {"count": closed.get(k, (0, 0))[0], "value": closed.get(k, (0, 0))[1]}
+                           for k in ("Won", "Lost")},
+        "people": [{"id": p.id, "name": p.full_name, "role": p.role, "open_leads": open_leads.get(p.id, 0),
+                    "converted_this_month": converted.get(p.id, 0), "open_pipeline": float(open_value.get(p.id) or 0),
+                    "won_this_month": float(won.get(p.id) or 0)} for p in people],
+    }

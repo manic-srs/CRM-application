@@ -1,4 +1,4 @@
-import { DownloadLeads, TransferHistory, UploadLeads } from "./LeadFiles";
+import { DownloadLeads, UploadLeads } from "./LeadFiles";
 import { can, canCreateOpportunity, canCreateSales } from "./permissions";
 import LeadsTable from "./LeadsTable";
 import { applyFilters, filterSummary, opts, ownerOptions, Th, useFilters } from "./Filters";
@@ -106,7 +106,8 @@ function columns(collection, data) {
       ["Website", (r) => r.website || ""],
       ["Owner", (r) => r.owner_name || ""],
       ["Created", (r) => r.created_at || "", (r) => <DateCell value={r.created_at} />, "date"],
-      ["Last Modified", (r) => r.updated_at || "", (r) => <DateCell value={r.updated_at} />, "date"],
+      // the latest change on the account, its contacts, deals, their tasks or emails
+      ["Last Activity", (r) => r.last_activity_at || "", (r) => <DateCell value={r.last_activity_at} />, "date"],
     ],
     contacts: [
       ["Name", (r) => r.full_name, (r) => link(r, r.full_name)],
@@ -155,9 +156,12 @@ function filterDefs(collection, data, user, viewName, fixedStage) {
       modified,
     ];
   }
-  if (collection === "accounts")
-    return [{ key: "industry", column: "Industry", label: "Industry", options: opts(distinct(data.accounts.map((a) => a.industry))), get: (r) => r.industry }, ...owner, created, modified];
-  return [{ key: "account", column: "Account Name", label: "Account", options: opts(distinct(data.contacts.map((c) => c.account_name))), get: (r) => r.account_name }, ...owner, created, modified];
+  if (collection === "accounts") {
+    const activity = { key: "activity", column: "Last Activity", label: "Last Activity", type: "date", get: (r) => r.last_activity_at };
+    return [{ key: "industry", column: "Industry", label: "Industry", options: opts(distinct(data.accounts.map((a) => a.industry))), get: (r) => r.industry }, ...owner, created, activity];
+  }
+  // Account Name: type part of the name (a list of every account doesn't work with hundreds of accounts)
+  return [{ key: "account", column: "Account Name", label: "Account", type: "text", placeholder: "Type part of the account name", get: (r) => r.account_name }, ...owner, created, modified];
 }
 
 // keep only filter values the current view offers (e.g. a "Lost" status left over from All Leads)
@@ -238,7 +242,7 @@ function Kanban({ records, setModal }) {
 }
 
 export default function ListView({ collection, data, user, openNew, setModal, query, notify, reload }) {
-  const [files, setFiles] = useState(null); // "upload" | "download" | "history" (Leads and Opportunities)
+  const [files, setFiles] = useState(null); // "upload" | "download" (Leads and Opportunities; their history is in Manage Access)
   // Opportunities: the deals ticked in the list, and the Actions dialog open for them ({ type: "owner" | "lost", ids })
   const [picked, setPicked] = useState(() => new Set());
   const [oppBulk, setOppBulk] = useState(null);
@@ -370,11 +374,6 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
             {dataList && can(user, "export_data") && (
               <button className="sf-button" onClick={() => setFiles("download")}>
                 Download
-              </button>
-            )}
-            {dataList && (
-              <button className="sf-button" onClick={() => setFiles("history")} title="Who uploaded or downloaded, when and why">
-                History
               </button>
             )}
             {collection === "accounts" && canCreateOpportunity(user) && (
@@ -571,7 +570,6 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
         />
       )}
       {files === "download" && <DownloadLeads object={collection} notify={notify} onClose={() => setFiles(null)} />}
-      {files === "history" && <TransferHistory object={collection} onClose={() => setFiles(null)} />}
     </div>
   );
 }

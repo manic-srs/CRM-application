@@ -18,10 +18,10 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Form, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app import campaigns as engine
+from app import ai_email, campaigns as engine
 from app.constants import LEAD_OPEN_STAGES, LEAD_STAGES
 from app.database import get_db
 from app.models import Campaign, CampaignRecipient, EmailAddress, Lead
@@ -216,8 +216,11 @@ def campaign_out(c: Campaign, counts: dict) -> dict:
 def campaign_settings():
     """The sending limits and where the email goes (no secrets), for the New Campaign screen."""
     from app import mailer
+    base = engine.unsubscribe_link(0).split("?")[0]
+    # links in the email must open from the recipient's computer: localhost or a private address won't
+    reachable = not re.search(r"//(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|\[::1\])", base)
     return {"limits": engine.limits(), "mail": mailer.mode(), "merge_fields": list(engine.MERGE_FIELDS),
-            "unsubscribe_base": engine.unsubscribe_link(0).split("?")[0]}
+            "unsubscribe_base": base, "links_reachable": reachable}
 
 
 @router.post("/preview")
@@ -233,6 +236,15 @@ def preview(data: Audience, db: Session = Depends(get_db)):
             "sample": [sample_of(t) for t in ok[:5]],
             "left_out_sample": [sample_of(t, r) for t, r in left_out[:50]],
             "eta": eta(len(ok), now())}
+
+
+@router.post("/draft")
+async def draft_campaign(data: ai_email.CampaignDraftRequest):
+    """Draft with AI in New Campaign: writes (or refines) the subject and message with the placeholders {first_name},
+    {company} and {sender_name}, filled in for each recipient when it's sent. Nothing is sent or saved."""
+    require("send_campaigns")
+    draft = await ai_email.generate_campaign_draft(data)
+    return draft.model_dump()
 
 
 @router.post("", status_code=201)
@@ -328,11 +340,17 @@ RECIPIENT_STATUSES = ("Sent", "Failed", "Invalid", "Queued", "Skipped", "Cancell
 
 @router.get("/recipients")
 def all_recipients(status: Literal[RECIPIENT_STATUSES] = Query(...), offset: int = Query(0, ge=0),
-                   limit: int = Query(100, ge=1, le=500), db: Session = Depends(get_db)):
-    """The email dashboard's lists: every email with this status, across the campaigns this user can see."""
+                   limit: int = Query(100, ge=1, le=500), q: str | None = Query(None, max_length=100),
+                   db: Session = Depends(get_db)):
+    """The email dashboard's tabs: every email with this status, across the campaigns this user can see.
+    q searches the recipient's name or email and the campaign name."""
     query = select(CampaignRecipient, Campaign.name).join(Campaign).where(
         unsubscribed_rows() if status == "Unsubscribed" else CampaignRecipient.status == status,
         Campaign.id.in_(my_campaign_ids()))
+    if q and q.strip():
+        like = f"%{q.strip()}%"
+        query = query.where(or_(CampaignRecipient.name.ilike(like), CampaignRecipient.email.ilike(like),
+                                Campaign.name.ilike(like)))
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     rows = db.execute(query.order_by(CampaignRecipient.sent_at.desc().nulls_last(), CampaignRecipient.id.desc())
                       .offset(offset).limit(limit)).all()
@@ -430,14 +448,23 @@ def set_email_status(lead_id: int, data: EmailStatusIn, db: Session = Depends(ge
 
 # ---------- the unsubscribe page (opened from the email; no login) ----------
 
-def page(title: str, text: str, token: str, show: str | None, ask: bool = False) -> HTMLResponse:
-    """ask=True: the "Are you sure?" step, with the action button and Cancel (which changes nothing)."""
+def page(title: str, text: str, token: str, show: str | None, ask: bool = False, done: bool = False) -> HTMLResponse:
+    """ask=True: the "Are you sure?" step, with the action button and Cancel (which changes nothing).
+    done=True: the thank-you after Unsubscribe / Subscribe, with a check mark; the opposite action is a small link."""
     button = ""
-    if show:
+    if show and done:
+        label = "Subscribe again" if show == "subscribe" else "Unsubscribe"
+        button = (f'<form method="post" class="undo"><span>Changed your mind?</span>'
+                  f'<input type="hidden" name="t" value="{escape(token)}">'
+                  f'<input type="hidden" name="action" value="{show}"><button class="link">{label}</button></form>')
+    elif show:
         label = "Unsubscribe" if show == "unsubscribe" else "Subscribe again"
         cancel = (f'<a class="cancel" href="?t={escape(token)}&amp;action=cancel">Cancel</a>' if ask else "")
         button = (f'<form method="post"><input type="hidden" name="t" value="{escape(token)}">'
                   f'<input type="hidden" name="action" value="{show}"><button>{label}</button>{cancel}</form>')
+    check = ('<div class="done" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" '
+             'stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">'
+             '<path d="m5 12 5 5 9-10"/></svg></div>') if done else ""
     html = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>{escape(title, quote=False)}</title>
 <style>body{{font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:#f3f6fb;margin:0;color:#181818}}
@@ -445,8 +472,11 @@ main{{max-width:440px;margin:12vh auto;background:#fff;border-radius:12px;paddin
 h1{{font-size:20px;margin:0 0 10px}}p{{color:#444;line-height:1.5}}button{{margin-top:12px;padding:10px 18px;border:0;
 border-radius:6px;background:#0176d3;color:#fff;font-size:15px;cursor:pointer}}
 .cancel{{display:inline-block;margin:12px 0 0 10px;padding:9px 18px;border:1px solid #c9c9c9;border-radius:6px;
-color:#181818;text-decoration:none;font-size:15px}}</style></head>
-<body><main><h1>{escape(title, quote=False)}</h1><p>{escape(text, quote=False)}</p>{button}</main></body></html>"""
+color:#181818;text-decoration:none;font-size:15px}}
+.done{{display:grid;place-items:center;width:48px;height:48px;margin-bottom:14px;border-radius:50%;background:#e6f4ea;color:#2e844a}}
+.undo{{margin-top:18px;padding-top:14px;border-top:1px solid #eee;color:#666;font-size:14px}}
+.undo button.link{{margin:0 0 0 6px;padding:0;background:none;color:#0176d3;font-size:14px;text-decoration:underline}}</style></head>
+<body><main>{check}<h1>{escape(title, quote=False)}</h1><p>{escape(text, quote=False)}</p>{button}</main></body></html>"""
     return HTMLResponse(html)
 
 
@@ -542,8 +572,11 @@ def unsubscribe(t: str = Query(""), form_t: str = Form("", alias="t"), action: s
     if action == "subscribe":
         if not who.subscribed(db):
             _set_subscribed(db, who, True)
-        return page("You're subscribed", f"{who.email} will get emails from {company} again.", token, "unsubscribe")
+        return page("Thank you. You're subscribed again.",
+                    f"{who.email} will get emails from {company} again. You can close this page.", token, "unsubscribe",
+                    done=True)
     if not who.unsubscribed(db):
         _set_subscribed(db, who, False)
-    return page("You're unsubscribed", f"{who.email} won't get campaign emails from {company} any more.",
-                token, "subscribe")
+    return page("Thank you. You've been unsubscribed.",
+                f"{who.email} won't receive further campaign emails from {company}. You can close this page.",
+                token, "subscribe", done=True)

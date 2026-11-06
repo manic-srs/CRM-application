@@ -1,6 +1,7 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
+import { api } from "./api";
 import { LEAD_OPEN_STAGES, OPPORTUNITY_OPEN_STAGES, dateKey } from "./domain";
-import { compact, dateTime, firstName, greeting, shortDate, time } from "./format";
+import { compact, dateTime, greeting, shortDate, time } from "./format";
 import { Card, EmptyState, Icon, ObjectIcon, Ring, StageBadge } from "./ui";
 
 const COLORS = { open: "#06a59a", won: "#1b96ff", lost: "#ea001e", upcoming: "#06a59a", past: "#1b96ff", none: "#ea001e" };
@@ -87,6 +88,117 @@ function assistantItems(data, user) {
   return items.slice(0, 6);
 }
 
+// The line under the greeting: what this dashboard shows for this person and view
+function homeSummary(user, team) {
+  if (user.role === "Admin") return "Here's the sales overview across every team.";
+  if (team) return user.role === "Manager" ? "Here's how your team's pipeline and activity are tracking." : "Here's the team's pipeline and activity.";
+  return "Here's your pipeline and what needs your attention today.";
+}
+
+// ---------- Whole team graphs: leads by stage, pipeline by stage, won vs lost this month, per salesperson ----------
+const money = (n) => `$${compact(n)}`;
+
+// One series of horizontal bars (one hue; the label on each row names it, the value sits at the bar's end)
+function BarList({ rows, format = (v) => v, label }) {
+  const max = Math.max(...rows.map((r) => r.value), 0);
+  return (
+    <ul className="team-bars" aria-label={label}>
+      {rows.map((r) => (
+        <li key={r.label} title={`${r.label}: ${format(r.value)}${r.note ? ` (${r.note})` : ""}`}>
+          <span className="team-bar-label">{r.label}</span>
+          <span className="team-bar-track">
+            <span className={`team-bar ${r.tone || ""}`} style={{ width: max ? `${Math.max((r.value / max) * 100, r.value ? 2 : 0)}%` : 0 }} />
+          </span>
+          <span className="team-bar-value">
+            {format(r.value)}
+            {r.note && <small>{r.note}</small>}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function TeamCharts() {
+  const [charts, setCharts] = useState(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    api.teamCharts().then(setCharts).catch((err) => setError(err.message));
+  }, []);
+  if (error) return <p className="table-empty">{error}</p>;
+  if (!charts) return <p className="table-empty">Loading team charts…</p>;
+  const { won, lost } = charts.won_lost_month;
+  const winRate = won.count + lost.count ? Math.round((won.count / (won.count + lost.count)) * 100) : null;
+  const people = [...charts.people].sort((a, b) => b.open_pipeline - a.open_pipeline || a.name.localeCompare(b.name));
+  return (
+    <section className="team-charts" aria-label="Team performance">
+      <div className="team-charts-head">
+        <h2>Team Performance</h2>
+        <p>{charts.scope === "team" ? "You and the Salespeople in your team" : "Everyone's records"}</p>
+      </div>
+      <div className="team-charts-grid">
+        <Card title="Leads by Stage" className="home-card">
+          <BarList label="Leads by stage" rows={charts.leads_by_stage.map((r) => ({ label: r.stage, value: r.count }))} />
+        </Card>
+        <Card title="Open Pipeline by Stage" className="home-card">
+          <BarList
+            label="Open pipeline value by stage"
+            format={money}
+            rows={charts.pipeline_by_stage.map((r) => ({ label: r.stage, value: r.value, note: `${r.count} deal${r.count === 1 ? "" : "s"}` }))}
+          />
+        </Card>
+        <Card title={`Won vs Lost · ${charts.month}`} className="home-card">
+          <div className="team-winrate">
+            <b>{winRate === null ? "–" : `${winRate}%`}</b>
+            <span>win rate this month</span>
+          </div>
+          <BarList
+            label="Won and lost deals this month"
+            rows={[
+              { label: "Won", value: won.count, note: money(won.value), tone: "won" },
+              { label: "Lost", value: lost.count, note: money(lost.value), tone: "lost" },
+            ]}
+          />
+        </Card>
+      </div>
+      <Card title="Performance per Salesperson" className="home-card team-people">
+        <div className="table-scroll">
+          <table className="sf-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th className="num">Open Leads</th>
+                <th className="num">Converted ({charts.month})</th>
+                <th>Open Pipeline</th>
+                <th className="num">Won ({charts.month})</th>
+              </tr>
+            </thead>
+            <tbody>
+              {people.map((p) => (
+                <tr key={p.id}>
+                  <td>
+                    {p.name} {p.role === "Manager" && <small className="muted">(Manager)</small>}
+                  </td>
+                  <td className="num">{p.open_leads}</td>
+                  <td className="num">{p.converted_this_month}</td>
+                  <td>
+                    <span className="team-inline-bar">
+                      <span style={{ width: `${people[0].open_pipeline ? (p.open_pipeline / people[0].open_pipeline) * 100 : 0}%` }} />
+                      <b>{money(p.open_pipeline)}</b>
+                    </span>
+                  </td>
+                  <td className="num">{money(p.won_this_month)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {!people.length && <p className="table-empty">No salespeople yet.</p>}
+        </div>
+      </Card>
+    </section>
+  );
+}
+
 export default function SellerHome({ data, user, toggleTask, openTask, scope = "team", setScope = () => {}, teamDashboard = true }) {
   const home = data.home?.seller_home;
   if (!home) return null;
@@ -102,10 +214,11 @@ export default function SellerHome({ data, user, toggleTask, openTask, scope = "
   return (
     <div className="page seller-home">
       <div className="home-title">
-        <h1>Seller Home</h1>
-        <p>
-          {greeting()}, {firstName(user.full_name)}. Let's get selling!
-        </p>
+        <div className="home-greeting">
+          {/* Title Case on the page title: "Good Evening" */}
+          <h1>{greeting().replace(/\b\w/g, (c) => c.toUpperCase())}!</h1>
+          <p>{homeSummary(user, team)}</p>
+        </div>
         {teamDashboard && (
         <div className="toggle-group scope-toggle" role="group" aria-label="Show records">
           <button className={team ? "on" : ""} aria-pressed={team} onClick={() => setScope("team")}>
@@ -295,6 +408,7 @@ export default function SellerHome({ data, user, toggleTask, openTask, scope = "
           )}
         </Card>
       </div>
+      {team && teamDashboard && <TeamCharts />}
     </div>
   );
 }

@@ -272,9 +272,14 @@ def test_email_health_and_test_email(client, outbox, monkeypatch):
     assert client.post("/api/health/email/test", json={"to": "me@example.com"}).status_code == 502
 
 
-def test_gmail_app_password_spaces_are_removed(monkeypatch):
-    monkeypatch.setenv("SMTP_HOST", "smtp.gmail.com")
-    monkeypatch.setenv("SMTP_PASSWORD", "abcd efgh ijkl mnop")
-    assert mailer.settings()["password"] == "abcdefghijklmnop"
+def test_outlook_smtp_settings(monkeypatch):
     monkeypatch.setenv("SMTP_HOST", "smtp.office365.com")
-    assert mailer.settings()["password"] == "abcd efgh ijkl mnop"
+    monkeypatch.setenv("SMTP_PORT", "587")
+    monkeypatch.setenv("SMTP_TLS", "true")
+    monkeypatch.setenv("SMTP_USER", "crm@srsconsultinginc.com")
+    monkeypatch.setenv("SMTP_PASSWORD", "synthetic pass word")
+    monkeypatch.setenv("MAIL_FROM", "crm@srsconsultinginc.com")
+    cfg = mailer.settings()
+    assert (cfg["host"], cfg["port"], cfg["tls"], cfg["user"]) == ("smtp.office365.com", 587, True, "crm@srsconsultinginc.com")
+    assert cfg["password"] == "synthetic pass word"  # used exactly as written
+    assert mailer.mode()["mode"] == "real email"

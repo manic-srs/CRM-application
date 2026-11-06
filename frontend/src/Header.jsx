@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { BrandMark } from "./Login";
-import { can } from "./permissions";
+import { can, canManageAccess } from "./permissions";
 import { Avatar, Icon, ObjectIcon } from "./ui";
 
 export const TABS = [
@@ -345,7 +345,7 @@ export default function Header({ section, user, data, onLogout, openNew, notify,
                 <button onClick={() => (setMenu(null), openProfile())}>
                   <Icon name="user" size={16} /> My Profile
                 </button>
-                {(can(user, "manage_users") || can(user, "grant_team_access")) && (
+                {canManageAccess(user) && (
                   <a href="#/users" onClick={() => setMenu(null)}>
                     <Icon name="settings" size={16} /> Manage Access
                   </a>
@@ -374,12 +374,12 @@ export function Sidebar({ section, data, user, collapsed }) {
         {[
           ...TABS,
           ...(can(user, "send_campaigns") || user.role === "Admin" ? [["campaigns", "Email Campaigns", "/campaigns", "campaign"]] : []),
-          ...(can(user, "manage_users") || can(user, "grant_team_access") ? [["users", "Manage Access", "/users", "contact"]] : []),
+          ...(canManageAccess(user) ? [["users", "Manage Access", "/users", "contact"]] : []),
         ].map(([key, label, path, icon]) => (
           <li key={key}>
             <a
               href={`#${path}`}
-              className={section === key || (key === "users" && ["permissions", "activity"].includes(section)) ? "active" : ""}
+              className={section === key || (key === "users" && ["permissions", "activity", "team-activity"].includes(section)) ? "active" : ""}
               aria-current={section === key ? "page" : undefined}
               title={collapsed ? label : undefined}
             >

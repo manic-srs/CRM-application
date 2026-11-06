@@ -20,9 +20,9 @@ from app import schemas
 from app.constants import LEAD_OPEN_STAGES, LEAD_SOURCES, LEAD_STAGES, LEAD_START
 from app.database import get_db
 from app.models import Account, ActivityLog, Contact, Lead, StageHistory, User
-from app.security import acting_user, can_view, require, visible
+from app.security import acting_user, can_view, require, team_ids, visible
 from app.serializers import lead_out
-from app.services import email_matches_website, is_personal_email, log_activity, notify, website_host
+from app.services import email_matches_website, is_personal_email, log_activity, notify, notify_data_owners, website_host
 
 router = APIRouter(prefix="/api/leads", tags=["Leads: upload and download"])
 
@@ -570,11 +570,14 @@ def transfer_history(
     db: Session = Depends(get_db),
 ):
     """Who uploaded or downloaded leads / opportunities, when, what and why (newest first).
-    The Admin and Managers see everyone's; other users see their own."""
+    The Admin sees everyone's; a Manager sees their own and their team's (never the Admin's); Salespeople can't
+    open this history (their Manager sees it)."""
     me = acting_user()
     query = select(ActivityLog).where(ActivityLog.action.in_(TRANSFER_ACTIONS[object]))
-    if not (me.role in ("Admin", "Manager") or me.can("manage_users")):
-        query = query.where(ActivityLog.actor_id == me.id)
+    if not me.can("manage_users"):
+        if me.role != "Manager":
+            raise HTTPException(status_code=403, detail="Upload and download history is kept for your Manager and the Admin")
+        query = query.where(ActivityLog.actor_id.in_(team_ids(db, me.id) | {me.id}))
     rows = db.scalars(query.options(selectinload(ActivityLog.actor))
                       .order_by(ActivityLog.created_at.desc(), ActivityLog.id.desc()).limit(limit)).all()
     return [{"id": r.id, "at": r.created_at, "by": r.actor.full_name if r.actor else "System",
@@ -665,6 +668,7 @@ def export_leads(
     for admin_id in admins:
         notify(db, admin_id, "Leads downloaded", f"{me.full_name} downloaded {what}.\nReason: {reason}",
                link="/activity")
+    notify_data_owners(db, me, {lead.owner_id for lead in leads}, "Leads downloaded", what, reason)
     db.commit()
     return Response(content=body, media_type=media,
                     headers={"Content-Disposition": f'attachment; filename="{filename}"',

@@ -1,12 +1,14 @@
 """Accounts (companies) and Contacts (people). Usually created by converting a lead; can also be added directly."""
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy import or_, select
+from datetime import datetime
+
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app import schemas
 from app.database import get_db
 from app.security import acting_user, can_view, owner_for_new, require_view, visible
-from app.models import Account, Contact, Opportunity
+from app.models import Account, Contact, Email, Opportunity, Task
 from app.serializers import account_detail, account_out, contact_out
 from app.services import get_or_404, resolve_user_id
 
@@ -30,7 +32,41 @@ def list_accounts(
         query = query.where(Account.owner_id == owner_id)
     if search:
         query = query.where(Account.name.ilike(f"%{search.strip()}%"))
-    return [account_out(a) for a in db.scalars(query.order_by(Account.name)).all()]
+    accounts = db.scalars(query.order_by(Account.name)).all()
+    latest = last_activity(db, [a.id for a in accounts])
+    out = []
+    for a in accounts:
+        row = account_out(a)
+        stamps = [s for s in (a.updated_at, a.created_at, latest.get(a.id)) if s]
+        out.append(row.model_copy(update={"last_activity_at": max(stamps) if stamps else None}))
+    return out
+
+
+def last_activity(db: Session, account_ids: list[int]) -> dict[int, datetime]:
+    """Accounts list > Last Activity: the latest update to each account's contacts, opportunities, their tasks, or an
+    email sent to the account, its contacts or its deals."""
+    if not account_ids:
+        return {}
+    latest: dict[int, datetime] = {}
+
+    def take(rows):
+        for account_id, stamp in rows:
+            if account_id is not None and stamp is not None and (account_id not in latest or stamp > latest[account_id]):
+                latest[account_id] = stamp
+
+    take(db.execute(select(Contact.account_id, func.max(Contact.updated_at))
+                    .where(Contact.account_id.in_(account_ids)).group_by(Contact.account_id)).all())
+    take(db.execute(select(Opportunity.account_id, func.max(Opportunity.updated_at))
+                    .where(Opportunity.account_id.in_(account_ids)).group_by(Opportunity.account_id)).all())
+    take(db.execute(select(Opportunity.account_id, func.max(Task.updated_at)).join(Task, Task.opportunity_id == Opportunity.id)
+                    .where(Opportunity.account_id.in_(account_ids)).group_by(Opportunity.account_id)).all())
+    take(db.execute(select(Email.account_id, func.max(Email.sent_at))
+                    .where(Email.account_id.in_(account_ids)).group_by(Email.account_id)).all())
+    take(db.execute(select(Contact.account_id, func.max(Email.sent_at)).join(Email, Email.contact_id == Contact.id)
+                    .where(Contact.account_id.in_(account_ids)).group_by(Contact.account_id)).all())
+    take(db.execute(select(Opportunity.account_id, func.max(Email.sent_at)).join(Email, Email.opportunity_id == Opportunity.id)
+                    .where(Opportunity.account_id.in_(account_ids)).group_by(Opportunity.account_id)).all())
+    return latest
 
 
 @router.post("/accounts", response_model=schemas.AccountOut, status_code=status.HTTP_201_CREATED)

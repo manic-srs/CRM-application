@@ -42,6 +42,8 @@ def upgrade_database() -> None:
         # Phase 2: role / access change dates and the lead transfer history
         for column in ("role_changed_at", "access_changed_at"):
             conn.execute(text(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {column} TIMESTAMP"))
+        # a Salesperson's Manager (Manage Access > People > Reports To)
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS reports_to_id INT REFERENCES users(id)"))
         conn.execute(text("""CREATE TABLE IF NOT EXISTS lead_transfers (
             id SERIAL PRIMARY KEY, lead_id INT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
             from_user_id INT REFERENCES users(id), to_user_id INT NOT NULL REFERENCES users(id),

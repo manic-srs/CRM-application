@@ -246,6 +246,10 @@ export const api = {
       body: { ...taskPayload(v, !!id), ...actor(id, actorId) },
     }),
   completeTask: (id) => apiRequest(`/tasks/${id}/complete`, { method: "PUT" }),
+  // Tasks page: Mark as Done / Reassign the ticked tasks
+  bulkTasks: (body) => apiRequest("/tasks/bulk", { method: "POST", body }),
+  // Home > Whole team graphs
+  teamCharts: () => apiRequest("/home/team-charts"),
   unqualifyLead: (id, values) => apiRequest(`/leads/${id}/unqualified`, { method: "POST", body: values }),
   reopenLead: (id, values) => apiRequest(`/leads/${id}/reopen`, { method: "POST", body: values }),
   stage: (collection, id, values) =>
@@ -349,7 +353,13 @@ export const api = {
   createUser: (v) =>
     apiRequest("/users", {
       method: "POST",
-      body: { full_name: v.full_name.trim(), email: v.email.trim(), password: v.password, role: v.role },
+      body: {
+        full_name: v.full_name.trim(),
+        email: v.email.trim(),
+        password: v.password,
+        role: v.role || "Salesperson",
+        ...(v.reports_to_id ? { reports_to_id: Number(v.reports_to_id) } : {}),
+      },
     }),
   updateUser: (id, changes) => apiRequest(`/users/${id}`, { method: "PUT", body: changes }),
   resetPassword: (id, password) => apiRequest(`/users/${id}/password`, { method: "PUT", body: { password } }),
@@ -361,6 +371,11 @@ export const api = {
   // Roles & Permissions (Admin) and team access (Manager)
   permissions: () => apiRequest("/permissions"),
   activityLog: () => apiRequest("/activity-log"),
+  // Activity history with tabs, filters and pages (Admin: everything; Manager: their team)
+  activity: (params) => {
+    const query = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== "" && v != null)).toString();
+    return apiRequest(`/activity${query ? `?${query}` : ""}`);
+  },
   transferHistory: (object) => apiRequest(`/leads/transfers?object=${object}`),
   setPermission: (role, permission, allowed) =>
     apiRequest("/permissions", { method: "PUT", body: { role, permission, allowed } }),
@@ -378,8 +393,12 @@ export const api = {
   campaignSettings: () => apiRequest("/campaigns/settings"),
   campaigns: () => apiRequest("/campaigns"),
   campaignSummary: () => apiRequest("/campaigns/summary"),
-  campaignRecipients: (status, offset = 0, limit = 100) =>
-    apiRequest(`/campaigns/recipients?status=${encodeURIComponent(status)}&offset=${offset}&limit=${limit}`),
+  campaignRecipients: (status, offset = 0, limit = 100, q = "") =>
+    apiRequest(
+      `/campaigns/recipients?status=${encodeURIComponent(status)}&offset=${offset}&limit=${limit}${q ? `&q=${encodeURIComponent(q)}` : ""}`,
+    ),
+  // Draft with AI in New Campaign
+  draftCampaign: (body) => apiRequest("/campaigns/draft", { method: "POST", body }),
   campaign: (id, params = {}) =>
     apiRequest(`/campaigns/${id}?${new URLSearchParams(Object.entries(params).filter(([, v]) => v !== "" && v != null))}`),
   campaignPreview: (audience) => apiRequest("/campaigns/preview", { method: "POST", body: audience }),
