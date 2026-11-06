@@ -5283,3 +5283,557 @@ a.email-off {
 .ai-row-menu button.danger:hover {
   background: #fef1ee;
 }
+
+/* ---------- Activity Log / Team Activity: type tabs, filters, type badges ---------- */
+.activity-scope {
+  margin: 16px 0 0;
+}
+.activity-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+.activity-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--white);
+  color: var(--text-weak);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.activity-tab b {
+  min-width: 22px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  text-align: center;
+}
+.activity-tab:hover {
+  border-color: var(--border-strong);
+}
+.activity-tab.on {
+  border-color: var(--brand);
+  background: #eef4ff;
+  color: var(--brand-dark);
+}
+.activity-tab.on b {
+  background: var(--brand);
+  color: var(--white);
+}
+.activity-filters {
+  flex-wrap: wrap;
+}
+.activity-filters select,
+.activity-filters input[type="date"] {
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--white);
+  font: inherit;
+  font-size: 13px;
+}
+.activity-filters .date-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-weak);
+  font-size: 13px;
+}
+.activity-kind {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text-weak);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.activity-kind.access { background: #eef4ff; color: #014486; }
+.activity-kind.data { background: #e9f7ef; color: #1e6b3a; }
+.activity-kind.transfers { background: #fff4e5; color: #8a4b00; }
+.activity-kind.ai { background: #f3eefe; color: #5a2ca0; }
+.activity-details {
+  max-width: 360px;
+  white-space: pre-line;
+}
+
+/* ---------- Tasks page: one list with filters, select all, bulk actions ---------- */
+.task-filters {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.task-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-weak);
+  font-size: 13px;
+}
+.task-filter select,
+.task-filter input[type="date"],
+.bulk-reassign select {
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--white);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.task-filters .list-search {
+  margin-left: auto;
+}
+.list-count {
+  color: var(--text-weak);
+  font-size: 0.75em;
+  font-weight: 400;
+}
+.bulk-reassign {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+.sf-table .done-col {
+  width: 52px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-weak);
+}
+
+/* ---------- Home > Whole team: Team Performance graphs ---------- */
+.team-charts {
+  margin-top: 24px;
+}
+.team-charts-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.team-charts-head h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.team-charts-head p {
+  margin: 0;
+  color: var(--text-weak);
+  font-size: 13px;
+}
+.team-charts-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.team-bars {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 4px 16px 16px;
+  list-style: none;
+}
+.team-bars li {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+.team-bar-label {
+  color: var(--text-weak);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.team-bar-track {
+  height: 14px;
+  border-radius: 0 4px 4px 0;
+  background: #f1f5f9;
+}
+.team-bar {
+  display: block;
+  height: 100%;
+  border-radius: 0 4px 4px 0;
+  background: #0176d3;
+}
+.team-bar.won {
+  background: #2e844a;
+}
+.team-bar.lost {
+  background: #8a96a3;
+}
+.team-bars li:hover .team-bar {
+  filter: brightness(1.12);
+}
+.team-bar-value {
+  min-width: 48px;
+  color: var(--text);
+  font-weight: 700;
+  text-align: right;
+}
+.team-bar-value small {
+  display: block;
+  color: var(--text-weak);
+  font-weight: 400;
+  font-size: 11px;
+}
+.team-winrate {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 16px 12px;
+}
+.team-winrate b {
+  font-size: 28px;
+}
+.team-winrate span {
+  color: var(--text-weak);
+  font-size: 13px;
+}
+.team-inline-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 160px;
+}
+.team-inline-bar > span {
+  display: block;
+  height: 10px;
+  max-width: 120px;
+  flex: 0 0 auto;
+  border-radius: 0 4px 4px 0;
+  background: #0176d3;
+}
+@media (max-width: 1100px) {
+  .team-charts-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- Email Campaigns: tabs instead of popups, Draft with AI, sending note ---------- */
+.campaign-metrics .metric.on {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+  background: #eef4ff;
+}
+.campaign-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 8px 16px 0;
+  border-bottom: 1px solid var(--border);
+}
+.campaign-tabs button {
+  padding: 10px 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--text-weak);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.campaign-tabs button:hover {
+  color: var(--text);
+}
+.campaign-tabs button.on {
+  color: var(--brand);
+  border-bottom-color: var(--brand);
+  font-weight: 700;
+}
+.campaign-tab-panel {
+  padding-bottom: 12px;
+}
+.campaign-tab-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+}
+.ai-draft-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  margin-bottom: 8px;
+}
+.ai-draft-box {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid #b0c7e4;
+  border-radius: 8px;
+  background: #f3f8ff;
+}
+.ai-draft-box .field {
+  margin: 0;
+}
+.ai-draft-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.ai-draft-close {
+  margin-left: auto;
+}
+.sending-note {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  line-height: 1.5;
+}
+.team-charts .home-card {
+  min-height: 0;
+}
+.team-charts .team-bars {
+  padding-top: 12px;
+}
+.list-buttons.task-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+.task-picked {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-right: 4px;
+  color: var(--text-weak);
+  font-size: 13px;
+}
+.task-reassign {
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--white);
+  font: inherit;
+  font-size: 13px;
+}
+.home-title h1 {
+  flex: none;
+  white-space: nowrap;
+}
+.home-title p {
+  flex: 1;
+  min-width: 0;
+}
+.home-title .scope-toggle {
+  flex: none;
+}
+.toggle-group.scope-toggle button {
+  white-space: nowrap;
+}
+/* Home: the greeting is the page title (no "Seller Home") */
+.home-title .home-greeting {
+  flex: 1;
+  min-width: 0;
+}
+.home-title .home-greeting h1 {
+  font-size: 30px;
+  font-weight: 600;
+  white-space: normal;
+}
+.home-title .home-greeting p {
+  margin-top: 4px;
+  font-size: 15px;
+}
+.home-title:has(.home-greeting) {
+  align-items: center;
+}
+/* Email Campaigns list: even spacing between the header, totals, tabs, list and the note at the bottom */
+.campaign-list-header {
+  padding: 20px 20px 16px;
+}
+.list-card .campaign-metrics {
+  margin: 0 20px 20px;
+}
+.list-card .campaign-tabs {
+  margin: 0 20px;
+}
+.list-card .campaign-tab-toolbar {
+  padding: 16px 20px 12px;
+}
+.list-card > .table-scroll,
+.list-card .campaign-tab-panel .table-scroll {
+  margin-top: 4px;
+}
+.list-card .campaign-empty {
+  padding: 48px 20px;
+}
+.list-card .campaign-rules {
+  margin-top: 8px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+/* Column filter menu: room for the date range, no sideways scrolling */
+.th-menu {
+  width: 248px;
+  overflow-x: hidden;
+}
+.th-menu > button {
+  padding: 7px 14px;
+}
+.th-custom {
+  gap: 8px;
+  padding: 10px 14px 8px;
+}
+.th-custom label {
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 6px;
+}
+.th-custom input {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+}
+.th-custom .sf-button {
+  justify-self: end;
+  width: auto;
+  min-width: 80px;
+  margin-top: 2px;
+}
+/* Tasks: the list view button under the title ("All Tasks ▾") */
+.task-view-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.task-view-row .filter-line {
+  margin: 0;
+}
+.task-view-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border: 1px solid var(--brand);
+  border-radius: 999px;
+  background: var(--brand-light);
+  color: var(--brand-dark);
+  font-size: 13px;
+  font-weight: 600;
+}
+.task-view-button:hover {
+  background: #cfe0fc;
+}
+.task-view-picker .menu-pop {
+  top: calc(100% + 6px);
+}
+/* Manage Access: compact, even spacing (cards, toolbar, table) */
+.access-card {
+  padding: 20px 24px 22px;
+}
+.access-header h1 {
+  font-size: 22px;
+}
+.access-header p {
+  font-size: 13px;
+}
+.access-tabs {
+  margin: 14px 0 16px;
+}
+.access-tabs a {
+  padding: 8px 14px;
+}
+.role-cards {
+  gap: 12px;
+}
+.role-cards.two {
+  grid-template-columns: repeat(2, minmax(0, 240px));
+}
+.role-card {
+  gap: 2px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+}
+.role-card b {
+  font-size: 20px;
+}
+.role-cards + .people-toolbar {
+  margin: 14px 0 12px;
+}
+.people-toolbar .search-field,
+.people-toolbar select,
+.people-toolbar .sf-button {
+  height: 34px;
+}
+.people-toolbar select {
+  padding: 0 10px;
+  border-radius: 6px;
+}
+.people-toolbar .search-field {
+  border-radius: 6px;
+}
+.users-table th,
+.users-table td {
+  padding: 8px 12px;
+}
+.users-table th.num,
+.users-table td.num {
+  padding-right: 24px;
+}
+.users-table .actions-col {
+  width: 72px;
+  text-align: center;
+}
+/* Tasks: the list view button looks like the other pill buttons */
+.task-view-button {
+  border-color: var(--border-strong);
+  background: var(--white);
+  color: var(--text);
+  font-weight: 400;
+}
+.task-view-button:hover {
+  background: #f3f9ff;
+  border-color: var(--brand);
+}
+/* Date filter: Clear and Apply on their own row, lined up with the date boxes */
+.th-custom {
+  padding: 12px 14px 14px;
+}
+.th-custom-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.th-custom-actions .link {
+  font-size: 13px;
+}
+.th-custom-actions .link:disabled {
+  color: var(--text-weak);
+  opacity: 0.6;
+  cursor: default;
+}
+.th-custom .th-custom-actions .sf-button {
+  justify-self: auto;
+  width: auto;
+  min-width: 72px;
+  height: 30px;
+  margin: 0;
+  padding: 0 16px;
+}

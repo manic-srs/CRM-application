@@ -413,3 +413,113 @@ async def generate_draft(data: DraftRequest, context: dict, sender_name: str, se
         raise
     except (ValueError, TypeError, AttributeError, KeyError, ValidationError):
         raise HTTPException(502, "The AI service returned an unusable draft. Your email is unchanged; please try again.") from None
+
+
+# ---------- Email Campaigns: AI drafting (the same OpenAI setup as lead emails) ----------
+
+CAMPAIGN_FIELDS = ("first_name", "company", "sender_name")
+CAMPAIGN_INSTRUCTIONS = """You write B2B sales campaign emails for SalesTrack CRM. One email goes to many people, so
+personal details are placeholders that the CRM fills in for each recipient.
+Return JSON with outcome, a concise subject (one line) and a plain-text body.
+
+SCOPE: write only sales and customer emails (introductions, follow-ups, demos, events, offers, product news, renewals).
+For anything else (personal requests, general writing, code), return outcome "unsupported" with an empty subject and body.
+If the request is too vague to write a useful email, return outcome "needs_context".
+
+RULES
+- Use these placeholders exactly, including the braces, and no others: {first_name} (the recipient's first name),
+  {company} (the recipient's company), {sender_name} (the person sending).
+- Start with "Hi {first_name}," and end with a short sign-off and {sender_name} on its own line.
+- Never invent facts: no prices, dates, statistics, customer names, links or attachments the user didn't give.
+- 60 to 160 words, short paragraphs, plain text (no markdown), one clear call to action.
+- Don't add an unsubscribe line: the CRM adds the Unsubscribe and Subscribe links automatically.
+- When an existing draft is given and the user asks for a change, revise that draft and keep what they didn't ask to
+  change."""
+CAMPAIGN_REFINE = {
+    "formalize": "Make the current campaign email more professional. Keep its meaning and placeholders.",
+    "friendly": "Make the current campaign email warmer and more conversational. Keep its meaning and placeholders.",
+    "shorten": "Make the current campaign email shorter and easier to scan. Keep its meaning and placeholders.",
+}
+
+
+class CampaignDraftRequest(BaseModel):
+    instructions: str = Field("", max_length=2000)
+    action: Literal["custom", "formalize", "friendly", "shorten"] = "custom"
+    current_subject: str = Field("", max_length=255)
+    current_body: str = Field("", max_length=20000)
+
+
+def campaign_placeholders(text: str) -> str:
+    """Placeholders as the campaign uses them ({first_name}...); common variants the model may write are fixed."""
+    names = {"firstname": "first_name", "name": "first_name", "recipientname": "first_name", "lastname": "last_name",
+             "fullname": "full_name", "company": "company", "companyname": "company", "yourname": "sender_name",
+             "sender": "sender_name", "sendername": "sender_name", "myname": "sender_name"}
+
+    def fix(match):
+        key = re.sub(r"[\s_\-]", "", match.group(1)).lower()
+        return "{" + names[key] + "}" if key in names else match.group(0)
+
+    return re.sub(r"[\[{]{1,2}\s*([A-Za-z][A-Za-z _\-]{0,30}?)\s*[\]}]{1,2}", fix, text)
+
+
+async def generate_campaign_draft(data: CampaignDraftRequest) -> EmailDraft:
+    """Writes or refines a campaign email with placeholders. Never sends anything."""
+    refining = data.action != "custom"
+    text = data.instructions.strip()
+    if refining and len(data.current_body.strip()) < 10:
+        raise HTTPException(422, "Write or generate the email first. Professional, Conversational and Concise refine it.")
+    if not refining and not text:
+        raise HTTPException(422, "Describe the email you want, e.g. invite them to a 20-minute demo next week.")
+    if not refining and OFF_TOPIC.search(text):
+        raise HTTPException(422, OUT_OF_SCOPE)
+    if mode() != "openai":
+        raise HTTPException(422, "AI drafting needs the AI to be set up (EMAIL_DRAFT_MODE=openai).")
+    key = api_key()
+    if not key:
+        raise HTTPException(503, "AI drafting is not configured. Ask your administrator to set OPENAI_API_KEY on the backend.")
+    request_input = json.dumps({
+        "task": "revise_campaign_email" if refining or data.current_body.strip() else "new_campaign_email",
+        "user_request": CAMPAIGN_REFINE.get(data.action) or text,
+        "existing_subject": data.current_subject,
+        "existing_message": data.current_body,
+    })
+    payload = {"model": os.getenv("OPENAI_EMAIL_MODEL", "gpt-4.1-mini"), "store": False, "max_output_tokens": 1200,
+               "instructions": CAMPAIGN_INSTRUCTIONS, "input": request_input,
+               "text": {"format": {"type": "json_schema", "name": "email_draft", "strict": True, "schema": DRAFT_SCHEMA}}}
+    try:
+        async with httpx.AsyncClient(timeout=40.0) as client:
+            response = await client.post("https://api.openai.com/v1/responses", headers={"Authorization": f"Bearer {key}"},
+                                         json=payload)
+    except httpx.TimeoutException:
+        raise HTTPException(504, "AI drafting took too long. Your email is unchanged; please try again.") from None
+    except httpx.RequestError:
+        raise HTTPException(502, "Cannot reach the AI service. Your email is unchanged; please try again.") from None
+    if response.status_code == 429:
+        raise HTTPException(429, "AI drafting is temporarily unavailable due to usage limits. Please try again later.")
+    if not response.is_success:
+        raise HTTPException(502, "The AI service could not generate a draft. Ask your administrator to check its API key and model access.")
+    try:
+        result = response.json()
+        content = [part for item in result.get("output", []) if item.get("type") == "message" for part in item.get("content", [])]
+        if any(part.get("type") == "refusal" for part in content):
+            raise HTTPException(422, "The AI service could not draft that request. Try describing the email differently.")
+        reply_text = "".join(part.get("text", "") for part in content if part.get("type") == "output_text")
+        reply = ModelReply.model_validate_json(reply_text)
+    except HTTPException:
+        raise
+    except (ValueError, TypeError, KeyError, ValidationError):
+        raise HTTPException(502, "The AI service returned an unusable draft. Your email is unchanged; please try again.") from None
+    if reply.outcome == "unsupported":
+        raise HTTPException(422, OUT_OF_SCOPE)
+    if reply.outcome == "needs_context":
+        raise HTTPException(422, NEEDS_CONTEXT)
+    subject = campaign_placeholders(reply.subject)
+    body = campaign_placeholders(reply.body)
+    supplied = "\n".join((text, data.current_subject, data.current_body))
+    body = without_new_links(body, supplied)
+    unknown = [f for f in re.findall(r"\{(\w+)\}", subject + body) if f not in CAMPAIGN_FIELDS + ("last_name", "full_name")]
+    for field in unknown:  # a placeholder the CRM can't fill would block sending
+        subject, body = subject.replace("{" + field + "}", ""), body.replace("{" + field + "}", "")
+    keep_subject = bool(data.current_subject.strip()) and refining
+    return EmailDraft(subject=data.current_subject if keep_subject else (subject or data.current_subject or "Quick question"),
+                      body=body)

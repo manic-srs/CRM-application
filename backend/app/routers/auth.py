@@ -11,14 +11,14 @@ from datetime import datetime
 import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app import mailer, schemas
 from app.constants import LEAD_OPEN_STAGES, OPPORTUNITY_OPEN_STAGES
 from app.database import get_db
 from app.models import Account, Contact, Lead, LeadTransfer, Opportunity, Task, User
 from app.models import ActivityLog, RolePermission
-from app.security import (PERMISSION_GROUPS, PERMISSIONS, ROLES, acting_user, default_permissions, authenticate, make_token, require, require_admin,
+from app.security import (PERMISSION_GROUPS, PERMISSIONS, ROLES, acting_user, default_permissions, authenticate, make_token, require, require_admin, team_ids,
                           role_permissions, user_permissions)
 from app.services import get_or_404, log_activity, notify
 
@@ -113,7 +113,7 @@ def list_users(include_inactive: bool = False, db: Session = Depends(get_db)):
     """Active users for the owner / assigned-to dropdowns. include_inactive=true (Admin): everyone."""
     query = select(User).order_by(User.full_name)
     me = acting_user()
-    if not (include_inactive and (me.can("manage_users") or me.can("grant_team_access"))):
+    if not (include_inactive and (me.can("manage_users") or me.can("grant_team_access") or me.can("manage_team"))):
         query = query.where(User.is_active.is_(True))
     return db.scalars(query).all()
 
@@ -139,19 +139,53 @@ def active_admins(db: Session) -> int:
     return db.scalar(select(func.count(User.id)).where(User.role == "Admin", User.is_active.is_(True)))
 
 
+def check_manager(db: Session, manager_id: int | None) -> User | None:
+    """The Manager a Salesperson reports to: an active Manager (None / 0 = no Manager)."""
+    if not manager_id:
+        return None
+    manager = db.get(User, manager_id)
+    if manager is None or manager.role != "Manager" or not manager.is_active:
+        raise HTTPException(status_code=400, detail="Reports To must be an active Manager")
+    return manager
+
+
+def require_team_member(db: Session, user: User):
+    """A Manager (Manage own team) may change only the Salespeople who report to them."""
+    me = acting_user()
+    if me.can("manage_users"):
+        return me
+    if not me.can("manage_team"):
+        require("manage_users")
+    if user.role != "Salesperson" or user.reports_to_id != me.id:
+        raise HTTPException(status_code=403, detail=f"{user.full_name} isn't in your team. Only the Admin can change this user.")
+    return me
+
+
 @protected.post("/users", response_model=schemas.UserOut, status_code=status.HTTP_201_CREATED)
 def create_user(data: schemas.UserCreate, db: Session = Depends(get_db)):
-    """Admin adds a Manager, Salesperson or another Admin. They get a welcome email with their login details."""
-    require_admin("add users")
+    """Admin adds a Manager, Salesperson or another Admin; a Manager (Manage own team) adds a Salesperson to their
+    own team. They get a welcome email with their login details. Every add is in the Admin's Activity Log."""
+    me = acting_user()
+    if me.can("manage_users"):
+        manager = check_manager(db, data.reports_to_id) if data.role == "Salesperson" else None
+    elif me.can("manage_team"):
+        if data.role != "Salesperson":
+            raise HTTPException(status_code=403, detail="Managers can add Salespeople only. Ask the Admin to add a Manager or Admin.")
+        manager = db.get(User, me.id)  # always in the Manager's own team
+    else:
+        require_admin("add users")
     email = check_user_email(data.email)
     if db.scalar(select(User.id).where(User.email == email)) is not None:
         raise HTTPException(status_code=409, detail="A user with this email already exists")
     user = User(full_name=" ".join(data.full_name.split()), email=email,
-                password_hash=hash_password(strong_enough(data.password)), role=data.role)
+                password_hash=hash_password(strong_enough(data.password)), role=data.role,
+                reports_to_id=manager.id if manager else None)
     db.add(user)
     db.flush()
     account_email(db, user, data.password, new=True)  # sent after the save succeeds
-    log_activity(db, acting_user().id, "User added", user.full_name, f"{user.role} • {user.email}")
+    team = f" • Reports to {manager.full_name}" if manager else ""
+    log_activity(db, me.id, "User added", user.full_name, f"{user.role} • {user.email}{team}"
+                 + (" • added by their Manager" if not me.can("manage_users") else ""))
     db.commit()
     db.refresh(user)
     return user
@@ -159,11 +193,29 @@ def create_user(data: schemas.UserCreate, db: Session = Depends(get_db)):
 
 @protected.put("/users/{user_id}", response_model=schemas.UserOut)
 def update_user(user_id: int, data: schemas.UserUpdate, db: Session = Depends(get_db)):
-    """Admin changes a user's name, email (their username), role, or activates / deactivates them.
+    """Admin changes a user's name, email (their username), role, Manager (Reports To), or activates / deactivates
+    them. A Manager (Manage own team) can only deactivate or activate the Salespeople in their team.
     Role and access changes are saved with the date and time (role_changed_at / access_changed_at) and logged."""
-    me = require_admin("change users")
     user = get_or_404(db, User, user_id, "User")
+    me = require_team_member(db, user)
     changes = data.model_dump(exclude_unset=True, exclude_none=True)
+    if not me.can("manage_users") and set(changes) - {"is_active"}:
+        raise HTTPException(status_code=403, detail="Managers can only deactivate or activate people in their team")
+    if "reports_to_id" in changes:
+        role = changes.get("role", user.role)
+        manager = check_manager(db, changes["reports_to_id"]) if role == "Salesperson" else None
+        if changes["reports_to_id"] and manager is None:
+            raise HTTPException(status_code=400, detail="Only Salespeople report to a Manager")
+        new_id = manager.id if manager else None
+        if new_id != user.reports_to_id:
+            log_activity(db, me.id, "Manager changed", user.full_name,
+                         f"{user.reports_to_name or 'No Manager'} → {manager.full_name if manager else 'No Manager'}")
+            if manager:
+                notify(db, manager.id, "Salesperson added to your team",
+                       f"{me.full_name} added {user.full_name} to your team.", link="/users", category="assignment")
+        changes["reports_to_id"] = new_id
+    if "is_active" in changes and changes["is_active"] is False and user.id == me.id:
+        raise HTTPException(status_code=400, detail="You can't deactivate yourself")
     if changes.get("role") == user.role:
         changes.pop("role")
     losing_admin = user.role == "Admin" and user.is_active and (
@@ -187,7 +239,8 @@ def update_user(user_id: int, data: schemas.UserUpdate, db: Session = Depends(ge
         log_activity(db, me.id, "User details changed", user.full_name, "Changed " + " and ".join(changed))
     stamp = datetime.now().replace(microsecond=0)
     if "is_active" in changes and changes["is_active"] != user.is_active:
-        log_activity(db, me.id, "User activated" if changes["is_active"] else "User deactivated", user.full_name)
+        log_activity(db, me.id, "User activated" if changes["is_active"] else "User deactivated", user.full_name,
+                     None if me.can("manage_users") else "By their Manager")
         user.access_changed_at = stamp
     if "role" in changes:
         log_activity(db, me.id, "Role changed", user.full_name, f"{user.role} → {changes['role']}")
@@ -196,6 +249,7 @@ def update_user(user_id: int, data: schemas.UserUpdate, db: Session = Depends(ge
         user.role_changed_at = stamp
         if changes["role"] != "Salesperson":
             user.team_access = False  # team access is only for Salespeople (others already see the team)
+            changes["reports_to_id"] = None  # only Salespeople report to a Manager
     for field, value in changes.items():
         setattr(user, field, value)
     db.commit()
@@ -219,9 +273,11 @@ def reset_password(user_id: int, data: schemas.PasswordReset, db: Session = Depe
 def transfer_records(user_id: int, data: schemas.TransferRecords, db: Session = Depends(get_db)):
     """Moves a user's open leads, open opportunities, accounts, contacts and open tasks to another user
     (e.g. when someone leaves). Closed records keep their owner, so the history stays correct."""
-    me = require_admin("transfer records")
     source = get_or_404(db, User, user_id, "User")
+    me = require_team_member(db, source)
     target = get_or_404(db, User, data.to_user_id, "User")
+    if not me.can("manage_users") and target.id != me.id and target.id not in team_ids(db, me.id):
+        raise HTTPException(status_code=403, detail="Pick yourself or someone in your team to receive the records")
     if source.id == target.id:
         raise HTTPException(status_code=400, detail="Pick a different user to receive the records")
     if not target.is_active:
@@ -329,7 +385,99 @@ def set_permission(data: schemas.PermissionChange, db: Session = Depends(get_db)
     return {"message": f"{label} {'given to' if data.allowed else 'removed from'} {data.role}s"}
 
 
-# ---------- activity log (Admin) ----------
+# ---------- activity log (Admin) and Team Activity (Manager) ----------
+
+# Tabs of the Activity Log. An action's tab comes from its name (see category_of).
+ACTIVITY_CATEGORIES = {
+    "access": "Users & Access",
+    "data": "Uploads & Downloads",
+    "transfers": "Lead / Opportunity Transfers",
+    "ai": "AI Assistant",
+    "records": "Records & Emails",
+}
+ACCESS_ACTIONS = ("User added", "User details changed", "User activated", "User deactivated", "Role changed",
+                  "Password reset", "Permission changed", "Team access given", "Team access removed", "Users uploaded",
+                  "Manager changed")
+
+
+def category_of(action: str) -> str:
+    if action.startswith("AI Assistant"):
+        return "ai"
+    if action in ACCESS_ACTIONS:
+        return "access"
+    if action.endswith((" uploaded", " downloaded")):
+        return "data"
+    if action == "Records transferred" or action.endswith((" reassigned", " transferred")):
+        return "transfers"
+    return "records"
+
+
+def activity_scope(db: Session) -> set[int] | None:
+    """Whose activity the user may see: None = everyone (Admin); a Manager = themselves and their team."""
+    me = acting_user()
+    if me.can("manage_users"):
+        return None
+    if me.role == "Manager" and (me.can("manage_team") or me.can("view_team_records")):
+        return team_ids(db, me.id) | {me.id}
+    raise HTTPException(status_code=403, detail="Only the Admin and Managers can see activity history")
+
+
+@protected.get("/activity")
+def activity_page(category: str | None = None, actor_id: int | None = None, action: str | None = None,
+                  date_from: str | None = None, date_to: str | None = None, q: str | None = None,
+                  page: int = 1, page_size: int = 25, db: Session = Depends(get_db)):
+    """Activity history with tabs, filters and pages.
+    Admin: everything (Manage Access > Activity Log). Manager: only their own and their team's activity
+    (Manage Access > Team Activity): the Admin's actions are never shown to Managers. Salespeople: no access."""
+    scope = activity_scope(db)
+    query = select(ActivityLog).options(selectinload(ActivityLog.actor))
+    if scope is not None:
+        query = query.where(ActivityLog.actor_id.in_(scope))
+    rows = db.scalars(query.order_by(ActivityLog.created_at.desc(), ActivityLog.id.desc()).limit(5000)).all()
+    people = {}
+    for r in rows:
+        if r.actor:
+            people[r.actor.id] = r.actor.full_name
+    counts = {key: 0 for key in ACTIVITY_CATEGORIES}
+    for r in rows:
+        counts[category_of(r.action)] += 1
+
+    def keep(r) -> bool:
+        if category and category_of(r.action) != category:
+            return False
+        if actor_id and r.actor_id != actor_id:
+            return False
+        if action and r.action != action:
+            return False
+        day = r.created_at.date().isoformat() if r.created_at else ""
+        if date_from and day < date_from:
+            return False
+        if date_to and day > date_to:
+            return False
+        if q:
+            text_ = " ".join([r.actor.full_name if r.actor else "System", r.action, r.target, r.details or ""]).lower()
+            if q.strip().lower() not in text_:
+                return False
+        return True
+
+    shown = [r for r in rows if keep(r)]
+    page_size = min(max(page_size, 5), 100)
+    pages = max(1, -(-len(shown) // page_size))
+    page = min(max(page, 1), pages)
+    chunk = shown[(page - 1) * page_size: page * page_size]
+    actions = sorted({r.action for r in rows if not category or category_of(r.action) == category})
+    return {
+        "rows": [{"id": r.id, "at": r.created_at, "by": r.actor.full_name if r.actor else "System", "by_id": r.actor_id,
+                  "action": r.action, "category": category_of(r.action), "target": r.target, "details": r.details}
+                 for r in chunk],
+        "total": len(shown), "page": page, "pages": pages, "page_size": page_size,
+        "counts": counts, "all": len(rows),
+        "categories": [{"key": k, "label": v} for k, v in ACTIVITY_CATEGORIES.items()],
+        "actions": actions,
+        "people": [{"id": i, "name": n} for i, n in sorted(people.items(), key=lambda x: x[1])],
+        "scope": "all" if scope is None else "team",
+    }
+
 
 @protected.get("/activity-log")
 def activity_log(limit: int = 300, db: Session = Depends(get_db)):

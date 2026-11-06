@@ -201,15 +201,23 @@ def test_opportunity_upload_and_download(client, outbox):
     assert client.get("/api/opportunities/export").status_code == 422  # a reason is required
 
 
-def test_transfer_history_on_the_list_pages(client, outbox):
+def test_upload_download_history_is_for_the_admin_and_the_team_manager(client, outbox):
     client.post("/api/leads/import", files=csv_file([["Last Name", "Company"], ["Roy", "Dune"]]), data={"dry_run": "false"})
     client.get("/api/leads/export", params={"reason": "Call list for today"})
-    mine = client.get("/api/leads/transfers").json()
-    assert [(h["action"], h["by"]) for h in mine] == [("Download", "Ravi Kumar"), ("Upload", "Ravi Kumar")]
-    assert "Reason: Call list for today" in mine[0]["details"]
+    # Salespeople don't get the history: their Manager and the Admin do
+    assert client.get("/api/leads/transfers").status_code == 403
+    admin = login_as(client, 3).get("/api/leads/transfers").json()
+    assert [(h["action"], h["by"]) for h in admin] == [("Download", "Ravi Kumar"), ("Upload", "Ravi Kumar")]
+    assert "Reason: Call list for today" in admin[0]["details"]
     assert client.get("/api/leads/transfers", params={"object": "opportunities"}).json() == []
-    # the Manager sees everyone's; another salesperson only their own
+    # Priya sees Ravi's history only once Ravi is in her team
+    assert login_as(client, 1).get("/api/leads/transfers").json() == []
+    login_as(client, 3).put("/api/users/2", json={"reports_to_id": 1})
     assert len(login_as(client, 1).get("/api/leads/transfers").json()) == 2
+    # the Admin's own downloads stay out of the Manager's view
+    login_as(client, 3).get("/api/leads/export", params={"reason": "Board pack for Friday"})
+    assert len(login_as(client, 1).get("/api/leads/transfers").json()) == 2
+    assert len(login_as(client, 3).get("/api/leads/transfers").json()) == 3
 
 
 def test_company_matches_while_typing(client, outbox):

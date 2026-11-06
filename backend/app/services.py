@@ -468,6 +468,32 @@ def log_activity(db: Session, actor_id: int | None, action: str, target: str, de
     db.add(ActivityLog(actor_id=actor_id, action=action, target=target[:200], details=details))
 
 
+def notify_data_owners(db: Session, actor, owner_ids, title: str, what: str, reason: str) -> None:
+    """Someone outside a Manager's team (the Admin, another Manager or another team) downloaded records owned by that
+    Manager or their team: the Manager is told. Their own team's downloads are in Team Activity instead, and the
+    Admin is told about every download separately."""
+    owner_ids = {i for i in owner_ids if i is not None}
+    if not owner_ids:
+        return
+    people = db.execute(select(User.id, User.role, User.reports_to_id, User.is_active).where(User.id.in_(owner_ids))).all()
+    managers = set()
+    for user_id, role, reports_to_id, _ in people:
+        if role == "Manager":
+            managers.add(user_id)
+        elif reports_to_id:
+            managers.add(reports_to_id)
+    managers.discard(actor.id)
+    # the Manager's own team downloading is already in their Team Activity: tell them about everyone else
+    managers.discard(db.scalar(select(User.reports_to_id).where(User.id == actor.id)))
+    for manager_id in managers:
+        manager = db.get(User, manager_id)
+        if manager is None or not manager.is_active:
+            continue
+        notify(db, manager_id, "Your team's data was downloaded",
+               f"{actor.full_name} ({actor.role}) downloaded {what}, including records owned by you or your team.\n"
+               f"Reason: {reason}", link="/team-activity" if actor.role != "Admin" else None, category="assignment")
+
+
 def assignment_notice(db: Session, *, owner_id: int, actor_id: int | None, kind: str, name: str, link: str) -> None:
     """Tells the new owner when someone else assigns a lead, opportunity or task to them.
     Reassigned leads and opportunities also go in the Admin's Activity Log.

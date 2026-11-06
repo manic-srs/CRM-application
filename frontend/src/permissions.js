@@ -2,6 +2,10 @@
 // every request again, so hiding a button here is only for a clean screen, not for security.
 export const can = (user, permission) => !!user?.permissions?.includes(permission);
 
+// Manage Access: the Admin (users), and Managers (their team, team access, team activity)
+export const canManageAccess = (user) =>
+  can(user, "manage_users") || can(user, "grant_team_access") || can(user, "manage_team");
+
 // Lead conversion is reserved for Managers and Salespeople.
 export const canCreateSales = (user) => !!user && user.role !== "Admin";
 

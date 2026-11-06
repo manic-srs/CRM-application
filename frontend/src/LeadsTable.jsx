@@ -7,7 +7,7 @@ import { createPortal } from "react-dom";
 import { api, apiRequest } from "./api";
 import { leadBoardColumns, leadConvertChoice } from "./domain";
 import LeadsKanban from "./LeadsKanban";
-import { NewCampaign } from "./CampaignsPage";
+import { NewCampaign, queuedMessage } from "./CampaignsPage";
 import { can, canCreateSales } from "./permissions";
 import { ActionMenu, DateCell, Icon, PhoneReveal, StageBadge } from "./ui";
 import { dateTime } from "./format";
@@ -477,7 +477,7 @@ export default function LeadsTable({
           onCreated={(c) => {
             setCampaignFor(null);
             setSelected(new Set());
-            notify(`Campaign "${c.name}" ${c.status === "Scheduled" && new Date(c.send_at) > new Date() ? "is scheduled" : "is sending"}: ${c.counts.Queued.toLocaleString()} email${c.counts.Queued === 1 ? "" : "s"} queued.`);
+            notify(queuedMessage(c));
             window.location.hash = `#/campaigns/${c.id}`;
           }}
         />

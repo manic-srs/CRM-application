@@ -12,7 +12,7 @@ import { AccountPage, ContactPage } from "./RelatedPages";
 import SellerHome from "./SellerHome";
 import TasksPage from "./TasksPage";
 import ManageAccess, { ChangePassword, MyProfile } from "./UsersPage";
-import { can } from "./permissions";
+import { can, canManageAccess } from "./permissions";
 import { Icon } from "./ui";
 import { useWorkspace } from "./useWorkspace";
 
@@ -223,12 +223,14 @@ function Workspace({ user, onLogout, onUserChanged }) {
     ) : (
       <ListView key={route} collection="contacts" data={data} user={user} openNew={openNew} setModal={setModal} query={query} />
     );
-  else if (["users", "permissions", "activity"].includes(section) && (can(user, "manage_users") || can(user, "grant_team_access")))
+  else if (["users", "permissions", "activity", "team-activity"].includes(section) && canManageAccess(user))
     page = <ManageAccess tab={section === "users" ? "people" : section} user={user} data={data} reload={reload} notify={notify} onSelfChanged={onUserChanged} />;
   else if (section === "assistant") page = <AssistantPage user={user} reload={reload} />;
   else if (section === "campaigns") page = <CampaignsPage key={id || "list"} id={id} user={user} data={data} notify={notify} />;
   else if (section === "tasks")
-    page = <TasksPage key={route} data={data} user={user} toggleTask={toggleTask} openTask={openTask} setModal={setModal} query={query} />;
+    page = (
+      <TasksPage key={route} data={data} user={user} toggleTask={toggleTask} openTask={openTask} setModal={setModal} query={query} reload={reload} notify={notify} />
+    );
   else
     page = (
       <div className="page">

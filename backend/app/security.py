@@ -42,7 +42,7 @@ ROLES = ("Salesperson", "Manager", "Admin")
 # Shown as sections on the Permissions page
 PERMISSION_GROUPS = {
     "Records": ("view_team_records", "view_team_dashboard", "edit_team_records", "reassign_owner", "transfer_leads"),
-    "Team": ("grant_team_access",),
+    "Team": ("grant_team_access", "manage_team"),
     "Email": ("send_emails", "send_campaigns"),
     "Data": ("import_leads", "export_data"),
     "Administration": ("manage_users", "manage_permissions"),
@@ -57,6 +57,8 @@ PERMISSIONS = {
     "transfer_leads": ("Transfer own leads", "Give your own leads to another user (changes only the owner, no approval needed)",
                        ("Salesperson",)),
     "grant_team_access": ("Give team access", "Let a salesperson see the whole team's records", ("Manager",)),
+    "manage_team": ("Manage own team", "Add Salespeople to your own team, deactivate them and see their activity "
+                    "(every change is in the Admin's Activity Log)", ("Manager",)),
     "send_emails": ("Send emails", "Send emails to leads and contacts", ("Manager", "Salesperson")),
     "send_campaigns": ("Send email campaigns", "Email many leads at once (unsubscribed leads and invalid emails are "
                        "always left out)", ("Manager", "Salesperson")),
@@ -260,6 +262,23 @@ def owner_for_new(owner_id: int | None) -> int:
 def check_owner_change(old_owner_id: int, new_owner_id: int | None) -> None:
     if new_owner_id is not None and new_owner_id != old_owner_id:
         require("reassign_owner")
+
+
+# ---------- a Manager's team ----------
+
+def team_ids(db: Session, manager_id: int, *, active_only: bool = False) -> set[int]:
+    """The Salespeople who report to this Manager (Manage Access > People > Reports To)."""
+    query = select(User.id).where(User.reports_to_id == manager_id)
+    if active_only:
+        query = query.where(User.is_active.is_(True))
+    return set(db.scalars(query).all())
+
+
+def manager_of(db: Session, user_id: int | None) -> int | None:
+    """The Manager a user reports to (None for Managers, Admins and Salespeople without a Manager)."""
+    if user_id is None:
+        return None
+    return db.scalar(select(User.reports_to_id).where(User.id == user_id))
 
 
 # ---------- default Admin ----------

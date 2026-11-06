@@ -139,6 +139,84 @@ function RecipientInput({ value, onChange, id, placeholder }) {
 const STAGE_PICKER = false;
 const plural = (count, word) => `${n(count)} ${word}${count === 1 ? "" : "s"}`;
 
+// Draft with AI (the same AI as lead emails): describe the email, or refine the current one. The draft keeps the
+// fields ({first_name}, {company}, {sender_name}) that are filled in for each recipient. Undo puts the old text back.
+const CAMPAIGN_REFINE = [
+  ["formalize", "Professional"],
+  ["friendly", "Conversational"],
+  ["shorten", "Concise"],
+];
+
+function CampaignAiDraft({ subject, body, onApply }) {
+  const [open, setOpen] = useState(false);
+  const [instructions, setInstructions] = useState("");
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [undo, setUndo] = useState(null);
+  const run = async (action) => {
+    if (busy) return;
+    if (action === "custom" && !instructions.trim()) return setError("Describe the email you want first.");
+    setBusy(action);
+    setError("");
+    try {
+      const draft = await api.draftCampaign({ action, instructions: instructions.trim(), current_subject: subject, current_body: body });
+      setUndo({ subject, body });
+      onApply(draft);
+    } catch (err) {
+      setError(`${err.message} Your email is unchanged.`);
+    } finally {
+      setBusy("");
+    }
+  };
+  if (!open)
+    return (
+      <button type="button" className="sf-button small ai-draft-toggle" onClick={() => setOpen(true)}>
+        <Icon name="edit" size={14} /> Draft with AI
+      </button>
+    );
+  return (
+    <div className="ai-draft-box" aria-busy={!!busy}>
+      <label className="field">
+        <span>Describe the email</span>
+        <textarea
+          rows={2}
+          value={instructions}
+          maxLength={2000}
+          onChange={(e) => setInstructions(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && (e.ctrlKey || e.metaKey) && run("custom")}
+          placeholder="e.g. Invite them to a 20-minute demo of our reporting dashboards next week"
+          disabled={!!busy}
+        />
+      </label>
+      <div className="ai-draft-actions">
+        <button type="button" className="sf-button small brand" onClick={() => run("custom")} disabled={!!busy}>
+          {busy === "custom" ? "Writing…" : "Write email"}
+        </button>
+        <span className="muted">Refine:</span>
+        {CAMPAIGN_REFINE.map(([action, label]) => (
+          <button key={action} type="button" className="sf-button small" onClick={() => run(action)} disabled={!!busy}>
+            {busy === action ? "Working…" : label}
+          </button>
+        ))}
+        {undo && (
+          <button type="button" className="link" onClick={() => (onApply(undo), setUndo(null))} disabled={!!busy}>
+            Undo
+          </button>
+        )}
+        <button type="button" className="link ai-draft-close" onClick={() => setOpen(false)}>
+          Close
+        </button>
+      </div>
+      {error && (
+        <p className="field-error-text" role="alert">
+          {error}
+        </p>
+      )}
+      <small className="field-hint">Review the draft before sending. Fields like {"{first_name}"} are filled in for each recipient.</small>
+    </div>
+  );
+}
+
 export function NewCampaign({ user, users = [], leadIds = null, onClose, onCreated }) {
   const team = user.role === "Admin" || can(user, "view_team_records");
   const [stages, setStages] = useState(LEAD_OPEN_STAGES);
@@ -149,8 +227,6 @@ export function NewCampaign({ user, users = [], leadIds = null, onClose, onCreat
   const [name, setName] = useState("");
   const [subject, setSubject] = useState("Quick question for {company}");
   const [body, setBody] = useState(SAMPLE_BODY);
-  const [timing, setTiming] = useState("now");
-  const [sendAt, setSendAt] = useState("");
   const [preview, setPreview] = useState(null);
   const [settings, setSettings] = useState(null);
   const [showLeftOut, setShowLeftOut] = useState(false);
@@ -208,8 +284,6 @@ export function NewCampaign({ user, users = [], leadIds = null, onClose, onCreat
     if (name.trim().length < 2) return setError("Give the campaign a name.");
     if (subject.trim().length < 2) return setError("Write a subject.");
     if (body.trim().length < 10) return setError("Write the email.");
-    if (timing === "later" && !sendAt) return setError("Choose when to send it.");
-    if (timing === "later" && new Date(sendAt) < new Date()) return setError("Choose a time in the future.");
     if (nobody) return setError(wrong ? "Fix or remove the addresses marked in red." : "Add at least one recipient.");
     if (!preview?.eligible) return setError("None of these recipients can be emailed (see Excluded).");
     setBusy(true);
@@ -220,7 +294,7 @@ export function NewCampaign({ user, users = [], leadIds = null, onClose, onCreat
         name: name.trim(),
         subject: subject.trim(),
         body: body.trim(),
-        send_at: timing === "later" ? new Date(sendAt).toISOString() : null,
+        send_at: null, // sent straight away, paced automatically within the Outlook limits
       });
       onCreated(created);
     } catch (err) {
@@ -249,11 +323,7 @@ export function NewCampaign({ user, users = [], leadIds = null, onClose, onCreat
             Cancel
           </button>
           <button type="submit" form="campaign-form" className="sf-button brand" disabled={busy || !preview?.eligible} aria-busy={busy}>
-            {busy
-              ? "Saving…"
-              : timing === "later"
-                ? `Schedule (${plural(preview?.eligible || 0, "recipient")})`
-                : `Send to ${plural(preview?.eligible || 0, "recipient")}`}
+            {busy ? "Saving…" : `Send to ${plural(preview?.eligible || 0, "recipient")}`}
           </button>
         </>
       }
@@ -383,6 +453,7 @@ export function NewCampaign({ user, users = [], leadIds = null, onClose, onCreat
 
         <fieldset className="campaign-section">
           <legend>Email</legend>
+          <CampaignAiDraft subject={subject} body={body} onApply={(d) => (setSubject(d.subject), setBody(d.body))} />
           <label className="field">
             <span>
               Subject <i>*</i>
@@ -428,22 +499,22 @@ export function NewCampaign({ user, users = [], leadIds = null, onClose, onCreat
         </fieldset>
 
         <fieldset className="campaign-section">
-          <legend>When</legend>
-          <div className="timing-row">
-            <label className="assign-choice">
-              <input type="radio" name="timing" checked={timing === "now"} onChange={() => setTiming("now")} /> Send now
-            </label>
-            <label className="assign-choice">
-              <input type="radio" name="timing" checked={timing === "later"} onChange={() => setTiming("later")} /> Schedule
-            </label>
-            {timing === "later" && (
-              <input type="datetime-local" value={sendAt} onChange={(e) => setSendAt(e.target.value)} aria-label="Send at" />
+          <legend>Sending</legend>
+          <p className="field-hint sending-note">
+            <Icon name="mail" size={14} /> Click Send and SalesTrack does the rest: the emails are queued and sent automatically
+            {limits ? ` within Outlook's limits (${limits.per_minute} per minute, ${n(limits.per_day)} per day across all campaigns)` : ""}
+            , whether it's 10 or 1,000 emails.
+            {preview?.eligible > 0 && preview.eta && (
+              <>
+                {" "}
+                This campaign takes {duration(preview.eta.minutes, preview.eta.days)}.
+              </>
             )}
-          </div>
-          {limits && preview?.eligible > 0 && (
-            <p className="field-hint">
-              Sent gradually to stay within Outlook's limits ({limits.per_minute} per minute, {n(limits.per_day)} per day across all
-              campaigns). This campaign takes {duration(preview.eta.minutes, preview.eta.days)}.
+          </p>
+          {settings && settings.links_reachable === false && (
+            <p className="field-hint field-error-text" role="status">
+              The Unsubscribe links point to {settings.unsubscribe_base.replace(/\/api\/public\/unsubscribe$/, "")}, which recipients
+              can't open. Ask your administrator to set PUBLIC_URL to the app's public address.
             </p>
           )}
         </fieldset>
@@ -676,35 +747,45 @@ function CampaignDetail({ id, user, notify }) {
   );
 }
 
-// One dashboard number opened as a list: every email with that status, across the campaigns this user can see
-function RecipientsDialog({ status, label, onClose }) {
+// One dashboard number opened as a tab on the page: every email with that status, across the campaigns this user can
+// see, with search and pages (works for any number of emails)
+function RecipientsList({ status, label }) {
   const [page, setPage] = useState(0);
+  const [query, setQuery] = useState("");
+  const [search, setSearch] = useState("");
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   useEffect(() => {
+    const t = setTimeout(() => setSearch(query.trim()), 300);
+    return () => clearTimeout(t);
+  }, [query]);
+  useEffect(() => setPage(0), [search, status]);
+  useEffect(() => {
     let stale = false;
     api
-      .campaignRecipients(status, page * 100)
+      .campaignRecipients(status, page * 50, 50, search)
       .then((r) => !stale && (setResult(r), setError("")))
       .catch((err) => !stale && setError(err.message));
     return () => {
       stale = true;
     };
-  }, [status, page]);
-  const pages = result ? Math.ceil(result.total / 100) : 0;
+  }, [status, page, search]);
+  const pages = result ? Math.max(1, Math.ceil(result.total / 50)) : 0;
   const dated = status === "Sent" || status === "Unsubscribed"; // show when the (last) email went
   return (
-    <Dialog
-      title={`${label}${result ? ` (${n(result.total)})` : ""}`}
-      onClose={onClose}
-      footer={
-        <button className="sf-button" onClick={onClose}>
-          Close
-        </button>
-      }
-    >
-      {error && <p className="form-error">{error}</p>}
-      {!result && !error && <p>Loading…</p>}
+    <div className="campaign-tab-panel" role="tabpanel" aria-label={label}>
+      <div className="campaign-tab-toolbar">
+        <b>
+          {label}
+          {result ? ` (${n(result.total)})` : ""}
+        </b>
+        <label className="list-search">
+          <Icon name="search" size={14} />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by name, email or campaign" aria-label={`Search ${label}`} />
+        </label>
+      </div>
+      {error && <p className="form-error pad">{error}</p>}
+      {!result && !error && <p className="table-empty">Loading…</p>}
       {result && (
         <>
           <div className="table-scroll">
@@ -734,7 +815,7 @@ function RecipientsDialog({ status, label, onClose }) {
                 ))}
               </tbody>
             </table>
-            {!result.items.length && <p className="table-empty">Nothing here.</p>}
+            {!result.items.length && <p className="table-empty">{search ? "No emails match." : "Nothing here."}</p>}
           </div>
           {pages > 1 && (
             <div className="pager">
@@ -742,7 +823,7 @@ function RecipientsDialog({ status, label, onClose }) {
                 Previous
               </button>
               <span>
-                Page {page + 1} of {pages}
+                Page {page + 1} of {n(pages)}
               </span>
               <button className="sf-button small" disabled={page + 1 >= pages} onClick={() => setPage(page + 1)}>
                 Next
@@ -751,24 +832,24 @@ function RecipientsDialog({ status, label, onClose }) {
           )}
         </>
       )}
-    </Dialog>
+    </div>
   );
 }
 
-// Email dashboard: the standard campaign numbers, across the campaigns this user can see. Each opens its list.
+// Email dashboard: the standard campaign numbers, across the campaigns this user can see. Each is a tab on the page
+// (Campaigns is the first tab) that lists those emails with search and pages.
 //   Sent          delivered to the mail server
-//   Queued        waiting to be sent (now or at the scheduled time)
+//   Queued        waiting to be sent
 //   Bounced       the address doesn't work (no mail server, or the server rejected it): never emailed again
 //   Failed        not delivered after 3 tries (temporary problems)
 //   Unsubscribed  people who got a campaign and then unsubscribed
 //   Not sent      excluded when it was their turn: unsubscribed, bounced before, or no email
 const pct = (part, whole) => (whole ? `${((part / whole) * 100).toFixed(part && part / whole < 0.1 ? 1 : 0)}%` : "0%");
 
-function EmailDashboard({ totals }) {
-  const [open, setOpen] = useState(null); // [status, title] of the list being shown
+function dashboardTiles(totals) {
   const e = totals.emails;
   const attempted = e.sent + e.invalid; // emails that reached a mail server, or bounced
-  const tiles = [
+  return [
     ["Sent", e.sent, "Sent", "ok", `to ${plural(e.people || 0, "recipient")}`],
     ["Queued", e.queued, "Queued", "info", e.queued ? "waiting to send" : "nothing waiting"],
     ["Bounced", e.invalid, "Invalid", "bad", `${pct(e.invalid, attempted)} bounce rate`],
@@ -776,28 +857,41 @@ function EmailDashboard({ totals }) {
     ["Unsubscribed", e.unsubscribed || 0, "Unsubscribed", "warn", `${pct(e.unsubscribed || 0, e.people)} of recipients`],
     ["Not sent", e.left_out, "Skipped", "muted", "excluded at send time"],
   ];
+}
+
+function EmailDashboard({ totals, tab, setTab }) {
   return (
-    <>
-      <section className="campaign-metrics" aria-label={`Email campaign totals, ${plural(totals.campaigns, "campaign")}`}>
-        {tiles.map(([label, value, status, tone, note]) => (
-          <button
-            key={label}
-            type="button"
-            className={`metric ${tone}`}
-            onClick={() => setOpen([status, label])}
-            title={`Show ${label.toLowerCase()} emails`}
-          >
-            <span className="metric-label">{label}</span>
-            <b>{n(value)}</b>
-            <small>{note}</small>
-          </button>
-        ))}
-      </section>
-      {open && (
-        <RecipientsDialog status={open[0]} label={open[0] === "Unsubscribed" ? "Unsubscribed" : `${open[1]} emails`} onClose={() => setOpen(null)} />
-      )}
-    </>
+    <section className="campaign-metrics" role="tablist" aria-label={`Email campaign totals, ${plural(totals.campaigns, "campaign")}`}>
+      {dashboardTiles(totals).map(([label, value, status, tone, note]) => (
+        <button
+          key={label}
+          type="button"
+          role="tab"
+          aria-selected={tab === status}
+          className={`metric ${tone} ${tab === status ? "on" : ""}`}
+          onClick={() => setTab(tab === status ? "campaigns" : status)}
+          title={tab === status ? "Back to the campaigns" : `Show ${label.toLowerCase()} emails`}
+        >
+          <span className="metric-label">{label}</span>
+          <b>{n(value)}</b>
+          <small>{note}</small>
+        </button>
+      ))}
+    </section>
   );
+}
+
+// After New Campaign: how many emails were queued and when sending finishes (the backend paces them)
+export function queuedMessage(c) {
+  const count = c.counts?.Queued ?? 0;
+  const finish = c.eta?.finish_by ? new Date(c.eta.finish_by) : null;
+  const sameDay = finish && finish.toDateString() === new Date().toDateString();
+  const by = finish
+    ? ` - sending will finish by ${finish.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${
+        sameDay ? "" : ` on ${finish.toLocaleDateString([], { day: "numeric", month: "short" })}`
+      }`
+    : "";
+  return `Campaign "${c.name}": ${plural(count, "email")} queued${by}.`;
 }
 
 export default function CampaignsPage({ id, user, data, notify }) {
@@ -806,6 +900,7 @@ export default function CampaignsPage({ id, user, data, notify }) {
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
   const [tick, setTick] = useState(0);
+  const [tab, setTab] = useState("campaigns"); // "campaigns" or an email status (Sent, Queued, Invalid...)
   useEffect(() => {
     if (id) return;
     api
@@ -846,13 +941,27 @@ export default function CampaignsPage({ id, user, data, notify }) {
             </button>
           )}
         </header>
-        {totals && <EmailDashboard totals={totals} />}
-        <p className="campaign-rules">
-          <Icon name="mail" size={14} /> Unsubscribed and bounced addresses are never emailed again. Every email has an Unsubscribe link,
-          and a Subscribe link until the recipient subscribes.
-        </p>
+        {totals && <EmailDashboard totals={totals} tab={tab} setTab={setTab} />}
+        <nav className="campaign-tabs" role="tablist" aria-label="Email Campaigns">
+          <button role="tab" aria-selected={tab === "campaigns"} className={tab === "campaigns" ? "on" : ""} onClick={() => setTab("campaigns")}>
+            Campaigns{list ? ` (${n(list.items.length)})` : ""}
+          </button>
+          {totals &&
+            dashboardTiles(totals).map(([label, value, status]) => (
+              <button key={status} role="tab" aria-selected={tab === status} className={tab === status ? "on" : ""} onClick={() => setTab(status)}>
+                {label} ({n(value)})
+              </button>
+            ))}
+        </nav>
+        {tab !== "campaigns" && totals && (
+          <RecipientsList
+            key={tab}
+            status={tab}
+            label={(dashboardTiles(totals).find((t) => t[2] === tab) || [tab])[0] + (tab === "Unsubscribed" ? "" : " emails")}
+          />
+        )}
         {error && <p className="form-error pad">{error}</p>}
-        <div className="table-scroll">
+        <div className="table-scroll" hidden={tab !== "campaigns"}>
           {list?.items.length > 0 && (
           <table className="sf-table campaign-table">
             <thead>
@@ -908,6 +1017,10 @@ export default function CampaignsPage({ id, user, data, notify }) {
           )}
           {!list && !error && <p className="table-empty">Loading…</p>}
         </div>
+        <p className="campaign-rules">
+          <Icon name="mail" size={14} /> Unsubscribed and bounced addresses are never emailed again. Every email has an Unsubscribe link,
+          and a Subscribe link until the recipient subscribes.
+        </p>
       </section>
       {creating && (
         <NewCampaign
@@ -916,7 +1029,7 @@ export default function CampaignsPage({ id, user, data, notify }) {
           onClose={() => setCreating(false)}
           onCreated={(c) => {
             setCreating(false);
-            notify(`Campaign "${c.name}" created: ${plural(c.counts.Queued, "email")} queued.`);
+            notify(queuedMessage(c));
             window.location.hash = `#/campaigns/${c.id}`;
           }}
         />

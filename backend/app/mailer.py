@@ -4,8 +4,10 @@ Settings (environment variables):
   SMTP_HOST       mail server. In Docker this is the Mailpit test inbox (http://localhost:8026).
                   If empty, emails are not sent (used by the automatic tests).
   SMTP_PORT       default 1025 (Mailpit). Use 587 for most real mail servers.
-  SMTP_USER / SMTP_PASSWORD / SMTP_TLS=true   for a real mail server
-  MAIL_FROM       sender address, default crm@salestrack.local (Gmail: must be the SMTP_USER address).
+  SMTP_USER / SMTP_PASSWORD / SMTP_TLS=true   for a real mail server: Outlook / Microsoft 365 is
+                  smtp.office365.com, port 587, TLS, with the mailbox's own login
+  MAIL_FROM       sender address, default crm@salestrack.local (Outlook SMTP: the SMTP_USER mailbox, or a mailbox
+                  it has "Send As" rights for).
                   Every email goes out from this address, shown as "<user name> via SalesTrack";
                   replies go to the salesperson (Reply-To).
   MAIL_PROVIDER   smtp (default) or graph = Microsoft 365 / Outlook with OAuth (no SMTP password):
@@ -50,9 +52,8 @@ def settings() -> dict:
 
 
 def password() -> str:
-    """Gmail shows App Passwords as "abcd efgh ijkl mnop"; the spaces are not part of the password."""
-    value = os.getenv("SMTP_PASSWORD", "")
-    return value.replace(" ", "") if "gmail" in os.getenv("SMTP_HOST", "").lower() else value
+    """The Outlook mailbox password (or app password), used exactly as written."""
+    return os.getenv("SMTP_PASSWORD", "")
 
 
 def provider() -> str:

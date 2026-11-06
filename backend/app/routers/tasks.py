@@ -7,12 +7,13 @@ from datetime import timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import schemas
 from app.database import get_db
-from app.security import acting_user_id, check_owner_change, owner_for_new, require_edit, require_view, visible
+from app.security import acting_user_id, check_owner_change, owner_for_new, require, require_edit, require_view, visible
 from app.models import Lead, Opportunity, Task
 from app.serializers import task_out
 from app.services import assignment_notice, get_or_404, now, record_link, resolve_user_id, start_of_today, touch_lead
@@ -75,6 +76,49 @@ def create_task(data: schemas.TaskCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(task)
     return task_out(task)
+
+
+class BulkTasks(BaseModel):
+    """Tasks ticked on the Tasks page: Mark as Done, or Reassign to someone."""
+    ids: list[int] = Field(..., min_length=1, max_length=500)
+    action: Literal["complete", "reassign"]
+    owner_id: int | None = None  # reassign: the new owner
+
+
+@router.post("/bulk")
+def bulk_tasks(data: BulkTasks, db: Session = Depends(get_db)):
+    """Mark the ticked tasks as Done, or give them to someone else. Tasks the user can't change (or that are already
+    closed) are skipped with the reason; the rest are saved together."""
+    if data.action == "reassign":
+        if data.owner_id is None:
+            raise HTTPException(status_code=422, detail="Choose who gets the tasks")
+        require("reassign_owner")
+        new_owner = resolve_user_id(db, data.owner_id)
+    me = acting_user_id()
+    done, skipped = [], []
+    for task in db.scalars(select(Task).where(Task.id.in_(data.ids)).order_by(Task.id)).all():
+        try:
+            require_edit(task.owner_id, "task")
+        except HTTPException as exc:
+            skipped.append({"id": task.id, "title": task.title, "reason": exc.detail})
+            continue
+        if task.status != "Open":
+            skipped.append({"id": task.id, "title": task.title, "reason": f"Already {task.status}"})
+            continue
+        if data.action == "complete":
+            task.status, task.completed_at = "Done", now()
+        elif task.owner_id == new_owner:
+            skipped.append({"id": task.id, "title": task.title, "reason": "Already assigned to them"})
+            continue
+        else:
+            task.owner_id = new_owner
+            assignment_notice(db, owner_id=new_owner, actor_id=me, kind="Task", name=task.title,
+                              link=record_link(lead_id=task.lead_id, opportunity_id=task.opportunity_id))
+        done.append(task.id)
+    found = {t["id"] for t in skipped} | set(done)
+    skipped += [{"id": i, "title": f"Task {i}", "reason": "Not found"} for i in data.ids if i not in found]
+    db.commit()
+    return {"done": done, "skipped": skipped}
 
 
 @router.get("/{task_id}", response_model=schemas.TaskOut)

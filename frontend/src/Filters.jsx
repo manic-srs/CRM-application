@@ -23,6 +23,14 @@ const FUTURE = [
   ["quarter", "This quarter"],
 ];
 
+// Task due dates: only the choices people use (plus a custom range)
+export const TASK_DUE_RANGES = [
+  ["overdue", "Overdue"],
+  ["today", "Today"],
+  ["week", "This week"],
+  ["next7", "Next 7 days"],
+];
+
 const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
 
@@ -68,6 +76,10 @@ export function applyFilters(rows, defs, values) {
   const active = defs.filter((f) => values[f.key] && f.get); // filters without get() run on the server (Leads)
   if (!active.length) return rows;
   const tests = active.map((f) => {
+    if (f.type === "text") {
+      const needle = String(values[f.key]).trim().toLowerCase();
+      return (r) => String(f.get(r) ?? "").toLowerCase().includes(needle);
+    }
     if (f.type === "date") {
       const [start, end] = rangeBounds(values[f.key], values[`${f.key}_from`], values[`${f.key}_to`]);
       return (r) => {
@@ -124,7 +136,12 @@ export function filterSummary(defs, values) {
     .filter((f) => values[f.key])
     .map((f) => {
       const v = values[f.key];
-      const text = f.type === "date" ? RANGE_LABEL[v] : f.options.find(([o]) => o === v)?.[1] || v;
+      const text =
+        f.type === "text"
+          ? `contains "${v}"`
+          : f.type === "date"
+            ? (f.ranges || []).find(([o]) => o === v)?.[1] || RANGE_LABEL[v]
+            : f.options.find(([o]) => o === v)?.[1] || v;
       return `${f.label}: ${text}`;
     })
     .join(" • ");
@@ -172,7 +189,11 @@ function HeaderFilter({ def, values, onChange }) {
     onChange(next);
     setOpen(false);
   };
-  const choices = def.type === "date" ? (def.future ? FUTURE : PAST) : def.options;
+  const choices = def.type === "text" ? [] : def.type === "date" ? def.ranges || (def.future ? FUTURE : PAST) : def.options;
+  const [typed, setTyped] = useState("");
+  useEffect(() => {
+    if (open) setTyped(values[def.key] || "");
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
@@ -210,16 +231,41 @@ function HeaderFilter({ def, values, onChange }) {
                 To
                 <input type="date" value={custom.to} min={custom.from || undefined} onChange={(e) => setCustom({ ...custom, to: e.target.value })} />
               </label>
-              <button
-                className="sf-button brand"
-                disabled={!custom.from && !custom.to}
-                onClick={() => choose("custom", { [`${def.key}_from`]: custom.from, [`${def.key}_to`]: custom.to })}
-              >
-                Apply
-              </button>
+              <div className="th-custom-actions">
+                <button type="button" className="link" disabled={!custom.from && !custom.to} onClick={() => setCustom({ from: "", to: "" })}>
+                  Clear
+                </button>
+                <button
+                  className="sf-button brand small"
+                  disabled={!custom.from && !custom.to}
+                  onClick={() => choose("custom", { [`${def.key}_from`]: custom.from, [`${def.key}_to`]: custom.to })}
+                >
+                  Apply
+                </button>
+              </div>
             </div>
           )}
-          {!choices.length && <p className="th-menu-empty">Nothing to filter yet</p>}
+          {def.type === "text" && (
+            <form
+              className="th-custom"
+              onSubmit={(e) => {
+                e.preventDefault();
+                choose(typed.trim());
+              }}
+            >
+              <input
+                autoFocus
+                value={typed}
+                onChange={(e) => setTyped(e.target.value)}
+                placeholder={def.placeholder || `Type part of the ${def.label.toLowerCase()}`}
+                aria-label={`${def.label} contains`}
+              />
+              <button className="sf-button brand" type="submit" disabled={!typed.trim()}>
+                Apply
+              </button>
+            </form>
+          )}
+          {!choices.length && def.type !== "text" && <p className="th-menu-empty">Nothing to filter yet</p>}
         </div>
       )}
     </>

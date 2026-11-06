@@ -26,8 +26,16 @@ class User(Base):
     team_access: Mapped[bool] = mapped_column(default=False)           # a Manager let this user see the team's records
     role_changed_at: Mapped[datetime | None]    # last time the Admin changed the role
     access_changed_at: Mapped[datetime | None]  # last activate / deactivate / team access change
+    # A Salesperson's Manager: the Manager adds and deactivates the people in their team and sees their activity
+    reports_to_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime | None] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(server_default=func.now(), onupdate=func.now())
+
+    reports_to: Mapped["User | None"] = relationship(remote_side=[id])
+
+    @property
+    def reports_to_name(self) -> str | None:
+        return self.reports_to.full_name if self.reports_to else None
 
 
 class ActivityLog(Base):
