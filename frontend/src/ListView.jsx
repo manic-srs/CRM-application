@@ -340,29 +340,26 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
           <div className="list-buttons">
             {/* Leads: Actions for the leads ticked in the list (Email, Transfer, Delete), filled in by LeadsTable */}
             {collection === "leads" && <span id="lead-bulk-actions" className="bulk-actions-slot" />}
-            {ticks && mode !== "kanban" && (
+            {/* Opportunities: Actions appears once at least one opportunity is ticked */}
+            {ticks && mode !== "kanban" && picked.size > 0 && (
               <ActionMenu
                 label="Actions"
-                badge={picked.size ? picked.size.toLocaleString() : null}
-                items={
-                  picked.size
-                    ? [
-                        (user.role === "Admin" || can(user, "reassign_owner") || can(user, "transfer_leads")) && {
-                          label: "Change Owner",
-                          disabled: picked.size > 500,
-                          onClick: () => setOppBulk({ type: "owner", ids: [...picked] }),
-                        },
-                        {
-                          label: "Mark as Lost",
-                          danger: true,
-                          disabled: picked.size > 500,
-                          onClick: () => setOppBulk({ type: "lost", ids: [...picked] }),
-                        },
-                        "-",
-                        { label: "Clear Selection", onClick: () => setPicked(new Set()) },
-                      ]
-                    : [{ label: "Tick opportunities in the list first", disabled: true }]
-                }
+                badge={picked.size.toLocaleString()}
+                items={[
+                  (user.role === "Admin" || can(user, "reassign_owner") || can(user, "transfer_leads")) && {
+                    label: "Change Owner",
+                    disabled: picked.size > 500,
+                    onClick: () => setOppBulk({ type: "owner", ids: [...picked] }),
+                  },
+                  {
+                    label: "Mark as Lost",
+                    danger: true,
+                    disabled: picked.size > 500,
+                    onClick: () => setOppBulk({ type: "lost", ids: [...picked] }),
+                  },
+                  "-",
+                  { label: "Clear Selection", onClick: () => setPicked(new Set()) },
+                ]}
               />
             )}
             {dataList && can(user, "import_leads") && (
