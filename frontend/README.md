@@ -65,6 +65,7 @@ Every notification, task, Assistant item and Home card opens the record it is ab
 | `src/api.js` | API calls and request/response mapping |
 | `src/useWorkspace.js` | Loads and refreshes data from the API |
 | `src/domain.js`, `src/format.js` | Dropdown values and display formatting |
+| `src/listHelpers.js` | List page wording and rules without React (paging text, filter chips, selection bar actions, empty states), tested in `domain.test.js` |
 | `src/ui.jsx` | Icons, ring charts, path bar and other small pieces |
 
 ## Tests

@@ -96,3 +96,14 @@ export function maskPhone(value) {
   const keep = country + 3; // country code + first 3 digits
   return text.replace(/\d/g, (d) => (++shown <= keep ? d : "•"));
 }
+
+// File sizes: "220 KB", "1.4 MB"
+export const fileSize = (bytes) =>
+  bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+
+// New Email: the line beside Attach files, so the attachments are clear while the chooser is closed
+export function attachedSummary(files, limit = "25 MB") {
+  if (!files.length) return "No files attached";
+  const bytes = files.reduce((sum, f) => sum + f.size, 0);
+  return `${files.length} file${files.length === 1 ? "" : "s"} attached · ${fileSize(bytes)} of ${limit}`;
+}

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api } from "./api";
-import { LEAD_OPEN_STAGES, OPPORTUNITY_OPEN_STAGES, dateKey } from "./domain";
+import { LEAD_OPEN_STAGES, OPPORTUNITY_OPEN_STAGES, dateKey, homeDescription } from "./domain";
 import { compact, dateTime, greeting, shortDate, time } from "./format";
 import { Card, EmptyState, Icon, ObjectIcon, Ring, StageBadge } from "./ui";
 
@@ -86,15 +86,6 @@ function assistantItems(data, user) {
       items.push({ key: `idle${l.id}`, icon: "lead", text: `${l.name} has no upcoming activity`, href: `#/leads/${l.id}` }),
     );
   return items.slice(0, 6);
-}
-
-// The line under the greeting: what this dashboard shows for this person and view
-function homeSummary(user, team) {
-  if (user.role === "Admin") return "Sales across every team: deals, accounts and follow-ups at a glance.";
-  if (user.role === "Manager")
-    return team ? "Your team's deals, accounts and follow-ups, and how each salesperson is doing." : "Your own deals, accounts and follow-ups for today.";
-  if (team) return "The team's deals, accounts and follow-ups at a glance.";
-  return "Your deals, accounts and follow-ups for today.";
 }
 
 // ---------- Whole team graphs: leads by stage, pipeline by stage, won vs lost this month, per salesperson ----------
@@ -219,7 +210,7 @@ export default function SellerHome({ data, user, toggleTask, openTask, scope = "
         <div className="home-greeting">
           {/* Title Case on the page title: "Good Evening" */}
           <h1>{greeting().replace(/\b\w/g, (c) => c.toUpperCase())}!</h1>
-          <p>{homeSummary(user, team)}</p>
+          <p>{homeDescription(user.role, team)}</p>
         </div>
         {teamDashboard && (
         <div className="home-scope" role="group" aria-label="Show records">

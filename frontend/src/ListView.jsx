@@ -264,11 +264,29 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
   );
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerRef = useRef(null);
+  const pickerButton = useRef(null);
+  const pickerList = useRef(null);
+  const closePicker = () => {
+    setPickerOpen(false);
+    pickerButton.current?.focus();
+  };
   useEffect(() => {
-    // the list-view menu closes on a click anywhere else or on Esc
+    // the list-view menu opens on the current view; arrow keys move, Esc closes (back to the button), and a click
+    // anywhere else closes it
     if (!pickerOpen) return;
+    const options = () => [...(pickerList.current?.querySelectorAll('[role="option"]') || [])];
+    (options().find((o) => o.getAttribute("aria-selected") === "true") || options()[0])?.focus();
     const away = (e) => pickerRef.current && !pickerRef.current.contains(e.target) && setPickerOpen(false);
-    const key = (e) => e.key === "Escape" && setPickerOpen(false);
+    const key = (e) => {
+      if (e.key === "Escape") return closePicker();
+      if (e.key === "Tab") return setPickerOpen(false);
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+      e.preventDefault();
+      const list = options();
+      const at = list.indexOf(document.activeElement);
+      const next = e.key === "Home" ? 0 : e.key === "End" ? list.length - 1 : (at + (e.key === "ArrowDown" ? 1 : -1) + list.length) % list.length;
+      list[next]?.focus();
+    };
     document.addEventListener("mousedown", away);
     document.addEventListener("keydown", key);
     return () => {
@@ -284,6 +302,7 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
     if (data !== firstData.current) setSaved((n) => n + 1);
   }, [data]);
   const [search, setSearch] = useState("");
+  const [leadSummary, setLeadSummary] = useState(null); // Leads: { loaded, total, sort } from LeadsTable, under the title
   const cols = columns(collection, data);
   const [sort, setSort] = useState({ col: 0, dir: 1 });
 
@@ -311,26 +330,41 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
 
   return (
     <div className="page">
-      <section className="list-header card">
+      <section className={`list-header card ${collection === "leads" ? "leads-header" : ""}`}>
         <div className="list-title">
           <ObjectIcon type={collection} size={36} />
           <div>
+            {/* Leads: the object above the list view's name, and the count and sort order under it */}
+            {collection === "leads" && <p className="list-eyebrow">Leads</p>}
             <div className="view-picker" ref={pickerRef}>
-              <button onClick={() => setPickerOpen((o) => !o)} aria-haspopup="listbox" aria-expanded={pickerOpen}>
-                <h1>{viewName}</h1>
-                <Icon name="down" size={14} />
-              </button>
+              <h1>
+                <button
+                  ref={pickerButton}
+                  type="button"
+                  className="view-button"
+                  onClick={() => setPickerOpen((o) => !o)}
+                  aria-haspopup="listbox"
+                  aria-expanded={pickerOpen}
+                  title="Choose a list view"
+                >
+                  {viewName}
+                  <Icon name="down" size={14} />
+                </button>
+              </h1>
               {pickerOpen && (
-                <ul className="menu-pop" role="listbox">
-                  <li className="menu-label">LIST VIEWS</li>
+                <ul className="menu-pop" role="listbox" aria-label="List views" ref={pickerList}>
+                  <li className="menu-label" role="presentation" aria-hidden="true">
+                    LIST VIEWS
+                  </li>
                   {pickerViews.map(([name]) => (
-                    <li key={name}>
+                    <li key={name} role="none">
                       <button
+                        type="button"
                         role="option"
                         aria-selected={name === viewName}
                         onClick={() => {
                           setViewName(name);
-                          setPickerOpen(false);
+                          closePicker();
                         }}
                       >
                         {name === viewName && <Icon name="check" size={13} />} {name}
@@ -340,10 +374,24 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
                 </ul>
               )}
             </div>
+            {collection === "leads" && (
+              <p className="list-count" aria-live="polite">
+                {leadSummary?.loaded ? (
+                  <>
+                    <b>
+                      {leadSummary.total.toLocaleString()} lead{leadSummary.total === 1 ? "" : "s"}
+                    </b>
+                    {leadSummary.sort && <span>{leadSummary.sort}</span>}
+                  </>
+                ) : leadSummary?.failed ? (
+                  "The count isn't available"
+                ) : (
+                  "Loading leads…"
+                )}
+              </p>
+            )}
           </div>
           <div className="list-buttons">
-            {/* Leads: Actions for the leads ticked in the list (Email, Transfer, Delete), filled in by LeadsTable */}
-            {collection === "leads" && <span id="lead-bulk-actions" className="bulk-actions-slot" />}
             {/* Opportunities: Actions appears once at least one opportunity is ticked */}
             {ticks && mode !== "kanban" && picked.size > 0 && (
               <ActionMenu
@@ -391,7 +439,13 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
                 Convert a Lead
               </a>
             )}
-            {collection === "opportunities" && !canCreateOpportunity(user) ? null : NEW_TYPE[collection] ? (
+            {collection === "leads" ? (
+              // the page's main action
+              <button className="sf-button brand" onClick={() => openNew("lead")}>
+                <Icon name="plus" size={14} />
+                New Lead
+              </button>
+            ) : collection === "opportunities" && !canCreateOpportunity(user) ? null : NEW_TYPE[collection] ? (
               <button
                 className="sf-button"
                 onClick={() => openNew(NEW_TYPE[collection])}
@@ -444,10 +498,12 @@ export default function ListView({ collection, data, user, openNew, setModal, qu
       {collection === "leads" ? (
         <LeadsTable
           view={LEAD_VIEWS[viewName] || "all"}
+          viewName={viewName}
           stage={fixedStage}
           filters={active}
           defs={defs}
           onFilter={setFilterValues}
+          onSummary={setLeadSummary}
           refresh={uploads + saved}
           mode={mode}
           onMode={setMode}

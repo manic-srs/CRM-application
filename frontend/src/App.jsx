@@ -255,6 +255,7 @@ function Workspace({ user, onLogout, onUserChanged }) {
         openPassword={() => setPasswordOpen(true)}
         openProfile={() => setProfileOpen(true)}
         toggleSidebar={() => setNav(!collapsed)}
+        navCollapsed={collapsed}
       />
       <Sidebar section={section} data={data} user={user} collapsed={collapsed} />
       <main className="app-main">

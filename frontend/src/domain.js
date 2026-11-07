@@ -398,9 +398,9 @@ export function newRecordProblems(type, values) {
   if (type === "contact" && !problems.email && !EMAIL_FORMAT.test(String(values.email).trim())) problems.email = CONTACT_EMAIL_INVALID;
   return problems;
 }
-// Leads list > Actions > Convert to Opportunity: exactly one open lead the user may convert, by the same rules as the
+// Leads list > tick a lead > Convert to Opportunity: exactly one open lead the user may convert, by the same rules as the
 // lead page and the board (rights(lead) -> { canEdit, canCreateSales }). Returns the existing convert popup to open,
-// a note to show when several leads are ticked (nothing is converted or sent), or the reason the item is off.
+// a note to show when several leads are ticked (nothing is converted or sent), or the reason the action is off.
 export const CONVERT_ONE = "Select exactly one lead to convert.";
 export const CONVERT_ONE_AT_A_TIME = "Only one lead can be converted at a time. Please select one lead.";
 const ADMINS_DONT_CONVERT = "Admins don't convert leads. The lead's owner or a Manager converts it.";
@@ -417,6 +417,19 @@ export function leadConvertChoice(leads, rights) {
   if (!canCreateSales) return { reason: ADMINS_DONT_CONVERT };
   if (!canEdit) return { reason: "You can convert only your own leads (or others' with the Edit team records permission)." };
   return { action: leadStageAction(lead, "Converted", { canEdit, canConvert: true }) };
+}
+
+// The line under the Home greeting: what the dashboard shows for this role and view (backend/app/routers/home.py).
+// "Whole team" loads every record (not only a Manager's direct reports); a Manager's Team Performance section shows
+// their own Salespeople (everyone, until they have a team). The Admin always sees every record and no scope switch.
+export function homeDescription(role, team) {
+  if (role === "Admin") return "Monitor sales performance, account activity and follow-ups across teams.";
+  if (role === "Manager")
+    return team
+      ? "Track the whole team's pipeline and upcoming follow-ups, and your salespeople's performance."
+      : "Review your opportunities, accounts and upcoming follow-ups.";
+  if (team) return "The team's deals, accounts and follow-ups at a glance.";
+  return "Your deals, accounts and follow-ups for today.";
 }
 
 // The primary writing action is shared by the button and Enter key.

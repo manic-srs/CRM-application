@@ -2,7 +2,7 @@
 // - Campaigns page: the totals (Sent, Queued, Bounced, Failed, Unsubscribed, Not sent) and every campaign with its
 //   progress; open one to see who got it, who wasn't sent it and why.
 // - New Campaign: from this page (typed-in email addresses, also people not in the CRM) or from
-//   Leads > select leads > Actions > Email Campaign.
+//   Leads > tick leads > Email Campaign (in the selection bar).
 // Unsubscribed and bounced addresses are never emailed again, and every email ends with an unsubscribe link.
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
@@ -987,7 +987,7 @@ export default function CampaignsPage({ id, user, data, notify }) {
               <b>No campaigns yet</b>
               <p>
                 Email many people at once: start a new campaign and paste their email addresses, or tick leads in{" "}
-                <a href="#/leads">Leads</a> and choose Actions → Email Campaign.
+                <a href="#/leads">Leads</a> and choose Email Campaign.
               </p>
               {canSend && (
                 <button className="sf-button brand" onClick={() => setCreating(true)}>

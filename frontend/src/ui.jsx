@@ -1,5 +1,6 @@
 // Small building blocks used by every screen: icons, object icons, ring charts, path bar, empty states.
 import { formatPhone, maskPhone, shortDate, time } from "./format";
+import { pageSummary } from "./listHelpers";
 import React, { useEffect, useState } from "react";
 
 const paths = {
@@ -282,41 +283,60 @@ export function usePaged(rows, resetKey = "", initialSize = 15) {
   };
 }
 
-export function Pagination({ page, pages, size, total, start, setPage, setSize }) {
-  if (total <= PAGE_SIZES[0]) return null; // short lists fit on one page: no paging bar
+// noun (e.g. "lead"): the labelled footer the Leads list uses: "Showing 16–30 of 42 leads", Previous / Next with their
+// names on the buttons, shown on every page (even a single one) and saying so when the list is empty. Without it the
+// bar stays as the other lists have it.
+export function Pagination({ page, pages, size, total, start, setPage, setSize, noun, label = "Pages", busy = false, note = "" }) {
+  const labelled = !!noun;
+  if (!labelled && total <= PAGE_SIZES[0]) return null; // short lists fit on one page: no paging bar
   const go = (p) => setPage(Math.min(Math.max(1, p), pages));
   return (
-    <nav className="pagination" aria-label="Pages">
-      <span className="pagination-count">
-        {start + 1}–{Math.min(start + size, total)} of {total}
-      </span>
-      <label className="pagination-size">
-        Rows per page
-        <select value={size} onChange={(e) => setSize(Number(e.target.value))}>
-          {PAGE_SIZES.map((n) => (
-            <option key={n} value={n}>
-              {n}
-            </option>
-          ))}
-        </select>
-      </label>
-      <div className="pagination-buttons">
-        <button type="button" onClick={() => go(1)} disabled={page === 1} aria-label="First page">
-          «
-        </button>
-        <button type="button" onClick={() => go(page - 1)} disabled={page === 1} aria-label="Previous page">
-          <Icon name="left" size={14} />
-        </button>
-        <span>
-          Page {page} of {pages}
+    <nav className={`pagination ${labelled ? "pagination-labelled" : ""}`} aria-label={label} aria-busy={busy || undefined}>
+      {labelled ? (
+        <div className="pagination-info">
+          <span className="pagination-count" aria-live="polite">
+            {pageSummary({ start, size, total, noun })}
+          </span>
+          {note && <small className="pagination-note">{note}</small>}
+        </div>
+      ) : (
+        <span className="pagination-count">
+          {start + 1}–{Math.min(start + size, total)} of {total}
         </span>
-        <button type="button" onClick={() => go(page + 1)} disabled={page === pages} aria-label="Next page">
-          <Icon name="right" size={14} />
-        </button>
-        <button type="button" onClick={() => go(pages)} disabled={page === pages} aria-label="Last page">
-          »
-        </button>
-      </div>
+      )}
+      {(!labelled || total > 0) && (
+        <>
+          <label className="pagination-size">
+            Rows per page
+            <select value={size} onChange={(e) => setSize(Number(e.target.value))}>
+              {PAGE_SIZES.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="pagination-buttons">
+            <button type="button" onClick={() => go(1)} disabled={page === 1} aria-label="First page" title={labelled ? "First page" : undefined}>
+              «
+            </button>
+            <button type="button" className={labelled ? "page-step" : undefined} onClick={() => go(page - 1)} disabled={page === 1} aria-label="Previous page">
+              <Icon name="left" size={14} />
+              {labelled && <span>Previous</span>}
+            </button>
+            <span>
+              Page {labelled ? page.toLocaleString("en-US") : page} of {labelled ? pages.toLocaleString("en-US") : pages}
+            </span>
+            <button type="button" className={labelled ? "page-step" : undefined} onClick={() => go(page + 1)} disabled={page === pages} aria-label="Next page">
+              {labelled && <span>Next</span>}
+              <Icon name="right" size={14} />
+            </button>
+            <button type="button" onClick={() => go(pages)} disabled={page === pages} aria-label="Last page" title={labelled ? "Last page" : undefined}>
+              »
+            </button>
+          </div>
+        </>
+      )}
     </nav>
   );
 }

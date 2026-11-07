@@ -10,6 +10,11 @@ import { can } from "./permissions";
 import PermissionsTab from "./PermissionsPage";
 import { dateTime } from "./format";
 import { Avatar, Icon, Pagination, usePaged } from "./ui";
+import { Th } from "./Filters";
+import { filterText } from "./listHelpers";
+
+// People > Status column filter (the arrow in the column header, as on the other lists): All, Active or Inactive
+const STATUS_FILTER = { key: "status", label: "Status", options: [["active", "Active"], ["inactive", "Inactive"]] };
 
 const ROLES = ["Admin", "Manager", "Salesperson"];
 
@@ -541,6 +546,9 @@ function PeopleTab({ user, data, reload, notify, onSelfChanged }) {
       (!q || u.full_name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)),
   );
   const peoplePage = usePaged(shown, `${roleFilter}|${team}|${query}|${status}`);
+  // the column filter works with { status }; "any" (the default) is no filter
+  const statusValues = status === "any" ? {} : { status };
+  const setStatusFilter = (next) => setStatus(next.status || "any");
 
   const actions = (u) => {
     const self = u.id === user.id;
@@ -602,11 +610,15 @@ function PeopleTab({ user, data, reload, notify, onSelfChanged }) {
           <Icon name="search" size={15} />
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by name or email" aria-label="Search users" />
         </label>
-        <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Filter by status">
-          <option value="any">Any status</option>
-          <option value="active">Active</option>
-          <option value="inactive">Inactive</option>
-        </select>
+        {/* the Status filter is in the Status column header; when one is on, it shows here and can be removed */}
+        {status !== "any" && (
+          <span className="filter-chip people-filter">
+            <span>{filterText(STATUS_FILTER, statusValues)}</span>
+            <button type="button" onClick={() => setStatus("any")} aria-label={`Remove filter ${filterText(STATUS_FILTER, statusValues)}`} title="Remove this filter">
+              <Icon name="close" size={12} />
+            </button>
+          </span>
+        )}
         {admin && (
           <button className="sf-button" onClick={() => setDialog({ type: "upload" })} title="Add many users from Excel or CSV">
             Upload Users
@@ -632,7 +644,7 @@ function PeopleTab({ user, data, reload, notify, onSelfChanged }) {
               <th>Role</th>
               <th>Reports To</th>
               <th>Record Access</th>
-              <th>Status</th>
+              <Th label="Status" className="status-col" filter={STATUS_FILTER} values={statusValues} onChange={setStatusFilter} />
               <th className="num">Open Leads</th>
               <th className="actions-col">Actions</th>
             </tr>
@@ -671,7 +683,13 @@ function PeopleTab({ user, data, reload, notify, onSelfChanged }) {
         </table>
         {users === null && !error && <p className="table-empty">Loading…</p>}
         {users && !shown.length && (
-          <p className="table-empty">{manager && team === "mine" && !q ? "No one in your team yet. Use Add Salesperson." : "No users match."}</p>
+          <p className="table-empty">
+            {manager && team === "mine" && !q && status === "any"
+              ? "No one in your team yet. Use Add Salesperson."
+              : status !== "any"
+                ? "No users match. Remove the Status filter to see everyone."
+                : "No users match."}
+          </p>
         )}
       </div>
       <Pagination {...peoplePage.pager} />

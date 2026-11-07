@@ -2,15 +2,14 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import EmailDraftAssistant from "./EmailDraftAssistant";
-import { dateTime } from "./format";
+import { attachedSummary, dateTime, fileSize } from "./format";
 import { Icon, ObjectIcon } from "./ui";
 
 const MAX_FILE = 10 * 1024 * 1024;
 const MAX_TOTAL = 25 * 1024 * 1024;
 const MAX_FILES = 10;
 
-export const size = (bytes) =>
-  bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+export const size = fileSize; // also used by the opportunity Attachments card
 
 // Loads the emails of one record; reload() after sending.
 export function useEmails(field, id, version = 0) {
@@ -58,6 +57,16 @@ export function EmailComposer({ target, user, onClose, onSent }) {
   const [subject, setSubject] = useState(target.subject || "");
   const [message, setMessage] = useState(target.greeting || "");
   const fileInput = useRef(null);
+  // Attachments: a compact "Attach files" button that opens the chooser / drop area; the chosen files stay listed
+  // (with their count and sizes) whether it is open or closed
+  const [attachOpen, setAttachOpen] = useState(false);
+  const attachButton = useRef(null);
+  const fileListRef = useRef(null);
+  const removeFile = (file) => {
+    setFiles(files.filter((x) => x !== file));
+    // the remove button goes away: keep the keyboard on the next file, or on Attach files
+    requestAnimationFrame(() => (fileListRef.current?.querySelector("button") || attachButton.current)?.focus());
+  };
   const ref = useRef(null);
   const formRef = useRef(null);
 
@@ -190,43 +199,64 @@ export function EmailComposer({ target, user, onClose, onSent }) {
               </div>
             </div>
             {via === "crm" && (
-            <div
-              className="dropzone"
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => {
-                e.preventDefault();
-                addFiles(e.dataTransfer.files);
-              }}
-            >
-              <button type="button" className="sf-button small" onClick={() => fileInput.current.click()}>
-                Attach Files
-              </button>
-              <span className="muted">or drop files here (up to 10 MB each, 25 MB total)</span>
-              <input
-                ref={fileInput}
-                type="file"
-                multiple
-                hidden
-                onChange={(e) => {
-                  addFiles(e.target.files);
-                  e.target.value = "";
+              <div
+                className="email-attach"
+                // files can be dropped here whether the chooser is open or not
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  addFiles(e.dataTransfer.files);
                 }}
-              />
-            </div>
-            )}
-            {via === "crm" && files.length > 0 && (
-              <ul className="file-list">
-                {files.map((f) => (
-                  <li key={f.name + f.size}>
-                    <ObjectIcon type="note" size={20} />
-                    <span>{f.name}</span>
-                    <small>{size(f.size)}</small>
-                    <button type="button" aria-label={`Remove ${f.name}`} onClick={() => setFiles(files.filter((x) => x !== f))}>
-                      <Icon name="close" size={12} />
-                    </button>
-                  </li>
-                ))}
-              </ul>
+              >
+                <div className="email-attach-bar">
+                  <button
+                    ref={attachButton}
+                    type="button"
+                    className={`sf-button small attach-toggle ${attachOpen ? "open" : ""}`}
+                    aria-expanded={attachOpen}
+                    aria-controls="email-attach-panel"
+                    title={attachOpen ? "Hide the file chooser" : "Show the file chooser"}
+                    onClick={() => setAttachOpen((o) => !o)}
+                  >
+                    <Icon name="clip" size={14} />
+                    Attach files
+                    <Icon name="down" size={12} className="attach-chevron" />
+                  </button>
+                  <span className="attach-summary" aria-live="polite">
+                    {attachedSummary(files)}
+                  </span>
+                </div>
+                <div id="email-attach-panel" className="dropzone email-attach-panel" hidden={!attachOpen}>
+                  <button type="button" className="sf-button small" onClick={() => fileInput.current.click()}>
+                    Choose files
+                  </button>
+                  <span className="muted">or drop files here (up to {MAX_FILES} files, 10 MB each, 25 MB total)</span>
+                </div>
+                <input
+                  ref={fileInput}
+                  type="file"
+                  multiple
+                  hidden
+                  onChange={(e) => {
+                    addFiles(e.target.files);
+                    e.target.value = "";
+                  }}
+                />
+                {files.length > 0 && (
+                  <ul className="file-list" ref={fileListRef} aria-label="Attached files">
+                    {files.map((f) => (
+                      <li key={f.name + f.size}>
+                        <ObjectIcon type="note" size={20} />
+                        <span title={f.name}>{f.name}</span>
+                        <small>{size(f.size)}</small>
+                        <button type="button" className="attach-remove" aria-label={`Remove ${f.name}`} title="Remove" onClick={() => removeFile(f)}>
+                          <Icon name="close" size={12} />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             )}
             {error && (
               <p className="form-error" role="alert">

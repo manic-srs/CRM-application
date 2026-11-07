@@ -58,7 +58,22 @@ import {
   CONVERT_ONE_AT_A_TIME,
   ASSISTANT_FILE_TYPES,
   ASSISTANT_ATTACH_HELP,
+  homeDescription,
 } from "./domain.js";
+import { attachedSummary, fileSize } from "./format.js";
+import {
+  BULK_LIMIT,
+  chipText,
+  clampPage,
+  filterChips,
+  filterText,
+  leadSelectionActions,
+  leadsEmptyMessage,
+  pageSummary,
+  selectionSummary,
+  sortText,
+  withoutFilter,
+} from "./listHelpers.js";
 
 test("lead form uses backend fields and only requires last name and company", () => {
   assert.deepEqual(
@@ -868,13 +883,192 @@ test("New Campaign has no rendered preview; subject and message stay templates w
   assert.match(campaigns, /preview\?\.eligible/);
 });
 
-test("Leads Actions appears only with at least one lead ticked, keeping Convert's one-lead form and warning", () => {
+test("Leads selection actions: only with leads ticked, keeping Convert's one-lead form, the warning and the limits", () => {
+  const lead = (id, stage = "Demo") => ({ id, name: `Synthetic Lead ${id}`, stage, owner_id: 2 });
+  const seller = () => ({ canEdit: true, canCreateSales: true });
+  const admin = () => ({ canEdit: true, canCreateSales: false });
+  const actions = (leads, rights, extra = {}) =>
+    leadSelectionActions({ count: leads.length, convertChoice: leadConvertChoice(leads, rights), canCampaign: true, canTransfer: true, ...extra });
+  const byKey = (list) => Object.fromEntries(list.map((a) => [a.key, a]));
+
+  // nothing ticked: no bar, no actions
+  assert.deepEqual(leadSelectionActions({ count: 0, convertChoice: leadConvertChoice([], seller), canCampaign: true, canTransfer: true }), []);
+
+  // one open lead of mine: every action on, Convert opens the existing popup
+  const one = byKey(actions([lead(1)], seller));
+  assert.deepEqual(Object.keys(one), ["convert", "campaign", "transfer", "delete"]);
+  assert.equal(one.convert.disabled, false);
+  assert.equal(one.transfer.label, "Transfer Lead");
+  assert.equal(one.delete.label, "Delete Lead");
+  assert.equal(one.delete.danger, true);
+
+  // several ticked: Convert stays clickable only to show the one-lead-at-a-time warning (leadConvertChoice.explain)
+  const several = byKey(actions([lead(1), lead(2)], seller));
+  assert.equal(several.convert.disabled, false);
+  assert.equal(leadConvertChoice([lead(1), lead(2)], seller).explain, CONVERT_ONE_AT_A_TIME);
+  assert.equal(several.transfer.label, "Transfer Leads");
+
+  // a closed lead, or an Admin: Convert is off and says why
+  const closed = byKey(actions([lead(1, "Converted")], seller));
+  assert.equal(closed.convert.disabled, true);
+  assert.match(closed.convert.reason, /This lead is Converted/);
+  assert.match(byKey(actions([lead(1)], admin)).convert.reason, /Admins don't convert/);
+
+  // rights decide which actions are offered; the server still checks each lead
+  assert.deepEqual(Object.keys(byKey(actions([lead(1)], seller, { canCampaign: false, canTransfer: false }))), ["convert", "delete"]);
+
+  // Transfer and Delete: up to 500 leads at a time
+  const many = byKey(
+    leadSelectionActions({ count: BULK_LIMIT + 1, convertChoice: { explain: CONVERT_ONE_AT_A_TIME }, canCampaign: true, canTransfer: true }),
+  );
+  assert.equal(many.transfer.disabled, true);
+  assert.equal(many.delete.disabled, true);
+  assert.equal(many.delete.reason, "Up to 500 leads at a time");
+  assert.equal(many.campaign.disabled, undefined);
+  assert.equal(byKey(actions([lead(1)], seller)).delete.disabled, false); // within the limit
+});
+
+test("Leads selection bar: shown only in the list with leads ticked; Convert's popup and warning are wired as before", () => {
   const leads = source("./LeadsTable.jsx");
-  assert.match(leads, /actionsSlot &&\s*!kanban &&\s*selected\.size > 0 &&\s*createPortal\(/);
-  assert.doesNotMatch(leads, /Tick leads in the list first/);
-  assert.match(leads, /disabled: !convertChoice\.action && !convertChoice\.explain/);
-  assert.match(leads, /convertChoice\.explain \? setConvertNote\(convertChoice\.explain\) : setModal\(convertChoice\.action\)/);
-  for (const action of ["Email Campaign", "Transfer ", "Delete "]) assert.ok(leads.includes(`label: ${action === "Email Campaign" ? `"${action}"` : `\`${action}`}`), action);
+  assert.match(leads, /const selecting = !kanban && selected\.size > 0;/);
+  assert.match(leads, /\{selecting \? \(/);
+  assert.match(leads, /convertChoice\.explain \? setNotice\(\{ title: "Convert to Opportunity", message: convertChoice\.explain \}\) : setModal\(convertChoice\.action\)/);
+  // an action that is off sends nothing; it only explains why (the old menu showed the reason under the item)
+  assert.match(leads, /onClick=\{\(\) => \(a\.disabled \? a\.reason && setNotice\(\{ title: a\.label, message: a\.reason \}\) : run\[a\.key\]\(\)\)\}/);
+  assert.doesNotMatch(leads, /createPortal|lead-bulk-actions/); // the old Actions menu in the header is gone
+  assert.doesNotMatch(source("./ListView.jsx"), /lead-bulk-actions/);
+});
+
+test("Select all ticks the current page only, and the bar says where the ticked leads are", () => {
+  const page = [1, 2, 3];
+  assert.deepEqual(selectionSummary(new Set(), page), { count: 0, onPage: 0, elsewhere: 0, where: "" });
+  assert.equal(selectionSummary(new Set([1, 2, 3]), page).where, "All 3 on this page");
+  assert.equal(selectionSummary(new Set([2]), page).where, "On this page");
+  assert.equal(selectionSummary(new Set([7, 8]), page).where, "2 on other pages"); // ticks stay when the page changes
+  const mixed = selectionSummary(new Set([1, 2, 3, 40, 41]), page);
+  assert.equal(mixed.count, 5);
+  assert.equal(mixed.where, "3 on this page, 2 on other pages");
+  const leads = source("./LeadsTable.jsx");
+  assert.match(leads, /label=\{`Select all \$\{pageIds\.length\} leads on this page`\}/);
+  assert.doesNotMatch(leads, /select all matching/i); // no "all matching records" without server support
+});
+
+test("Leads paging footer: 'Showing X–Y of N leads', never '1–0', and a page past the end moves back", () => {
+  assert.equal(pageSummary({ start: 0, size: 15, total: 28, noun: "lead" }), "Showing 1–15 of 28 leads");
+  assert.equal(pageSummary({ start: 15, size: 15, total: 28, noun: "lead" }), "Showing 16–28 of 28 leads");
+  assert.equal(pageSummary({ start: 0, size: 25, total: 1, noun: "lead" }), "Showing 1–1 of 1 lead");
+  assert.equal(pageSummary({ start: 0, size: 15, total: 0, noun: "lead" }), "No leads to show");
+  assert.equal(pageSummary({ start: 100, size: 100, total: 123456, noun: "lead" }), "Showing 101–200 of 123,456 leads");
+  assert.equal(pageSummary({ start: 45, size: 15, total: 30, noun: "lead" }), "Showing 30–30 of 30 leads"); // stale page: no "46–30"
+  assert.equal(clampPage(3, 30, 15), 1); // after a delete or a bigger page size
+  assert.equal(clampPage(1, 30, 15), 1);
+  assert.equal(clampPage(2, 0, 15), 0); // empty list: first page
+  assert.equal(clampPage(0, 400, 100), 0);
+  // the server pages the list (offset / limit) with the chosen rows per page; nothing loads every lead
+  const leads = source("./LeadsTable.jsx");
+  assert.match(leads, /offset: page \* size, limit: size/);
+  assert.match(leads, /noun="lead"/);
+  assert.match(source("./ui.jsx"), /export const PAGE_SIZES = \[15, 25, 50, 100\];/); // all within the server's 500
+});
+
+test("applied filters become chips: each removes only its own values, a custom range shows its dates", () => {
+  const defs = [
+    { key: "stage", label: "Lead Status", options: [["New", "New"], ["Demo", "Demo"]] },
+    { key: "source", label: "Lead Source", options: [["Upload", "Upload"]] },
+    { key: "owner", label: "Owner", options: [["2", "Me"], ["5", "Ana Ruiz"]] },
+    { key: "created", label: "Created", type: "date" },
+    { key: "account", label: "Account", type: "text" },
+  ];
+  const values = { source: "Upload", owner: "2", created: "custom", created_from: "2026-11-01", created_to: "2026-11-05" };
+  const chips = filterChips(defs, values);
+  assert.deepEqual(chips.map((c) => c.text), ["Lead Source: Upload", "Owner: Me", "Created: Nov 1, 2026 – Nov 5, 2026"]);
+  assert.deepEqual(chips[1].without, { source: "Upload", created: "custom", created_from: "2026-11-01", created_to: "2026-11-05" });
+  assert.deepEqual(chips[2].without, { source: "Upload", owner: "2" }); // the range's own dates go with it
+  assert.deepEqual(withoutFilter({ created: "last7" }, "created"), {});
+  assert.deepEqual(filterChips(defs, {}), []);
+  // the summary under other lists keeps its wording
+  assert.equal(filterText(defs[3], { created: "last7" }), "Created: Last 7 days");
+  assert.equal(filterText(defs[4], { account: "acme" }), 'Account: contains "acme"');
+  assert.equal(chipText(defs[3], { created: "custom", created_from: "2026-11-01" }), "Created: from Nov 1, 2026");
+  assert.equal(chipText(defs[3], { created: "today" }), "Created: Today");
+});
+
+test("an empty Leads list says why: nothing matches, an empty list view, or no leads yet", () => {
+  const matching = leadsEmptyMessage({ search: true, filtered: false, view: "all_open", viewName: "All Open Leads" });
+  assert.equal(matching.title, "No leads match your search or filters");
+  assert.equal(matching.clear, true);
+  assert.equal(leadsEmptyMessage({ search: false, filtered: true, view: "all" }).clear, true);
+  assert.equal(leadsEmptyMessage({ search: false, filtered: false, view: "all" }).title, "No leads yet");
+  const view = leadsEmptyMessage({ search: false, filtered: false, view: "converted", viewName: "Converted Leads" });
+  assert.equal(view.title, "No leads in Converted Leads");
+  assert.equal(view.clear, undefined);
+});
+
+test("the sort order is described in words under the list title", () => {
+  assert.equal(sortText("Created", "created", "desc"), "Sorted by Created, newest first");
+  assert.equal(sortText("Last Modified", "modified", "asc"), "Sorted by Last Modified, oldest first");
+  assert.equal(sortText("Name", "name", "asc"), "Sorted by Name, A–Z");
+  assert.equal(sortText("Owner", "owner", "desc"), "Sorted by Owner, Z–A");
+  assert.equal(sortText(undefined, "x", "asc"), "");
+});
+
+test("New Email: Attach files is a compact toggle; attached files stay listed with their count and sizes when it closes", () => {
+  assert.equal(attachedSummary([]), "No files attached");
+  assert.equal(attachedSummary([{ size: 220 * 1024 }]), "1 file attached · 220 KB of 25 MB");
+  assert.equal(attachedSummary([{ size: 1.4 * 1024 * 1024 }, { size: 220 * 1024 }]), "2 files attached · 1.6 MB of 25 MB");
+  assert.equal(fileSize(500), "1 KB");
+  assert.equal(fileSize(10 * 1024 * 1024), "10.0 MB");
+  const email = source("./Email.jsx");
+  // a disclosure button: state and target for assistive technology
+  assert.match(email, /aria-expanded=\{attachOpen\}/);
+  assert.match(email, /aria-controls="email-attach-panel"/);
+  assert.match(email, /const \[attachOpen, setAttachOpen\] = useState\(false\);/); // starts closed
+  assert.match(email, /<div id="email-attach-panel" className="dropzone email-attach-panel" hidden=\{!attachOpen\}>/);
+  // the attached files are listed outside the part that closes, so closing it never hides them
+  const panelEnd = email.indexOf("</div>", email.indexOf('id="email-attach-panel"'));
+  assert.ok(email.indexOf('className="file-list"') > panelEnd);
+  // the file input stays mounted while closed, and the limits, validation and sending are unchanged
+  assert.ok(email.indexOf('type="file"') > panelEnd);
+  assert.match(email, /const MAX_FILE = 10 \* 1024 \* 1024;\s*const MAX_TOTAL = 25 \* 1024 \* 1024;\s*const MAX_FILES = 10;/);
+  assert.match(email, /if \(f\.size > MAX_FILE\)/);
+  assert.match(email, /if \(next\.length > MAX_FILES\) return setError/);
+  assert.match(email, /files\.forEach\(\(f\) => form\.append\("files", f, f\.name\)\);/);
+  assert.match(email, /aria-label=\{`Remove \$\{f\.name\}`\}/);
+  // stage-change and campaign attachments are separate components and untouched by this
+  assert.doesNotMatch(source("./Modal.jsx"), /email-attach/);
+  assert.doesNotMatch(source("./CampaignsPage.jsx"), /email-attach/);
+});
+
+test("Manage Access: Status is a column filter (All, Active, Inactive), off by default and removable", () => {
+  const users = source("./UsersPage.jsx");
+  assert.doesNotMatch(users, /aria-label="Filter by status"/); // the dropdown above the table is gone
+  assert.match(users, /const STATUS_FILTER = \{ key: "status", label: "Status", options: \[\["active", "Active"\], \["inactive", "Inactive"\]\] \};/);
+  assert.match(users, /<Th label="Status" className="status-col" filter=\{STATUS_FILTER\} values=\{statusValues\} onChange=\{setStatusFilter\} \/>/);
+  assert.match(users, /const \[status, setStatus\] = useState\("any"\);/); // default: every status
+  assert.match(users, /\(status === "any" \|\| \(status === "active"\) === u\.is_active\)/); // the same filtering
+  assert.match(users, /usePaged\(shown, `\$\{roleFilter\}\|\$\{team\}\|\$\{query\}\|\$\{status\}`\)/); // back to page 1 on change
+  assert.match(users, /<span className=\{`pill \$\{u\.is_active \? "pill-ok" : "pill-off"\}`\}>/); // the badge in each row stays
+  const def = { key: "status", label: "Status", options: [["active", "Active"], ["inactive", "Inactive"]] };
+  assert.equal(filterText(def, { status: "inactive" }), "Status: Inactive"); // the chip shown while it is on
+  assert.equal(filterText(def, { status: "active" }), "Status: Active");
+  // keyboard: after a choice or Esc, focus goes back to the column's filter arrow (every list uses this menu)
+  const filters = source("./Filters.jsx");
+  assert.match(filters, /onChange\(next\);\s*setOpen\(false\);\s*button\.current\?\.focus\(\{ preventScroll: true \}\);/);
+  assert.match(filters, /e\.key === "Escape" && \(setOpen\(false\), button\.current\?\.focus\(\{ preventScroll: true \}\)\)/);
+});
+
+test("Home: the line under the greeting matches each role's data; Salesperson wording is unchanged", () => {
+  const admin = "Monitor sales performance, account activity and follow-ups across teams.";
+  assert.equal(homeDescription("Admin", true), admin);
+  assert.equal(homeDescription("Admin", false), admin); // the Admin has no scope switch and always sees every record
+  // Whole team loads every record; the Team Performance section shows the Manager's own Salespeople
+  assert.equal(homeDescription("Manager", true), "Track the whole team's pipeline and upcoming follow-ups, and your salespeople's performance.");
+  assert.equal(homeDescription("Manager", false), "Review your opportunities, accounts and upcoming follow-ups.");
+  assert.equal(homeDescription("Salesperson", true), "The team's deals, accounts and follow-ups at a glance.");
+  assert.equal(homeDescription("Salesperson", false), "Your deals, accounts and follow-ups for today.");
+  const home = source("./SellerHome.jsx");
+  assert.match(home, /<h1>\{greeting\(\)\.replace\(/); // the time-based greeting stays
+  assert.match(home, /<p>\{homeDescription\(user\.role, team\)\}<\/p>/);
 });
 
 test("column filter menus keep their own option layout inside table headers (no horizontal scrollbar)", () => {

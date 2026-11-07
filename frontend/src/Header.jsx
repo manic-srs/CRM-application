@@ -230,7 +230,7 @@ function Bell({ data, open, setOpen, notify }) {
   return (
     <>
       <button
-        className="plain-icon"
+        className="plain-icon header-icon"
         title="Notifications"
         aria-label={`Notifications${unread.length ? `, ${unread.length} new` : ""}`}
         aria-expanded={open}
@@ -287,7 +287,7 @@ function Bell({ data, open, setOpen, notify }) {
   );
 }
 
-export default function Header({ section, user, data, onLogout, openNew, notify, openPassword, openProfile, toggleSidebar }) {
+export default function Header({ section, user, data, onLogout, openNew, notify, openPassword, openProfile, toggleSidebar, navCollapsed = false }) {
   const [menu, setMenu] = useState(null); // "apps" (App Launcher, hidden for now) | "bell" | "user"
   const toggle = (name) => setMenu((m) => (m === name ? null : name));
   const ref = useDismiss(!!menu, () => setMenu(null));
@@ -296,7 +296,14 @@ export default function Header({ section, user, data, onLogout, openNew, notify,
     <header className="global-header" ref={ref}>
       <div className="header-top">
         <div className="header-left">
-          <button className="plain-icon menu-toggle" aria-label="Show or hide the navigation" onClick={toggleSidebar}>
+          <button
+            className="plain-icon menu-toggle"
+            aria-label="Show or hide the navigation"
+            title={navCollapsed ? "Show page names" : "Show icons only"}
+            aria-controls="main-nav"
+            aria-expanded={!navCollapsed}
+            onClick={toggleSidebar}
+          >
             <Icon name="list" size={20} />
           </button>
           {/* App Launcher - hidden for now. Remove these comment marks to show it again.
@@ -369,7 +376,7 @@ export default function Header({ section, user, data, onLogout, openNew, notify,
 export function Sidebar({ section, data, user, collapsed }) {
   const openTasks = data.tasks.filter((t) => !t.completed && t.owner_id === user.id).length;
   return (
-    <nav className={`sidebar ${collapsed ? "collapsed" : ""}`} aria-label="Main navigation">
+    <nav id="main-nav" className={`sidebar ${collapsed ? "collapsed" : ""}`} aria-label="Main navigation">
       <ul>
         {[
           ...TABS,
@@ -384,8 +391,14 @@ export function Sidebar({ section, data, user, collapsed }) {
               title={collapsed ? label : undefined}
             >
               <ObjectIcon type={icon} size={24} />
-              {!collapsed && <span>{label}</span>}
-              {!collapsed && key === "tasks" && openTasks > 0 && <span className="nav-count">{openTasks}</span>}
+              {/* icons only (collapsed, or a narrow screen): the name is still read out, and the task count stays as a badge */}
+              <span className={`nav-label ${collapsed ? "sr-only" : ""}`}>{label}</span>
+              {key === "tasks" && openTasks > 0 && (
+                <span className="nav-count">
+                  {openTasks}
+                  <span className="sr-only"> open</span>
+                </span>
+              )}
             </a>
           </li>
         ))}

@@ -2,26 +2,11 @@
 // column header, like Salesforce/Excel. The chosen values are kept per list in this browser.
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "./ui";
+import { filterText, FUTURE_RANGES, PAST_RANGES } from "./listHelpers";
 
-// Date ranges. "past" fits created dates, "future" fits close and due dates.
-const PAST = [
-  ["today", "Today"],
-  ["week", "This week"],
-  ["last7", "Last 7 days"],
-  ["last30", "Last 30 days"],
-  ["month", "This month"],
-  ["quarter", "This quarter"],
-  ["year", "This year"],
-];
-const FUTURE = [
-  ["overdue", "Before today"],
-  ["today", "Today"],
-  ["week", "This week"],
-  ["next7", "Next 7 days"],
-  ["next30", "Next 30 days"],
-  ["month", "This month"],
-  ["quarter", "This quarter"],
-];
+// Date ranges. "past" fits created dates, "future" fits close and due dates (listHelpers.js, shared with the chips).
+const PAST = PAST_RANGES;
+const FUTURE = FUTURE_RANGES;
 
 // Task due dates: only the choices people use (plus a custom range)
 export const TASK_DUE_RANGES = [
@@ -128,22 +113,11 @@ export const ownerOptions = (users, me) => [
 
 export const opts = (list) => list.map((x) => [x, x]);
 
-const RANGE_LABEL = Object.fromEntries([...PAST, ...FUTURE, ["custom", "Custom range"]]);
-
 // short text for the active filter, shown under the list title ("Priority: High")
 export function filterSummary(defs, values) {
   return defs
     .filter((f) => values[f.key])
-    .map((f) => {
-      const v = values[f.key];
-      const text =
-        f.type === "text"
-          ? `contains "${v}"`
-          : f.type === "date"
-            ? (f.ranges || []).find(([o]) => o === v)?.[1] || RANGE_LABEL[v]
-            : f.options.find(([o]) => o === v)?.[1] || v;
-      return `${f.label}: ${text}`;
-    })
+    .map((f) => filterText(f, values))
     .join(" • ");
 }
 
@@ -163,10 +137,19 @@ function HeaderFilter({ def, values, onChange }) {
     setPos({ top: r.bottom + 4, left: Math.max(8, left), maxHeight: Math.max(220, window.innerHeight - r.bottom - 16) });
     setCustom({ from: values[`${def.key}_from`] || "", to: values[`${def.key}_to`] || "" });
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  // once drawn, use the menu's real width: its right edge lines up with the arrow, and it stays 8px inside the window
+  // (on a phone the menu is wider than the space to the left of a narrow column)
+  useLayoutEffect(() => {
+    if (!open || !pos || !menu.current) return;
+    const width = menu.current.getBoundingClientRect().width;
+    const want = Math.max(8, Math.min(button.current.getBoundingClientRect().right - width, window.innerWidth - width - 8));
+    if (Math.abs(want - pos.left) > 0.5) setPos({ ...pos, left: want });
+  }, [open, pos]);
   useEffect(() => {
     if (!open) return;
     const away = (e) => !menu.current?.contains(e.target) && !button.current?.contains(e.target) && setOpen(false);
-    const key = (e) => e.key === "Escape" && setOpen(false);
+    // Esc closes the menu and puts the keyboard back on its arrow button
+    const key = (e) => e.key === "Escape" && (setOpen(false), button.current?.focus({ preventScroll: true }));
     const close = (e) => !menu.current?.contains(e.target) && setOpen(false); // page scroll, not the menu's own
     document.addEventListener("mousedown", away);
     document.addEventListener("keydown", key);
@@ -188,6 +171,7 @@ function HeaderFilter({ def, values, onChange }) {
     if (v) Object.assign(next, { [def.key]: v }, extra);
     onChange(next);
     setOpen(false);
+    button.current?.focus({ preventScroll: true }); // after a choice, the keyboard stays on the column's filter arrow
   };
   const choices = def.type === "text" ? [] : def.type === "date" ? def.ranges || (def.future ? FUTURE : PAST) : def.options;
   const [typed, setTyped] = useState("");
@@ -281,7 +265,7 @@ function HeaderFilter({ def, values, onChange }) {
 export function Th({ label, sorted, flip, onSort, filter, values, onChange, className = "" }) {
   const active = filter && values[filter.key];
   return (
-    <th className={`${className} ${active ? "filtered" : ""}`}>
+    <th className={`${className} ${active ? "filtered" : ""}`} aria-sort={sorted ? (flip ? "ascending" : "descending") : undefined}>
       <div className="th-cell">
         {onSort ? (
           <button type="button" className="th-sort" onClick={onSort}>

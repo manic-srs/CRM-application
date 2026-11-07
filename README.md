@@ -33,8 +33,8 @@ email, tasks and reminders, notifications, lead conversion, closing a deal, and 
 - Stage path on every record, with enforced stage order and a full stage history.
 - One-step lead conversion into an Account, a Contact and an Opportunity.
   Start it from the lead page, the Kanban board, or the Leads list: tick one lead and choose
-  **Actions > Convert to Opportunity** (the same Convert popup; only for one open lead you may convert, otherwise
-  the menu says why). **Opportunities > Convert a Lead** opens the Leads list.
+  **Convert to Opportunity** in the selection bar (the same Convert popup; only for one open lead you may convert,
+  otherwise the button says why). **Opportunities > Convert a Lead** opens the Leads list.
 - New Account needs **Phone** and **Industry**; New Contact needs **Email** (a valid address) and **Phone**, on the
   forms, in the API and in the AI Assistant. Accounts and contacts made by converting a lead, by New Opportunity
   or by an import, and older records, may still have them empty.
@@ -64,7 +64,7 @@ email, tasks and reminders, notifications, lead conversion, closing a deal, and 
   for records the user can't open), so two people don't work the same company.
 
 **Email campaigns** (sent through Outlook)
-- Two ways to choose recipients: tick leads in the Leads list and use **Actions > Email Campaign**, or
+- Two ways to choose recipients: tick leads in the Leads list and use **Email Campaign** in the selection bar, or
   **Email Campaigns > New Campaign** and type or paste addresses in the **To** field (each becomes a chip; invalid
   ones are marked in red). Recipients don't need to be in the CRM; an address that belongs to one of the user's leads
   is treated as that lead. (Choosing leads by stage is switched off in the app: `STAGE_PICKER` in `CampaignsPage.jsx`.)
