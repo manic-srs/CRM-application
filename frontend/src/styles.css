@@ -5973,3 +5973,38 @@ a.email-off {
   display: block;
   margin-top: 6px;
 }
+
+/* Campaign page: one Recipients list (Status filter in the column header) */
+.campaign-page .campaign-recipients-card {
+  margin-top: 12px;
+  overflow: hidden;
+}
+.campaign-recipients-card .card-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 16px 20px 12px;
+}
+.campaign-recipients-card .card-header .muted {
+  font-size: 13px;
+}
+.campaign-recipients-card .card-header .link {
+  margin-left: auto;
+  font-size: 13px;
+}
+.campaign-recipients-card .campaign-recipients th:nth-child(1) {
+  width: 28%;
+}
+.campaign-recipients-card .campaign-recipients th:nth-child(2) {
+  width: 36%;
+}
+.campaign-recipients-card .campaign-recipients th:nth-child(3) {
+  width: 16%;
+}
+.campaign-recipients-card .campaign-recipients th:nth-child(4) {
+  width: 20%;
+}
+.campaign-recipients-card .campaign-recipients th:first-child,
+.campaign-recipients-card .campaign-recipients td:first-child {
+  padding-left: 20px;
+}

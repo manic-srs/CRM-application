@@ -120,17 +120,17 @@ def test_unsubscribe_link_asks_first_then_unsubscribes_and_can_subscribe_again(c
     one = lead(client)
     token = campaigns.unsubscribe_token(one["id"])
     page = client.get("/api/public/unsubscribe", params={"t": token})
-    assert page.status_code == 200 and "Are you sure you want to unsubscribe?" in page.text and ">Cancel<" in page.text
+    assert page.status_code == 200 and "Unsubscribe from SalesTrack emails?" in page.text and ">Keep me subscribed<" in page.text
     assert client.get(f"/api/leads/{one['id']}").json()["unsubscribed_at"] is None  # opening the link changes nothing
     # Outlook / Gmail one-click (RFC 8058): POST with the token in the URL
     done = client.post(f"/api/public/unsubscribe?t={token}", data={"List-Unsubscribe": "One-Click"})
-    assert "Thank you. You've been unsubscribed." in done.text and "won't receive further" in done.text
+    assert "You've been unsubscribed" in done.text and "Thank you for letting us know" in done.text
     assert client.get(f"/api/leads/{one['id']}").json()["unsubscribed_at"] is not None
     assert [l["id"] for l in client.get("/api/leads/page", params={"view": "unsubscribed"}).json()["items"]] == [one["id"]]
     assert any(n["title"] == "Lead unsubscribed" for n in client.get("/api/notifications").json())
     assert make(client, [one["id"]]).status_code == 400  # nobody left to email
     again = client.post("/api/public/unsubscribe", data={"t": token, "action": "subscribe"})
-    assert "Thank you. You're subscribed again." in again.text and make(client, [one["id"]]).status_code == 201
+    assert "Thank you for subscribing!" in again.text and make(client, [one["id"]]).status_code == 201
     # a wrong token does nothing
     assert "isn't valid" in client.get("/api/public/unsubscribe", params={"t": f"{one['id']}.forged"}).text
 
@@ -234,9 +234,9 @@ def test_subscribe_link_stays_until_the_person_subscribes_then_only_unsubscribe(
     assert "action=subscribe" in sent.items[1]["body"]
     # the Subscribe link asks first; once they confirm, emails carry only Unsubscribe, and the owner is told
     page = client.get("/api/public/unsubscribe", params={"t": token, "action": "subscribe"})
-    assert "Subscribe" in page.text and "Cancel" in page.text
+    assert "Subscribe to SalesTrack emails?" in page.text and ">Not now<" in page.text
     client.post("/api/public/unsubscribe", data={"t": token, "action": "subscribe"})
-    assert "You're subscribed" in client.get("/api/public/unsubscribe", params={"t": token, "action": "subscribe"}).text
+    assert "You're already subscribed" in client.get("/api/public/unsubscribe", params={"t": token, "action": "subscribe"}).text
     make(client, [one["id"]])
     run_round()
     third = sent.items[2]["body"]
@@ -245,7 +245,7 @@ def test_subscribe_link_stays_until_the_person_subscribes_then_only_unsubscribe(
     # unsubscribing undoes it; Subscribe again subscribes (and later emails are Unsubscribe-only again)
     unsubscribe(client, one["id"])
     page = client.get("/api/public/unsubscribe", params={"t": token, "action": "subscribe"})
-    assert "Subscribe again" in page.text and client.get(f"/api/leads/{one['id']}").json()["unsubscribed_at"]
+    assert "Subscribe to SalesTrack emails again?" in page.text and client.get(f"/api/leads/{one['id']}").json()["unsubscribed_at"]
     client.post("/api/public/unsubscribe", data={"t": token, "action": "subscribe"})
     assert client.get(f"/api/leads/{one['id']}").json()["unsubscribed_at"] is None
     make(client, [one["id"]])
@@ -287,14 +287,14 @@ def test_typed_in_emails_people_not_in_the_crm(client, sent):
     token = campaigns.recipient_token(row["id"])
     assert f"unsubscribe?t={token}\n" in ravi["body"] and f"t={token}&action=subscribe" in ravi["body"]
     assert "Subscribe" in client.get("/api/public/unsubscribe", params={"t": token, "action": "subscribe"}).text
-    assert "Are you sure" in client.get("/api/public/unsubscribe", params={"t": token}).text
+    assert "Unsubscribe from" in client.get("/api/public/unsubscribe", params={"t": token}).text
     client.post("/api/public/unsubscribe", data={"t": token, "action": "unsubscribe"})
     again = client.post("/api/campaigns/preview", json={"emails": [{"email": "RAVI.KUMAR@acme-retail.example"}]}).json()
     assert again["eligible"] == 0 and again["left_out_sample"][0]["reason"] == "Unsubscribed"
     # ...and back again with Subscribe
     client.post("/api/public/unsubscribe", data={"t": token, "action": "subscribe"})
     assert client.post("/api/campaigns/preview", json={"emails": [{"email": "ravi.kumar@acme-retail.example"}]}).json()["eligible"] == 1
-    assert client.get("/api/public/unsubscribe", params={"t": "r99999.bad"}).text.count("isn't valid") == 1
+    assert client.get("/api/public/unsubscribe", params={"t": "r99999.bad"}).text.count("<h1>This link isn't valid</h1>") == 1
 
 
 def test_unsubscribing_a_typed_address_also_unsubscribes_the_lead_with_it(client, sent):
@@ -333,7 +333,7 @@ def test_cancel_on_the_unsubscribe_page_changes_nothing(client, sent):
     one = lead(client)
     token = campaigns.unsubscribe_token(one["id"])
     page = client.get("/api/public/unsubscribe", params={"t": token, "action": "cancel"})
-    assert "Nothing changed" in page.text and "still subscribed" in page.text
+    assert "No changes made" in page.text and "still subscribed" in page.text
     assert client.get(f"/api/leads/{one['id']}").json()["unsubscribed_at"] is None
 
 
@@ -384,9 +384,11 @@ def test_a_real_email_is_built_and_handed_to_the_mail_server(monkeypatch):
     link = campaigns.unsubscribe_link(42)
     body = "Hi Mia,\n\n" + "A long line of text for the email. " * 20 + campaigns.footer(42)
     result = campaigns.send_one("mia@bluebird.example", "Hello", body, sender_name="Asha Rao",
-                                reply_to="asha@company.example", unsubscribe=link)
+                                reply_to="asha@company.example", unsubscribe=link,
+                                html=campaigns.email_html("Hi Mia,\n\nHello there.", 42))
     assert result.outcome == "sent", result
     raw = handed[0].decode()
+    assert "multipart/alternative" in raw and "text/plain" in raw and "text/html" in raw
     assert f"List-Unsubscribe: <{link}>\r\n" in raw  # one line, not folded
     assert "List-Unsubscribe-Post: List-Unsubscribe=One-Click" in raw
     assert all(len(line) <= 78 for line in raw.split("\r\n\r\n", 1)[1].splitlines())  # quoted-printable body
@@ -436,3 +438,24 @@ def test_dashboard_counts_people_who_unsubscribed_after_a_campaign(client, sent)
     assert (emails["unsubscribed"], emails["people"], emails["sent"]) == (2, 3, 4)
     got = client.get("/api/campaigns/recipients", params={"status": "Unsubscribed"}).json()
     assert got["total"] == 2 and {r["email"] for r in got["items"]} == {one["email"], "zoe@acme-retail.example"}
+
+
+def test_campaign_emails_have_a_subscribe_or_unsubscribe_button(client, sent):
+    """The HTML version: a Subscribe button (plus a small Unsubscribe link) until the person subscribes, then only an
+    Unsubscribe button. The plain-text version keeps the links."""
+    one = lead(client)
+    token = campaigns.unsubscribe_token(one["id"])
+    make(client, [one["id"]])
+    run_round()
+    html = sent.items[0]["html"]
+    assert ">Subscribe</a>" in html and f"unsubscribe?t={token}&amp;action=subscribe" in html
+    assert ">Unsubscribe</a>" in html and "Subscribe to keep getting our updates" in html
+    assert "Unsubscribe: " not in html  # buttons, not raw links
+    client.post("/api/public/unsubscribe", data={"t": token, "action": "subscribe"})
+    make(client, [one["id"]])
+    run_round()
+    html = sent.items[1]["html"]
+    assert ">Unsubscribe</a>" in html and "action=subscribe" not in html and "You're subscribed to emails" in html
+    # the text is kept as written, safely
+    assert campaigns.email_html("Hi <Mia>,\n\nSee you\nsoon") .count("<p ") >= 3
+    assert "&lt;Mia&gt;" in campaigns.email_html("Hi <Mia>")

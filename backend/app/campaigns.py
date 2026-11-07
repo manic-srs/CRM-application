@@ -45,6 +45,7 @@ from datetime import datetime, timedelta
 from email import policy
 from email.message import EmailMessage
 from email.utils import formataddr
+from html import escape
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -272,6 +273,41 @@ def footer(lead_id: int | None = None, *, token: str | None = None, subscribe: b
     return "\n".join(lines)
 
 
+# ---------- the HTML version (Outlook and Gmail show this; the plain text above stays as the fallback) ----------
+
+def _button(href: str, label: str, primary: bool) -> str:
+    """A button that also works in Outlook for Windows (a table cell with a link, no CSS buttons)."""
+    bg, fg, border = ("#0176d3", "#ffffff", "#0176d3") if primary else ("#ffffff", "#0176d3", "#c9c9c9")
+    return (f'<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="display:inline-table">'
+            f'<tr><td style="border-radius:6px;background:{bg};border:1px solid {border}">'
+            f'<a href="{escape(href)}" style="display:inline-block;padding:9px 20px;font-family:Segoe UI,Arial,sans-serif;'
+            f'font-size:14px;font-weight:600;color:{fg};text-decoration:none;border-radius:6px">{label}</a>'
+            f'</td></tr></table>')
+
+
+def email_html(body: str, lead_id: int | None = None, *, token: str | None = None, subscribe: bool = True) -> str:
+    """The email as HTML: the text as written, then a footer with one button.
+    - Not subscribed yet: a Subscribe button (and a small Unsubscribe link: every campaign email must offer it).
+    - Subscribed: an Unsubscribe button."""
+    paragraphs = [p for p in re.split(r"\n\s*\n", body.strip()) if p.strip()]
+    text = "".join(f'<p style="margin:0 0 14px">{escape(p).replace(chr(10), "<br>")}</p>' for p in paragraphs)
+    company = escape(mailer.company_name())
+    unsubscribe = unsubscribe_link(lead_id, token=token)
+    if subscribe:
+        note = f"You're receiving this email from {company}. Subscribe to keep getting our updates."
+        action = (_button(unsubscribe_link(lead_id, "subscribe", token=token), "Subscribe", True)
+                  + f'<p style="margin:10px 0 0;font-size:12px;color:#706e6b">Don\'t want these emails? '
+                    f'<a href="{escape(unsubscribe)}" style="color:#706e6b">Unsubscribe</a></p>')
+    else:
+        note = f"You're subscribed to emails from {company}."
+        action = _button(unsubscribe, "Unsubscribe", False)
+    return (f'<!doctype html><html><body style="margin:0;padding:0">'
+            f'<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;line-height:1.55;color:#181818;'
+            f'max-width:640px">{text}'
+            f'<div style="margin-top:24px;padding-top:16px;border-top:1px solid #e5e5e5">'
+            f'<p style="margin:0 0 12px;font-size:13px;color:#706e6b">{note}</p>{action}</div></div></body></html>')
+
+
 @dataclass
 class Result:
     outcome: str            # sent | retry | invalid | failed | setup (mail settings wrong: pause everything)
@@ -297,10 +333,12 @@ def classify_smtp(exc: Exception) -> Result:
     return Result("retry", (str(exc) or exc.__class__.__name__)[:300])  # network problems: try again later
 
 
-def send_one(to: str, subject: str, body: str, *, sender_name: str, reply_to: str, unsubscribe: str) -> Result:
-    """Sends one campaign email and says what happened (used for every recipient; tests replace it)."""
+def send_one(to: str, subject: str, body: str, *, sender_name: str, reply_to: str, unsubscribe: str,
+             html: str | None = None) -> Result:
+    """Sends one campaign email and says what happened (used for every recipient; tests replace it).
+    html: the version with the Subscribe / Unsubscribe button; body (plain text) is the fallback."""
     if mailer.provider() == "graph":
-        return _send_graph(to, subject, body, sender_name=sender_name, reply_to=reply_to)
+        return _send_graph(to, subject, body, sender_name=sender_name, reply_to=reply_to, html=html)
     cfg = mailer.settings()
     if not cfg["host"]:
         return Result("setup", "Email isn't set up (SMTP_HOST is empty)")
@@ -313,6 +351,8 @@ def send_one(to: str, subject: str, body: str, *, sender_name: str, reply_to: st
     msg["List-Unsubscribe"] = f"<{unsubscribe}>"
     msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
     msg.set_content(body, cte="quoted-printable")  # keeps body lines short whatever the message
+    if html:
+        msg.add_alternative(html, subtype="html", cte="quoted-printable")
     # then no header folding: List-Unsubscribe must stay one plain <URL> for Outlook / Gmail to show the button.
     # (Set after the body: Python 3.12 can't encode a body with max_line_length=None.)
     msg.policy = policy.SMTP.clone(max_line_length=None)
@@ -329,13 +369,13 @@ def send_one(to: str, subject: str, body: str, *, sender_name: str, reply_to: st
         return classify_smtp(exc)
 
 
-def _send_graph(to: str, subject: str, body: str, *, sender_name: str, reply_to: str) -> Result:
+def _send_graph(to: str, subject: str, body: str, *, sender_name: str, reply_to: str, html: str | None = None) -> Result:
     if not all(os.getenv(k) for k in ("MS_TENANT_ID", "MS_CLIENT_ID", "MS_CLIENT_SECRET")):
         return Result("setup", "Outlook isn't set up: MS_TENANT_ID, MS_CLIENT_ID and MS_CLIENT_SECRET are needed")
     sender = mailer.settings()["sender"]
     message = {
         "subject": subject,
-        "body": {"contentType": "Text", "content": body},
+        "body": {"contentType": "HTML", "content": html} if html else {"contentType": "Text", "content": body},
         "from": {"emailAddress": {"address": sender, "name": sender_name}},
         "toRecipients": [{"emailAddress": {"address": to}}],
         "replyTo": [{"emailAddress": {"address": reply_to}}],
@@ -485,10 +525,12 @@ def _run(db: Session, budget: int | None, pause_seconds: float | None) -> dict:
         sender = campaign.created_by
         token = row_token(row)
         subscribe = not is_subscribed(db, row.email)
+        text = fill(campaign.body, person, sender)
         result = send_one(row.email, fill(campaign.subject, person, sender),
-                          fill(campaign.body, person, sender) + footer(row.lead_id, token=token, subscribe=subscribe),
+                          text + footer(row.lead_id, token=token, subscribe=subscribe),
                           sender_name=sender.full_name, reply_to=sender.email,
-                          unsubscribe=unsubscribe_link(row.lead_id, token=token))
+                          unsubscribe=unsubscribe_link(row.lead_id, token=token),
+                          html=email_html(text, row.lead_id, token=token, subscribe=subscribe))
         row.attempts += 1
         if result.outcome == "sent":
             row.status, row.sent_at, row.error = "Sent", now(), None

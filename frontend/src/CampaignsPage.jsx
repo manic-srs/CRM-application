@@ -8,6 +8,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import { LEAD_OPEN_STAGES, LEAD_STAGES, parseRecipients } from "./domain";
 import { can } from "./permissions";
+import { Th } from "./Filters";
 import { Icon, ObjectIcon } from "./ui";
 
 const n = (x) => Number(x || 0).toLocaleString();
@@ -590,6 +591,12 @@ function CampaignDetail({ id, user, notify }) {
   };
   const rows = c.recipients.items;
   const pages = Math.ceil(c.recipients.total / 100);
+  // the Status column's filter: only the statuses this campaign has, with how many
+  const statusFilter = {
+    key: "status",
+    label: "Status",
+    options: RECIPIENT_GROUPS.filter(([key]) => c.counts[key] || key === status).map(([key, label]) => [key, `${label} (${n(c.counts[key] || 0)})`]),
+  };
   return (
     <div className="page campaign-page">
       <section className="card highlights">
@@ -648,82 +655,59 @@ function CampaignDetail({ id, user, notify }) {
         )}
       </section>
 
-      <div className="campaign-columns">
-        <section className="card">
-          <header className="card-header">
-            <h2>Recipients</h2>
-          </header>
-          <div className="issue-cards pad-cards">
-            {RECIPIENT_GROUPS.filter(([key]) => c.counts[key]).map(([key, label, tone]) => (
-              <button
-                key={key}
-                type="button"
-                className={`issue-card ${tone} ${status === key ? "on" : ""}`}
-                aria-pressed={status === key}
-                onClick={() => (setStatus(status === key ? "" : key), setPage(0))}
-              >
-                <b>{n(c.counts[key])}</b>
-                <span>{label}</span>
-                <small>{status === key ? "Show all" : "View"}</small>
-              </button>
-            ))}
-          </div>
-          <div className="table-scroll">
-            <table className="sf-table campaign-recipients">
-              <thead>
-                <tr>
-                  <th>Recipient</th>
-                  <th>Email</th>
-                  <th>Status</th>
-                  <th>Sent</th>
-                  <th>Details</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id}>
-                    <td title={r.name}>{r.lead_id ? <a href={`#/leads/${r.lead_id}`}>{r.name}</a> : r.name}</td>
-                    <td title={r.email}>{r.email || <span className="muted">—</span>}</td>
-                    <td>
-                      <span className={`recipient-status s-${r.status.toLowerCase()}`}>{EMAIL_STATUS[r.status] || r.status}</span>
-                    </td>
-                    <td className="nowrap">{when(r.sent_at)}</td>
-                    <td className="issue-reason">
-                      {r.error || (r.status === "Queued" && r.next_attempt_at ? `Next try ${when(r.next_attempt_at)}` : "")}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {!rows.length && <p className="table-empty">Nobody here.</p>}
-          </div>
-          {pages > 1 && (
-            <div className="pager">
-              <button className="sf-button small" disabled={page === 0} onClick={() => setPage(page - 1)}>
-                Previous
-              </button>
-              <span>
-                Page {page + 1} of {pages}
-              </span>
-              <button className="sf-button small" disabled={page + 1 >= pages} onClick={() => setPage(page + 1)}>
-                Next
-              </button>
-            </div>
+      <section className="card campaign-recipients-card">
+        <header className="card-header">
+          <h2>Recipients</h2>
+          <span className="muted">
+            {status ? `${n(c.recipients.total)} ${EMAIL_STATUS[status] || status}` : `${n(c.recipients.total)} ${c.recipients.total === 1 ? "person" : "people"}`}
+          </span>
+          {status && (
+            <button type="button" className="link" onClick={() => (setStatus(""), setPage(0))}>
+              Show all
+            </button>
           )}
-        </section>
-        <section className="card campaign-email">
-          <header className="card-header">
-            <h2>Email</h2>
-          </header>
-          <div className="pad">
-            <b>{c.subject}</b>
-            <pre>{c.body}</pre>
-            <p className="field-hint">
-              Every email has an Unsubscribe link, and a Subscribe link until the recipient subscribes.
-            </p>
+        </header>
+        <div className="table-scroll">
+          <table className="sf-table campaign-recipients">
+            <thead>
+              <tr>
+                <th>Recipient</th>
+                <th>Email</th>
+                <Th label="Status" filter={statusFilter} values={{ status }} onChange={(v) => (setStatus(v.status || ""), setPage(0))} />
+                <th>Sent</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id}>
+                  <td title={r.name}>{r.lead_id ? <a href={`#/leads/${r.lead_id}`}>{r.name}</a> : r.name}</td>
+                  <td title={r.email}>{r.email || <span className="muted">—</span>}</td>
+                  <td>
+                    <span className={`recipient-status s-${r.status.toLowerCase()}`} title={r.error || undefined}>
+                      {EMAIL_STATUS[r.status] || r.status}
+                    </span>
+                  </td>
+                  <td className="nowrap">{r.sent_at ? when(r.sent_at) : <span className="muted">—</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {!rows.length && <p className="table-empty">Nobody here.</p>}
+        </div>
+        {pages > 1 && (
+          <div className="pager">
+            <button className="sf-button small" disabled={page === 0} onClick={() => setPage(page - 1)}>
+              Previous
+            </button>
+            <span>
+              Page {page + 1} of {pages}
+            </span>
+            <button className="sf-button small" disabled={page + 1 >= pages} onClick={() => setPage(page + 1)}>
+              Next
+            </button>
           </div>
-        </section>
-      </div>
+        )}
+      </section>
     </div>
   );
 }
